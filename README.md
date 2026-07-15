@@ -1,3 +1,15 @@
+---
+title: Quiz Master Pro
+emoji: 🎓
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+---
+
+
 🎓 Quiz Master Pro: Advanced Telegram Quiz Engine
 
 Quiz Master Pro is a professional-grade Telegram bot designed for educational
