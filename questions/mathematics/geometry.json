@@ -1,0 +1,24 @@
+[
+  {
+    "id": "MATHS-GEOM-001",
+    "subject": "Mathematics",
+    "topic": "3D Geometry: Distance from Point to Plane",
+    "difficulty": "medium",
+    "tags": ["3D-geometry", "planes", "distance", "2026-07-16"],
+    "question": "Find the shortest distance from the point $Q(2, 1, -1)$ to the coordinate plane defined by the equation $2x + y - 2z + 2 = 0$.",
+    "latex": "\\begin{tikzpicture}[scale=0.8]\n  \\draw[thick, fill=blue!10, opacity=0.7] (0,2) -- (4,0) -- (5,3) -- (1,5) -- cycle;\n  \\node at (2,2.5) {Plane $P$};\n  \\filldraw[black] (3.5,4.5) circle (2.5pt) node[above right] {$Q(2,1,-1)$};\n  \\draw[dashed, line width=1.2pt, draw=red] (3.5,4.5) -- (2.5,2.5) node[midway, left] {$d = 3$};\n  \\draw[-{Stealth}, line width=1.2pt] (2.5,2.5) -- (1.5,0.5) node[left] {$\\vec{n} = \\langle 2, 1, -2 \\rangle$};\n\\end{tikzpicture}",
+    "options": ["1", "2", "3", "4"],
+    "correct_option": 2,
+    "poll_explanation": {
+      "rule": "Point-to-Plane Distance Formula: $d = \\frac{|Ax_0 + By_0 + Cz_0 + D|}{\\sqrt{A^2 + B^2 + C^2}}$",
+      "why": "Substitute the point $Q(2,1,-1)$ and coefficients $A=2, B=1, C=-2, D=2$ directly into the formula:\\par $d = \\frac{|2(2) + 1(1) - 2(-1) + 2|}{\\sqrt{2^2 + 1^2 + (-2)^2}} = \\frac{|4 + 1 + 2 + 2|}{\\sqrt{9}} = \\frac{9}{3} = 3$.",
+      "poll_hint": "d = |Ax₀+By₀+Cz₀+D|/√(A²+B²+C²) = |2(2)+1(1)-2(-1)+2|/√(2²+1²+(-2)²) = 9/3 = 3."
+    },
+    "options_analysis": [
+      {"why": "Incorrect. This error typically results from leaving the constant term D out of the numerator.", "example": "N/A"},
+      {"why": "Incorrect. Likely results from a sign calculation error inside the absolute value brackets.", "example": "N/A"},
+      {"why": "Correct. Clean evaluation of the coordinate distance theorem yields exactly 3.", "example": "Distance = 3"},
+      {"why": "Incorrect. This calculation error likely stems from using an incorrect scalar component in the denominator.", "example": "Denominator scale factor error."}
+    ]
+  }
+]

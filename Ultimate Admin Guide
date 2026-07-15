@@ -1,0 +1,90 @@
+🕹️ Admin Manual: Mastering the Quiz Master Pro
+
+Welcome, Professor. This guide takes you from the moment you wake up the server
+to the moment you close a high-stakes exam.
+
+Phase 1: Entering the Cockpit
+
+Before you can send questions, you must "attach" your terminal to the running
+bot.
+
+1.  Start the Engine: Ensure the containers are running.
+    docker-compose up -d
+2.  Enter the Dashboard: Run this command to see the menu.
+    docker attach quiz_bot
+    💡 Pro-Tip: If the screen is blank when you enter, press Enter or type c and
+    press Enter to refresh the UI.
+
+Phase 2: Sending Quizzes (The Workflow)
+
+You have two main weapons: Native Polls (Simple) and Premium UI (Visual/Math).
+
+1.  Choose your UI:
+      - Type 1 for a standard Telegram Poll.
+      - Type 2 for the Premium UI (Best for TikZ Graphs & LaTeX).
+2.  Select Subject: Type the subject number (e.g., 1) and press Enter.
+3.  Choose the Range:
+      - Single: 1
+      - Range: 1-10
+      - Mixed: 1, 3-5, 12
+4.  Watch the Magic: The bot renders the images and posts them. Each message
+    gets a REF ID (e.g., REF: 101) for future management.
+
+Phase 3: The "Management" Control Room
+
+Type 3 from the main menu to enter the Management Console.
+
+  - n / p: Move to Next or Previous page.
+  - sw (Switch): Toggle between Active quizzes and Closed quizzes.
+  - ft (Filter): Type nap (Native), prp (Premium), or bop (All).
+  - clean: Live-sync with Telegram. It removes "ghost" items from your list if
+    you deleted them manually on the channel.
+  - Close/Open: Type the Index Number (e.g., 1) or the Ref ID (e.g., ref105) to
+    toggle the status.
+  - Bulk Close: Type all to close everything on the current page.
+
+Phase 4: Updating the System 🛠️
+
+You don't need to stop the bot for everything. Here is how to handle updates:
+
+1. Adding/Editing Questions (.json files)
+
+  - Command: None!
+  - How: Just edit the files in your questions/ folder. The bot "Hot-Reloads"
+    the database every time you enter the "Send" menu. Your changes are live
+    instantly.
+
+2. Updating Logic or Features (bot.py)
+
+  - Command: docker-compose up -d --build bot
+  - How: If you change the code or requirements.txt, run this command. It
+    rebuilds the bot container in seconds without touching the rendering engine.
+
+3. Changing API Keys or Channel (config.json)
+
+  - Command: docker-compose restart bot
+  - How: Edit the file, then run this command to let the bot read the new
+    settings.
+
+Phase 5: Exiting Safely
+
+⚠️ WARNING: Do not press Ctrl + C to leave the dashboard. This will kill the bot
+process.
+
+  - To go back in menus: Type b.
+  - To shut down the bot entirely: Type 0 from the main menu.
+  - To leave the dashboard but keep the bot running: Press Ctrl + P then Ctrl +
+    Q. This "detaches" you safely while the bot continues to work.
+
+🎨 Admin Cheat Sheet
+
+| Command         | Action                       | Where to use it   |
+| :-------------- | :--------------------------- | :---------------- |
+| `c`             | Clear/Refresh messy screen   | Anywhere          |
+| `1, 4-6`        | Send a block of questions    | Selection Screen  |
+| `sw`            | See what's already ended     | Management Screen |
+| `clean`         | Fix "Ghost" messages         | Management Screen |
+| `all`           | End the session for students | Management Screen |
+| `up -d --build` | Apply code updates           | Your Terminal     |
+
+Now you are ready to manage your channel like a Master. 🎓

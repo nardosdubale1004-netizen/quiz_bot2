@@ -1,0 +1,12 @@
+{
+  "q_len": 131,
+  "tikz_score": 21,
+  "width_cm": 17.0,
+  "attempts": [
+    {
+      "pass": 1,
+      "status": "http_error",
+      "code": 400
+    }
+  ]
+}

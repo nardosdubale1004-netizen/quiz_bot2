@@ -1,0 +1,24 @@
+[
+  {
+    "id": "PHYS-MECH-001",
+    "subject": "Physics",
+    "topic": "Vectors and Perpendicular Forces",
+    "difficulty": "medium",
+    "tags": ["mechanics", "resultant_force", "pythagorean", "2026-07-14"],
+    "question": "A block is pulled by two forces: $F_1 = 3\\text{ N}$ North and $F_2 = 4\\text{ N}$ East. What is the magnitude of the resultant force?",
+    "latex": "\\begin{tikzpicture}\n  \\draw[step=1cm, draw=gray!15, line width=0.5pt] (0,0) grid (4,3);\n  \\draw[dashed, draw=gray!60, line width=1pt] (0,0) -- (0,3) -- (4,3);\n  \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue!85!black] (0,0) -- (4,0) node[midway, below=5pt] {\\bfseries\\small 4N (East)};\n  \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red!80!black] (4,0) -- (4,3) node[midway, right=5pt] {\\bfseries\\small 3N (North)};\n  \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=violet!85!black] (0,0) -- (4,3) node[midway, above left=2pt] {\\bfseries\\itshape\\small R};\n\\end{tikzpicture}",
+    "options": ["5 N", "7 N", "1 N", "12 N"],
+    "correct_option": 0,
+    "poll_explanation": {
+      "rule": "Perpendicular Resultant Theorem: $R = \\sqrt{F_1^2 + F_2^2}$",
+      "why": "Because the East and North forces act perpendicular ($90^\\circ$) to one another, they form a right triangle.\\par Substituting components yields:\\par $R = \\sqrt{3^2 + 4^2} = \\sqrt{9 + 16} = \\sqrt{25} = 5\\text{ N}$.",
+      "poll_hint": "R = √(F1² + F2²) = √(3² + 4²) = √25 = 5 N. Perpendicular vector components follow Pythagorean theorem."
+    },
+    "options_analysis": [
+      {"why": "Correct. Application of standard Pythagorean theorem on vector components.", "example": "3-4-5 right triangle ratio."},
+      {"why": "Incorrect. This represents standard algebraic addition, which only applies to parallel collinear vectors.", "example": "Collinear addition."},
+      {"why": "Incorrect. This represents collinear subtraction, which only applies to anti-parallel vectors pointing in opposite directions.", "example": "Anti-parallel subtraction."},
+      {"why": "Incorrect. This represents the vector magnitude product, which is not physically valid for vector addition.", "example": "N/A"}
+    ]
+  }
+]

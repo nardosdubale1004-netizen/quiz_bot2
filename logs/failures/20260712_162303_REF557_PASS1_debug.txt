@@ -1,0 +1,9 @@
+--- KROKI COMPILER FAULT ---
+PASS: Adaptive Preview + Minipage
+ERROR:
+Error 400: ! Improper \prevdepth.
+\newpage ...everypar {}\fi \par \ifdim \prevdepth 
+                                                  >\z@ \vskip -\ifdim \prevd...
+l.36 }
+!  ==> Fatal error occurred, no output PDF file produced!
+ (exit code 1)

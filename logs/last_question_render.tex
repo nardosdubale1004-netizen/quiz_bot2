@@ -1,0 +1,66 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathpazo}
+\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
+
+% --- ABSOLUTE SYMMETRIC MARGINS TO PREVENT PNG RIGHT-HAND CROPPING ---
+\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
+
+\usepackage[active, tightpage]{preview}
+\setlength{\PreviewBorder}{25pt}
+
+\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\small}, label style={font=\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
+\usetikzlibrary{arrows.meta, calc, patterns}
+
+% --- STRIP CRITICAL PARAGRAPH BLANK PENALTIES TO AVOID COMPILER CRASHES ---
+\binoppenalty=10000
+\relpenalty=10000
+\sloppy
+
+\begin{document}
+\begin{preview}
+% --- MOVE CONTAINER GRAPHICS & LAYOUT INWARD TO PRESERVE CAPTURE WIDTH ---
+\begin{minipage}{16.5cm}
+\pagecolor{white}
+\centering
+\noindent\rule{16.5cm}{0pt}\par% Force full page width safely, ending paragraph cleanly
+\begin{tikzpicture}[overlay]
+  \foreach \y in {0, -10, -20, -30, -40, -50, -60, -70, -80, -90, -100} {
+    \node[opacity=0.03, color=gray, rotate=25, scale=3.5, font=\sffamily\bfseries] at (8.25, \y) {@grade12EntranceExam};
+  }
+\end{tikzpicture}
+
+\begin{minipage}{15.0cm}
+{\noindent \large \textbf{QUESTION SHEET: REF 762}} \par
+\vspace{0.3em}
+{\noindent \small \color{gray} Subject: MATHEMATICS \quad $\bullet$ \quad Topic: Vectors: Cross Product \& Area \quad $\bullet$ \quad July 13, 2026} \par
+\vspace{0.8em}
+\noindent\hrulefill \par
+\vspace{1.1em}
+{\noindent Determine the area of the parallelogram defined by the vectors $\vec{u} = 2\vec{i} + 3\vec{j}$ and $\vec{v} = -\vec{i} + 2\vec{j}$.} \par
+\end{minipage}
+\par\vspace{1.5em}
+\par\noindent\centering\leavevmode\par
+\begin{tikzpicture}[scale=0.8]
+  \draw[step=1cm, draw=gray!15, line width=0.5pt] (-2,-1) grid (3,6);
+  \draw[-{Stealth}, line width=1pt] (-2.2,0) -- (3.2,0) node[right] {$x$};
+  \draw[-{Stealth}, line width=1pt] (0,-1.2) -- (0,6.2) node[above] {$y$};
+  \fill[fill=blue!15, opacity=0.6] (0,0) -- (2,3) -- (1,5) -- (-1,2) -- cycle;
+  \draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (2,3) node[midway, right] {$\vec{u}$};
+  \draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red] (0,0) -- (-1,2) node[midway, left] {$\vec{v}$};
+  \draw[dashed, line width=1pt] (2,3) -- (1,5) -- (-1,2);
+%
+  \path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center);%
+\end{tikzpicture}
+\par
+\par\vspace{1.5em}
+\begin{minipage}{15.0cm}
+\vspace{0.5em}
+\noindent\hrulefill \par
+\vspace{0.8em}
+\centering \small \color{gray} \textbf{\textsf{Channel: t.me/grade12EntranceExam}}
+\end{minipage}
+\end{minipage}
+\end{preview}
+\end{document}

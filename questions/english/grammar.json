@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ENG-GRAM-001",
+    "subject": "English",
+    "topic": "Prepositions of Time",
+    "difficulty": "easy",
+    "tags": ["grammar", "time", "prepositions", "2026-07-16"],
+    "question": "She has been working as a professor here ___ 2012.",
+    "latex": null,
+    "options": ["for", "since", "from", "during"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Present Perfect Continuous Preposition Rules",
+      "why": "'Since' is used to identify a specific starting point in time, while 'for' is used to denote a span or duration of time.",
+      "poll_hint": "Use 'since' for a specific starting point in time (e.g., since 2012) and 'for' for continuous spans of time."
+    },
+    "options_analysis": [
+      {"why": "Incorrect. 'For' is used for duration, not starting points.", "example": "For 10 years."},
+      {"why": "Correct. 'Since' correctly links present perfect actions to their starting point.", "example": "Since 2012."},
+      {"why": "Incorrect. 'From' is typically paired with 'to' to define ranges.", "example": "From 2012 to 2015."},
+      {"why": "Incorrect. 'During' defines events happening within a span of time.", "example": "During the summer."}
+    ]
+  }
+]

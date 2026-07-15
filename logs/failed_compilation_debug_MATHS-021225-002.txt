@@ -1,0 +1,16 @@
+
+--- ATTEMPT 3 (Article + Preview (No Minipage)) ---
+Error 400: ! Improper \prevdepth.
+\newpage ...everypar {}\fi \par \ifdim \prevdepth 
+                                                  >\z@ \vskip -\ifdim \prevd...
+l.37 }
+!  ==> Fatal error occurred, no output PDF file produced!
+ (exit code 1)
+
+--- ATTEMPT 4 (Article + Preview (Scaled TikZ)) ---
+Error 400: ! Improper \prevdepth.
+\newpage ...everypar {}\fi \par \ifdim \prevdepth 
+                                                  >\z@ \vskip -\ifdim \prevd...
+l.38 }
+!  ==> Fatal error occurred, no output PDF file produced!
+ (exit code 1)
