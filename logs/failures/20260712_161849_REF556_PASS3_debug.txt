@@ -1,9 +1,0 @@
---- KROKI COMPILER FAULT ---
-PASS: Article Fallback (No Minipage)
-ERROR:
-Error 400: ! Improper \prevdepth.
-\newpage ...everypar {}\fi \par \ifdim \prevdepth 
-                                                  >\z@ \vskip -\ifdim \prevd...
-l.29 }
-!  ==> Fatal error occurred, no output PDF file produced!
- (exit code 1)
