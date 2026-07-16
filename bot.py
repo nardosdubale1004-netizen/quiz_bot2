@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import asyncio
+import threading
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -207,7 +208,7 @@ async def leaderboard_command(update: Update, context):
     
     await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
 
-async def main():
+def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
 
@@ -245,7 +246,9 @@ async def main():
         print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
         # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
-        asyncio.create_task(check_and_publish_scheduled(app))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.create_task(check_and_publish_scheduled(app))
 
         # Spawn our completely custom, lightweight async web server on port RENDER_PORT
         server = await asyncio.start_server(
@@ -294,8 +297,4 @@ async def main():
                 time.sleep(3600)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        import sys
-        sys.exit(0)
+    main()
