@@ -234,34 +234,15 @@ def main():
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
-        
-        await app.initialize()
-        await app.start()
-        
-        # Set the webhook URL with Telegram manually (pointing to /webhook)
-        await app.bot.set_webhook(
-            url=f"{PUBLIC_URL}/webhook",
+
+        # Securely launch blocking run_webhook loop natively from a synchronous context
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=int(RENDER_PORT),
+            url_path="webhook",
+            webhook_url=f"{PUBLIC_URL}/webhook",
             drop_pending_updates=True
         )
-        print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
-
-        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.create_task(check_and_publish_scheduled(app))
-
-        # Spawn our completely custom, lightweight async web server on port RENDER_PORT
-        server = await asyncio.start_server(
-            lambda r, w: handle_http_request(r, w, app, token),
-            "0.0.0.0",
-            int(RENDER_PORT)
-        )
-        print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
-        
-        # Keep both the webserver and the bot running indefinitely
-        async with server:
-            while True:
-                await asyncio.sleep(3600)
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (POLLING + CLI) ---
         print("Starting local Polling mode with CLI...", flush=True)
@@ -271,6 +252,7 @@ def main():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # Asynchronously start and poll on the background thread
             loop.run_until_complete(app.initialize())
             loop.run_until_complete(app.start())
             loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
