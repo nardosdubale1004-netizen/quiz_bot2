@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import threading
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style
@@ -68,7 +69,7 @@ async def leaderboard_command(update: Update, context):
     
     await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
 
-async def main():
+def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
 
@@ -76,7 +77,7 @@ async def main():
     token = config.get("token")
     channel = config.get("channel")
     if not token or not channel:
-        print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}", flush=True)
+        print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
         return
 
     # Initialize complete async python-telegram-bot application wrapper
@@ -95,7 +96,7 @@ async def main():
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
-        # Using the standard high-level blocking run_webhook loop for robust port-binding
+        # Using the standard high-level blocking run_webhook loop natively from a synchronous context
         app.run_webhook(
             listen="0.0.0.0",
             port=int(RENDER_PORT),
@@ -106,29 +107,36 @@ async def main():
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (POLLING + CLI) ---
         print("Starting local Polling mode with CLI...", flush=True)
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        print(f"Quiz Master Pro is online and connected to {channel}.", flush=True)
         
+        def run_polling_thread():
+            """Executes Telegram's asynchronous polling loop inside a persistent background thread."""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            loop.run_until_complete(app.initialize())
+            loop.run_until_complete(app.start())
+            loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
+            print(f"Quiz Master Pro is online and connected to {channel}.", flush=True)
+            loop.run_forever()
+
+        # Start the background polling thread loop
+        threading.Thread(target=run_polling_thread, daemon=True).start()
+
         # Run the Admin CLI only if stdin is a real terminal (TTY)
         run_cli = sys.stdin.isatty()
         if run_cli:
             try:
-                await admin_panel(app, engine)
+                # Execute the admin panel using a synchronous runner wrapper
+                asyncio.run(admin_panel(app, engine))
+            except KeyboardInterrupt:
+                pass
             finally:
-                await app.updater.stop()
-                await app.stop()
-                await app.shutdown()
                 print(f"System successfully shut down.", flush=True)
         else:
             # Fallback loop if local is run headless
+            import time
             while True:
-                await asyncio.sleep(3600)
+                time.sleep(3600)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        import sys
-        sys.exit(0)
+    main()
