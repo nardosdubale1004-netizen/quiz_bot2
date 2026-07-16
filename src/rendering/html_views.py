@@ -146,18 +146,9 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
-            is_correct = (let == correct_letter)
-            status_icon = "🟢" if is_correct else "⚪"
-
-            why_text = ""
-            example_text = ""
-            if i < len(options_analysis):
-                why_text = options_analysis[i].get('why', '')
-                example_text = options_analysis[i].get('example', '')
-
-            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
-            if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+            analysis_line = f"   {'🟢' if let == correct_letter else '⚪'} <b>{let}:</b> {beautify_markdown_math(options_analysis[i].get('why', '')) if i < len(options_analysis) else ''}"
+            if i < len(options_analysis) and options_analysis[i].get('example'):
+                analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
             analysis_list.append(analysis_line)
         analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list) + "\n"
 
@@ -249,19 +240,13 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer_note}"
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
-    """Creates interactive options keyboard as secure, deep-linked PM redirect URLs."""
+    """Creates interactive options keyboard, preserving caption structure."""
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
     is_o_complex = any(UIFactory.is_complex(o) for o in q['options'])
     
-    bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
-    buttons = []
-    for i, opt in enumerate(q['options']):
-        label = letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}"
-        # Convert the standard callback into a secure, single-student PM Deep Link
-        url = f"https://t.me/{bot_user}?start=ans_{display_id}_{i}"
-        buttons.append([InlineKeyboardButton(label, url=url)])
-        
+    # Restored callback_data mapping to process individual in-channel modal alerts natively
+    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
     return InlineKeyboardMarkup(buttons)
 
 def generate_poll_hint(q):
