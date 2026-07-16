@@ -1,6 +1,7 @@
 import httpx
 from src.config import CONFIG, Style
 from src.rendering import UIFactory, fetch_kroki_image
+from src.database import process_user_score, db_set_user_grade
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -10,7 +11,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     action, d_id = data[0], data[1]
 
     print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {query.from_user.id}")
-    tracks = engine.load_json("logs/sent_tracks.json")
+
+    # Handle grade onboarding registration
+    if action == "set_grade":
+        grade = int(d_id)
+        db_set_user_grade(query.from_user.id, grade)
+        await query.answer(f"Grade {grade} registered!")
+        await query.edit_message_text(
+            f"✅ <b>Success!</b> Your profile is registered under <b>Grade {grade}</b>.\n\n"
+            f"Use the /leaderboard command inside our private chat to check rankings, "
+            f"and check the main channel for active quizzes!",
+            parse_mode="HTML"
+        )
+        return
+
+    # Check database for active sent questions mapping
+    tracks = engine.db_get_all_tracks()
     mid_key = next((k for k, v in tracks.items() if k.isdigit() and str(v.get('display_id')) == d_id), None)
 
     if not mid_key:
@@ -39,8 +55,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             print(f" {Style.CYAN}├─ [DEBUG] Generating Answer Summary Sheet for REF: {d_id}{Style.RESET}")
             await query.answer("Generating Answer Sheet...")
 
+            # Process score metrics dynamically inside Neon database
+            user_id = query.from_user.id
+            is_correct = (user_selection == question_data['correct_option'])
+            perf_card = process_user_score(user_id, query.message.message_id, question_data['id'], is_correct)
+
             active_is_photo = (tracks[mid_key].get('msg_type') == "photo")
-            explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=active_is_photo)
+            explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=active_is_photo, perf_card=perf_card)
             retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data=f"reset|{d_id}")]])
 
             if active_is_photo:
@@ -55,7 +76,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                             media = InputMediaPhoto(media=resp.content, caption=explanation_html, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=retry_kb)
                             
-                            full_explanation_text = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=False)
+                            full_explanation_text = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=False, perf_card=perf_card)
                             if len(full_explanation_text) > len(explanation_html):
                                 if "followup_mid" in tracks[mid_key]:
                                     try: await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
@@ -68,8 +89,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                                     disable_web_page_preview=True,
                                     reply_to_message_id=query.message.message_id
                                 )
-                                tracks[mid_key]["followup_mid"] = follow_up.message_id
-                                engine.save_json("logs/sent_tracks.json", tracks)
+                                # Update database tracking
+                                engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
                         else:
                             await query.edit_message_caption(caption=explanation_html, reply_markup=retry_kb, parse_mode="HTML")
                 else:
@@ -79,12 +100,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
         elif action == "reset":
             await query.answer("Resetting view...")
-            if mid_key and "followup_mid" in tracks[mid_key]:
-                followup_mid = tracks[mid_key]["followup_mid"]
-                try: await context.bot.delete_message(chat_id=query.message.chat_id, message_id=followup_mid)
-                except Exception: pass
-                del tracks[mid_key]["followup_mid"]
-                engine.save_json("logs/sent_tracks.json", tracks)
+            if mid_key and tracks[mid_key].get("followup_mid"):
+                try: 
+                    await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
+                except Exception: 
+                    pass
+                # Update database tracking
+                engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
 
             img_url, caption, _ = UIFactory.create_question_assets(question_data, d_id)
             orig_kb = UIFactory.build_keyboard(question_data, d_id)

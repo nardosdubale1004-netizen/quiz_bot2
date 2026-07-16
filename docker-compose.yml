@@ -5,7 +5,7 @@ services:
     environment:
       - KROKI_SAFE_MODE=unsafe
     ports:
-      - "8001:8000"  # Swapped host port to 8001 to prevent port conflicts
+      - "8001:8000"
     restart: always
 
   bot:
@@ -15,10 +15,9 @@ services:
       - kroki
     stdin_open: true
     tty: true
-    environment:
-      - KROKI_URL=http://kroki:8000
+    env_file:
+      - .env  # Maps all variables inside .env to the container environment
     volumes:
       - ./logs:/app/logs
       - ./questions:/app/questions
-      - ./config.json:/app/config.json
     restart: always
