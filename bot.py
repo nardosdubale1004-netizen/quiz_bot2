@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import asyncio
-import threading
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -234,43 +233,58 @@ def main():
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
-
-        # Securely launch blocking run_webhook loop natively from a synchronous context
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=int(RENDER_PORT),
-            url_path="webhook",
-            webhook_url=f"{PUBLIC_URL}/webhook",
+        
+        await app.initialize()
+        await app.start()
+        
+        # Set the webhook URL with Telegram manually (pointing to /webhook)
+        await app.bot.set_webhook(
+            url=f"{PUBLIC_URL}/webhook",
             drop_pending_updates=True
         )
-    else:
-        # --- LOCAL DEVELOPMENT/ADMIN MODE (POLLING + CLI) ---
-        print("Starting local Polling mode with CLI...", flush=True)
-        
-        def run_polling_thread():
-            """Executes Telegram's asynchronous polling loop inside a persistent background thread."""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Asynchronously start and poll on the background thread
-            loop.run_until_complete(app.initialize())
-            loop.run_until_complete(app.start())
-            loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
-            print(f"Quiz Master Pro is online and connected to {channel}.", flush=True)
-            loop.run_forever()
+        print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
-        # Start the background polling thread loop
-        threading.Thread(target=run_polling_thread, daemon=True).start()
+        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.create_task(check_and_publish_scheduled(app))
+
+        # Spawn our completely custom, lightweight async web server on port RENDER_PORT
+        server = await asyncio.start_server(
+            lambda r, w: handle_http_request(r, w, app, token),
+            "0.0.0.0",
+            int(RENDER_PORT)
+        )
+        print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
+        
+        # Keep both the webserver and the bot running indefinitely
+        async with server:
+            while True:
+                await asyncio.sleep(3600)
+    else:
+        # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
+        print("Starting local Admin Dashboard cockpit...", flush=True)
+        
+        # We initialize and start the application so we can make outbound API calls
+        # But we DO NOT start any polling listener! This prevents all webhook/polling conflicts!
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        loop.run_until_complete(app.initialize())
+        loop.run_until_complete(app.start())
+        print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
 
         # Run the Admin CLI only if stdin is a real terminal (TTY)
         run_cli = sys.stdin.isatty()
         if run_cli:
             try:
                 # Execute the admin panel using a synchronous runner wrapper
-                asyncio.run(admin_panel(app, engine))
+                loop.run_until_complete(admin_panel(app, engine))
             except KeyboardInterrupt:
                 pass
             finally:
+                loop.run_until_complete(app.stop())
+                loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
         else:
             # Fallback loop if local is run headless
