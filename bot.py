@@ -10,8 +10,7 @@ from src.database import (
     db_get_user_profile, 
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
-    db_mark_question_as_sent,
-    db_save_track
+    db_mark_question_as_sent
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.callbacks import handle_callback
@@ -60,6 +59,7 @@ async def check_and_publish_scheduled(app):
                 async with httpx.AsyncClient() as client:
                     resp = await fetch_kroki_image(client, img_url)
                     if resp and resp.status_code == 200:
+                        print(f" {Style.GREEN}[SCHEDULER] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}", flush=True)
                         m = await app.bot.send_photo(chat_id=channel, photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
                         msg_type = "photo"
                         type_str = "premium"
