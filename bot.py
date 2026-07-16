@@ -235,9 +235,21 @@ def main():
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
-        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        
+        # Initialize and start the application so we can make outbound API calls
+        loop.run_until_complete(app.initialize())
+        loop.run_until_complete(app.start())
+        
+        # Register the webhook URL with Telegram manually
+        loop.run_until_complete(app.bot.set_webhook(
+            url=f"{PUBLIC_URL}/webhook",
+            drop_pending_updates=True
+        ))
+        print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
+
+        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
         loop.create_task(check_and_publish_scheduled(app))
 
         # Spawn our completely custom, lightweight async web server on port RENDER_PORT
@@ -247,15 +259,16 @@ def main():
             int(RENDER_PORT)
         ))
         print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
-
-        # Start the webhook listener synchronously (which is blocking and manages the loop natively)
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=int(RENDER_PORT),
-            url_path="webhook",
-            webhook_url=f"{PUBLIC_URL}/webhook",
-            drop_pending_updates=True
-        )
+        
+        # Run the single, custom asynchronous event loop forever
+        try:
+            loop.run_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            loop.run_until_complete(app.stop())
+            loop.run_until_complete(app.shutdown())
+            print(f"System successfully shut down.", flush=True)
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
