@@ -5,13 +5,77 @@ import threading
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style
-from src.database import QuizEngine, db_get_user_profile, db_get_weekly_leaderboard
-from src.rendering import get_grade_mastery_title
+from src.database import (
+    QuizEngine, 
+    db_get_user_profile, 
+    db_get_weekly_leaderboard,
+    db_get_pending_scheduled_question,
+    db_mark_question_as_sent,
+    db_save_track
+)
+from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.callbacks import handle_callback
 from src.cli import admin_panel
+import httpx
+from telegram import Poll
+from src.typography import lite_math
 
 # Global Application Orchestrator
 engine = QuizEngine()
+
+async def check_and_publish_scheduled(app):
+    """Checks the Neon database for scheduled posts, compiles graphics, and publishes them automatically."""
+    q = db_get_pending_scheduled_question()
+    if not q:
+        return
+
+    print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
+    channel = CONFIG.get("channel")
+    
+    # Track sequence number dynamically
+    tracks = engine.db_get_all_tracks()
+    last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
+
+    try:
+        has_tikz = bool(q.get("latex"))
+        if not has_tikz and not UIFactory.is_complex(q["question"]):
+            # Native Poll
+            poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
+            m = await app.bot.send_poll(
+                chat_id=channel,
+                question=lite_math(q['question'])[:290],
+                options=[lite_math(o)[:90] for o in q['options']],
+                type=Poll.QUIZ,
+                correct_option_id=q['correct_option'],
+                explanation=poll_hint,
+                explanation_parse_mode="HTML"
+            )
+            msg_type = "poll"
+            type_str = "native"
+        else:
+            # Premium Photo UI
+            img_url, caption, _ = UIFactory.create_question_assets(q, last_seq)
+            kb = UIFactory.build_keyboard(q, last_seq)
+            if img_url:
+                async with httpx.AsyncClient() as client:
+                    resp = await fetch_kroki_image(client, img_url)
+                    if resp and resp.status_code == 200:
+                        m = await app.bot.send_photo(chat_id=channel, photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
+                        msg_type = "photo"
+                        type_str = "premium"
+                    else:
+                        raise Exception("Kroki failed to compile scheduled asset.")
+            else:
+                m = await app.bot.send_message(chat_id=channel, text=caption, reply_markup=kb, parse_mode="HTML")
+                msg_type = "text"
+                type_str = "premium"
+
+        # Register in sent_tracks and mark as sent in questions table
+        engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)
+        db_mark_question_as_sent(q['id'])
+        print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
+    except Exception as e:
+        print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
 
 async def start_command(update: Update, context):
     """Greets the student and launches inline grade selection onboarding."""
@@ -88,7 +152,7 @@ def main():
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
-    # Render Web Services automatically provide the PORT environment variable
+    # Start polling or webhook services
     RENDER_PORT = os.getenv("PORT")
 
     if RENDER_PORT:
@@ -96,7 +160,11 @@ def main():
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
-        # Using the standard high-level blocking run_webhook loop natively from a synchronous context
+        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.create_task(check_and_publish_scheduled(app))
+
         app.run_webhook(
             listen="0.0.0.0",
             port=int(RENDER_PORT),
