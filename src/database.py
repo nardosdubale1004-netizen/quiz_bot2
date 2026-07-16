@@ -121,7 +121,7 @@ class QuizEngine:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
-        except Exception as e:
+          except Exception as e:
             print(f"{Style.RED}JSON Load Error ({path}): {e}{Style.RESET}")
         return {}
 
@@ -220,6 +220,41 @@ def db_get_weekly_leaderboard(grade: int):
     cur.close()
     conn.close()
     return rows
+
+def db_get_pending_scheduled_question():
+    """Retrieves the oldest un-sent question that is past its scheduled posting time."""
+    engine_db = QuizEngine()
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM questions 
+            WHERE is_sent = FALSE 
+              AND scheduled_for IS NOT NULL 
+              AND scheduled_for <= NOW()
+            ORDER BY scheduled_for ASC 
+            LIMIT 1;
+        """)
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch scheduled question: {e}")
+        return None
+
+def db_mark_question_as_sent(q_id):
+    """Marks a question as sent to prevent duplicate re-posts on the channel."""
+    engine_db = QuizEngine()
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE questions SET is_sent = TRUE WHERE id = %s;", (q_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to mark question as sent: {e}")
 
 def process_user_score(user_id, message_id, q_id, is_correct, bonus_limit=3):
     engine_db = QuizEngine()

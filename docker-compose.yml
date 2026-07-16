@@ -16,7 +16,7 @@ services:
     stdin_open: true
     tty: true
     env_file:
-      - .env  # Maps all variables inside .env to the container environment
+      - .env
     volumes:
       - ./logs:/app/logs
       - ./questions:/app/questions

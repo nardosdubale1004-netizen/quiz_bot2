@@ -5,7 +5,8 @@ from src.rendering.latex_templates import (
     assemble_layout,
     build_widescreen_solution_latex,
     sanitize_tag_to_hashtag,
-    create_explanation_assets
+    create_explanation_assets,
+    is_complex
 )
 from src.rendering.html_views import (
     build_closed_static_view,
@@ -31,12 +32,7 @@ class UIFactory:
     smart_truncate_html = staticmethod(smart_truncate_html)
     create_explanation_assets = staticmethod(create_explanation_assets)
     get_latex_url = staticmethod(get_latex_url)
-
-    @staticmethod
-    def is_complex(text):
-        if not text: return False
-        triggers = [r"\begin", r"\frac", r"\int", r"\sum", r"\vec", r"\addplot", r"\\", r"\matrix", r"\cases", r"\sqrt{"]
-        return any(t in str(text) for t in triggers)
+    is_complex = staticmethod(is_complex)
 
     @classmethod
     def create_question_assets(cls, q, display_id):
@@ -50,7 +46,7 @@ class UIFactory:
         from src.typography import lite_math
         import html
         caption_q = f"<b>{html.escape(lite_math(q['question']))}</b>"
-        
+
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
         day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
@@ -58,7 +54,7 @@ class UIFactory:
                   f"🔖 <b>Topic:</b> {q.get('topic','General')}{day_part}\n"
                   f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
                   f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-        
+
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
         img_url = cls.get_latex_url(cls.assemble_layout(question_block, figure_block, options_block)) if (question_block or figure_block or options_block) else None

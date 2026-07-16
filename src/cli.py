@@ -1,5 +1,6 @@
 import math
 import os
+import json
 import asyncio
 from src.config import CONFIG, Style
 from src.database import QuizEngine
@@ -33,12 +34,35 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [1] 📤 Send Native Poll (Simple)")
         print(f" [2] 💎 Send Hybrid UI (Smart Math/Premium)")
         print(f" [3] ⚙️  Manage Sent Quizzes (Sync/Toggle)")
+        print(f" [4] 📥 Import AI Questions (From Local JSON File)")
         print(f" [0] 🚪 Shutdown System")
 
         choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
         if choice in [None, "0"]: break
         if choice.lower() == 'c':
             clear_screen()
+            continue
+
+        # --- 4: AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
+        if choice == "4":
+            print(f"\n{Style.CYAN}--- DYNAMIC DATABASE QUESTIONS IMPORTER ---{Style.RESET}")
+            file_in = await cli.ask("<b>Enter JSON File Path (e.g. questions/ai_output.json): </b>")
+            if not file_in or not os.path.exists(file_in):
+                print(f"{Style.RED}Error: File path not found.{Style.RESET}")
+                continue
+                
+            try:
+                with open(file_in, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
+                
+                print(f"{Style.YELLOW}Importing questions to cloud Neon PostgreSQL database...{Style.RESET}")
+                count = engine.db_import_questions(raw_data)
+                if count > 0:
+                    print(f"{Style.GREEN}✅ SUCCESS: {count} questions successfully imported/synced to Neon database.{Style.RESET}")
+                else:
+                    print(f"{Style.RED}❌ FAILED: No questions were imported. Check your JSON schema.{Style.RESET}")
+            except Exception as e:
+                print(f"{Style.RED}❌ FAILED: JSON syntax error: {e}{Style.RESET}")
             continue
 
         if choice in ["1", "2"]:
@@ -89,8 +113,10 @@ async def admin_panel(app, engine: QuizEngine):
                 for idx in indices:
                     if 0 <= idx < len(target_list): to_send.append(target_list[idx])
 
-            tracks = engine.load_json("logs/sent_tracks.json")
+            tracks = engine.db_get_all_tracks()
             last_seq = tracks.get("last_seq", 100)
+            if tracks:
+                last_seq = max(v.get('display_id', 100) for v in tracks.values())
 
             for q in to_send:
                 last_seq += 1
@@ -122,19 +148,23 @@ async def admin_panel(app, engine: QuizEngine):
                             m = await app.bot.send_message(chat_id=engine.config['channel'], text=caption, reply_markup=kb, parse_mode="HTML")
                             msg_type = "text"
 
-                    tracks[str(m.message_id)] = {"q_id": q['id'], "status": "active", "display_id": last_seq, "type": "native" if choice == "1" else "premium", "msg_type": msg_type}
+                    # Save state dynamically to PostgreSQL Neon table
+                    engine.db_save_track(m.message_id, q['id'], "active", last_seq, "native" if choice == "1" else "premium", msg_type)
                     print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
                 except Exception as e:
                     print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
 
-            tracks["last_seq"] = last_seq
-            engine.save_json("logs/sent_tracks.json", tracks)
+            # Save fallback sequence
+            local_sent_tracks = engine.load_json("logs/sent_tracks.json")
+            local_sent_tracks["last_seq"] = last_seq
+            engine.save_json("logs/sent_tracks.json", local_sent_tracks)
 
         elif choice == "3":
             while True:
                 engine.refresh_database()
                 all_qs = {q['id']: q for sub_list in engine.db.values() for q in sub_list}
-                tracks = engine.load_json("logs/sent_tracks.json")
+                tracks = engine.db_get_all_tracks()
+                
                 filtered_mids = [mid for mid, data in tracks.items() if mid.isdigit() and data.get("status") == curr_stat and (curr_type == "bop" or (curr_type == "nap" and data.get("type") == "native") or (curr_type == "prp" and data.get("type") == "premium"))]
                 items = sorted(filtered_mids, key=int, reverse=True)
                 total_pages = math.ceil(len(items) / 10)
@@ -170,14 +200,13 @@ async def admin_panel(app, engine: QuizEngine):
                         if mid.isdigit() and v.get("status") != "deleted":
                             try: await app.bot.forward_message(bot_info.id, engine.config['channel'], int(mid))
                             except Exception:
-                                tracks[mid]["status"] = "deleted"
+                                # Update Postgres directly
+                                engine.db_update_track_status(mid, "deleted")
                                 modified = True
-                    if modified: engine.save_json("logs/sent_tracks.json", tracks)
                     continue
 
                 targets = [items[int(part)-1] for part in cmd.split(',') if part.strip().isdigit() and 0 <= int(part)-1 < len(items)] if cmd.lower() != 'all' else [m for m in items[page*10 : (page+1)*10] if tracks[m].get('type') != 'native']
                 
-                tracks_modified = False
                 for mid in set(targets):
                     v = tracks[mid]
                     q = all_qs.get(v['q_id'])
@@ -203,12 +232,14 @@ async def admin_panel(app, engine: QuizEngine):
                                             full_text = UIFactory.build_closed_static_view(q, ref, compact=False)
                                             if len(full_text) > len(media.caption):
                                                 follow_up = await app.bot.send_message(chat_id=engine.config['channel'], text=full_text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=int(mid))
-                                                v["followup_mid"] = follow_up.message_id
+                                                engine.db_save_track(mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
                                         else:
                                             await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=UIFactory.build_closed_static_view(q, ref, compact=True), parse_mode="HTML", reply_markup=None)
+                                            engine.db_update_track_status(mid, "closed", followup_mid=None)
                                 else:
                                     await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(mid), text=UIFactory.build_closed_static_view(q, ref, compact=False), parse_mode="HTML", reply_markup=None)
-                            tracks[mid]["status"] = "closed"
+                                    engine.db_update_track_status(mid, "closed", followup_mid=None)
+                            engine.db_update_track_status(mid, "closed")
                         else:
                             if v.get('type') == 'native': continue
                             img_url, cap, _ = UIFactory.create_question_assets(q, ref)
@@ -221,9 +252,7 @@ async def admin_panel(app, engine: QuizEngine):
                                         await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
                             else:
                                 await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(mid), text=cap, reply_markup=kb, parse_mode="HTML")
-                            tracks[mid]["status"] = "active"
-                        tracks_modified = True
+                            engine.db_update_track_status(mid, "active")
                     except Exception as e:
                         print(f"Error processing REF:{ref} | {e}")
-                if tracks_modified: engine.save_json("logs/sent_tracks.json", tracks)
                 await asyncio.sleep(0.5)

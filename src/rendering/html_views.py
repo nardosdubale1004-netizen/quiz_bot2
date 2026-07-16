@@ -2,7 +2,7 @@ import html
 import re
 from src.config import CONFIG
 from src.typography import lite_math, beautify_markdown_math
-from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag
+from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag, is_complex
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def replace_code_with_italic(text: str) -> str:
@@ -166,7 +166,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    is_o_complex = any(UIFactory.is_complex(o) for o in q['options'])
+    is_o_complex = any(is_complex(o) for o in q['options'])
     buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
     return InlineKeyboardMarkup(buttons)
 

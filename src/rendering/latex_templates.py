@@ -2,6 +2,12 @@ import re
 from datetime import datetime
 from src.typography import UNICODE_TO_LATEX
 
+def is_complex(text):
+    """Determines if a string contains advanced mathematical expressions or layout symbols."""
+    if not text: return False
+    triggers = [r"\begin", r"\frac", r"\int", r"\sum", r"\vec", r"\addplot", r"\\", r"\matrix", r"\cases", r"\sqrt{"]
+    return any(t in str(text) for t in triggers)
+
 def escape_latex(text: str) -> str:
     if not text:
         return ""
@@ -254,13 +260,15 @@ def create_explanation_assets(q, user_idx, display_id):
     user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
-    from src.rendering import UIFactory
-    is_q_complex = UIFactory.is_complex(q.get('question', ''))
+    is_q_complex = is_complex(q.get('question', ''))
     has_tikz = bool(q.get("latex"))
 
+    # Only build widescreen LaTeX solution graphic if there are complex formulas or TikZ diagrams
     latex_code = None
     if has_tikz or is_q_complex:
-        latex_code = build_widescreen_solution_latex(q, display_id, UIFactory.WATERMARK, get_day_from_tags(q.get('tags', [])))
+        # Avoid direct import to bypass partial circular initialization
+        from src.rendering.kroki_client import KROKI_ENDPOINT
+        latex_code = build_widescreen_solution_latex(q, display_id, f"@{display_id}", get_day_from_tags(q.get('tags', [])))
 
     text_parts = [
         f"📚 <b>SOLUTION SHEET</b> | REF: <code>{display_id}</code>",
