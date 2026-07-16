@@ -6,7 +6,8 @@ from src.rendering.latex_templates import (
     build_widescreen_solution_latex,
     sanitize_tag_to_hashtag,
     create_explanation_assets,
-    is_complex
+    is_complex,
+    has_real_diagram
 )
 from src.rendering.html_views import (
     build_closed_static_view,
@@ -15,11 +16,12 @@ from src.rendering.html_views import (
     replace_code_with_italic,
     smart_truncate_html,
     generate_poll_hint,
-    get_grade_mastery_title
+    get_grade_mastery_title,
+    build_interactive_keyboard
 )
 
 class UIFactory:
-    WATERMARK = "@grade12EntranceExam"  # Restored class-level parameter for sheet watermarks
+    WATERMARK = "@grade12EntranceExam"
     escape_latex = staticmethod(escape_latex)
     build_figure_block = staticmethod(build_figure_block)
     assemble_layout = staticmethod(assemble_layout)
@@ -29,20 +31,26 @@ class UIFactory:
     build_closed_static_view = staticmethod(build_closed_static_view)
     build_answered_view = staticmethod(build_answered_view)
     build_keyboard = staticmethod(build_keyboard)
+    build_interactive_keyboard = staticmethod(build_interactive_keyboard)
     replace_code_with_italic = staticmethod(replace_code_with_italic)
     smart_truncate_html = staticmethod(smart_truncate_html)
     create_explanation_assets = staticmethod(create_explanation_assets)
     get_latex_url = staticmethod(get_latex_url)
     is_complex = staticmethod(is_complex)
+    has_real_diagram = staticmethod(has_real_diagram)
 
     @classmethod
     def create_question_assets(cls, q, display_id):
-        is_q_complex = cls.is_complex(q.get('question', ''))
-        is_o_complex = any(cls.is_complex(o) for o in q.get('options', []))
-        has_tikz = bool(q.get("latex"))
-        question_block = cls.build_question_text_block(q, display_id) if (is_q_complex or has_tikz) else None
-        figure_block = cls.build_figure_block(q, add_strut=True) if has_tikz else None
-        options_block = cls.build_options_block(q) if is_o_complex else None
+        # Image layouts are ONLY compiled if the question contains an active diagram in its latex field
+        has_tikz = cls.has_real_diagram(q)
+        
+        if has_tikz:
+            question_block = cls.build_question_text_block(q, display_id)
+            figure_block = cls.build_figure_block(q, add_strut=True)
+            options_block = cls.build_options_block(q)
+            img_url = cls.get_latex_url(cls.assemble_layout(cls.WATERMARK, question_block, figure_block, options_block))
+        else:
+            img_url = None
 
         from src.typography import lite_math
         import html
@@ -58,9 +66,6 @@ class UIFactory:
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
-        
-        # Passes the restored class WATERMARK attribute to the layout compiler cleanly
-        img_url = cls.get_latex_url(cls.assemble_layout(cls.WATERMARK, question_block, figure_block, options_block)) if (question_block or figure_block or options_block) else None
         return img_url, final_caption, None
 
     @classmethod

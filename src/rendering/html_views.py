@@ -1,7 +1,7 @@
 import html
 import re
 from src.config import CONFIG
-from src.typography import lite_math, beautify_markdown_math, clean_latex_to_unicode  # Added clean_latex_to_unicode import
+from src.typography import lite_math, beautify_markdown_math
 from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag, is_complex
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -146,9 +146,18 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
-            analysis_line = f"   {'🟢' if let == correct_letter else '⚪'} <b>{let}:</b> {beautify_markdown_math(options_analysis[i].get('why', '')) if i < len(options_analysis) else ''}"
-            if i < len(options_analysis) and options_analysis[i].get('example'):
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
+            is_correct = (let == correct_letter)
+            status_icon = "🟢" if is_correct else "⚪"
+
+            why_text = ""
+            example_text = ""
+            if i < len(options_analysis):
+                why_text = options_analysis[i].get('why', '')
+                example_text = options_analysis[i].get('example', '')
+
+            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            if example_text:
+                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
         analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list) + "\n"
 
@@ -240,9 +249,17 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer_note}"
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
+    """Creates a single prominent deep-linked redirect button for the public channel."""
+    bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
+    url = f"https://t.me/{bot_user}?start=workspace_{display_id}"
+    button = [[InlineKeyboardButton("🎯 ENTER EXAM WORKSPACE", url=url)]]
+    return InlineKeyboardMarkup(button)
+
+def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
+    """Creates the interactive options keyboard (callback buttons) sent only inside private PM chats."""
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    is_o_complex = any(is_complex(o) for o in q['options'])
+    is_o_complex = any(UIFactory.is_complex(o) for o in q['options'])
     buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
     return InlineKeyboardMarkup(buttons)
 
