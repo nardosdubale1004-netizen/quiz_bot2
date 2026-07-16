@@ -1,0 +1,485 @@
+[
+  {
+    "id": "MATH-EASY-001",
+    "subject": "Mathematics",
+    "topic": "Algebra: Linear Equations",
+    "difficulty": "easy",
+    "tags": ["algebra", "linear", "2026-07-20"],
+    "question": "Solve $2x+3=11$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["2", "3", "4", "5"],
+    "correct_option": 2,
+    "poll_explanation": {
+      "rule": "For $ax+b=c$, subtract $b$ then divide by $a$.",
+      "why": "$2x=8$, so $x=4$.",
+      "poll_hint": "2x+3=11 ⇒ 2x=8 ⇒ x=4"
+    },
+    "options_analysis": [
+      {"why": "Too small.", "example": "Gives 7, not 11."},
+      {"why": "Common arithmetic slip.", "example": "2·3+3=9."},
+      {"why": "Correct solution.", "example": "2·4+3=11."},
+      {"why": "Too large.", "example": "2·5+3=13."}
+    ],
+    "scheduled_for": "2026-07-20T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-001",
+    "subject": "Mathematics",
+    "topic": "Calculus: Definite Integrals",
+    "difficulty": "medium",
+    "tags": ["calculus", "integrals", "2026-07-20"],
+    "question": "Find $\\int_{0}^{2} x^2\\,dx$.",
+    "latex": "\\begin{axis}[premium_style]\\end{axis}",
+    "options": ["4/3", "8/3", "2", "3"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "$\\int_a^b f(x)dx=F(b)-F(a)$.",
+      "why": "$[x^3/3]*0^2=8/3$.",
+      "poll_hint": "∫₀²x²dx=[x³/3]₀²=8/3"
+    },
+    "options_analysis": [
+      {"why": "Missed upper value.", "example": "Incorrect evaluation."},
+      {"why": "Correct area.", "example": "8/3."},
+      {"why": "Too small.", "example": "Not integral value."},
+      {"why": "Arithmetic error.", "example": "Rounded badly."}
+    ],
+    "scheduled_for": "2026-07-20T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-001",
+    "subject": "Mathematics",
+    "topic": "Vectors: Dot Product",
+    "difficulty": "hard",
+    "tags": ["vectors", "proof", "2026-07-20"],
+    "question": "If $\\vec a=(2,3)$ and $\\vec b=(4,-1)$, find $\\vec a\\cdot\\vec b$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["5", "7", "8", "11"],
+    "correct_option": 0,
+    "poll_explanation": {
+      "rule": "$\\vec a\\cdot\\vec b=a_xb_x+a_yb_y$.",
+      "why": "$2\\cdot4+3\\cdot(-1)=5$.",
+      "poll_hint": "(2,3)·(4,−1)=8−3=5"
+    },
+    "options_analysis": [
+      {"why": "Correct.", "example": "8−3=5."},
+      {"why": "Sign mistake.", "example": "8−1."},
+      {"why": "Ignored y-part.", "example": "Only 2·4."},
+      {"why": "Added magnitudes.", "example": "Not dot product."}
+    ],
+    "scheduled_for": "2026-07-20T18:00:00+03:00"
+  },
+  {
+    "id": "MATH-EASY-002",
+    "subject": "Mathematics",
+    "topic": "Geometry: Triangle Angles",
+    "difficulty": "easy",
+    "tags": ["geometry", "angles", "2026-07-21"],
+    "question": "The angles of a triangle sum to?",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["90°", "180°", "270°", "360°"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Interior angles of a triangle total $180^\\circ$.",
+      "why": "A fundamental geometry fact.",
+      "poll_hint": "Triangle interior angles = 180°"
+    },
+    "options_analysis": [
+      {"why": "Right angle only.", "example": "Not all angles."},
+      {"why": "Correct.", "example": "180°."},
+      {"why": "Too large.", "example": "Not triangle sum."},
+      {"why": "Full turn.", "example": "Not applicable."}
+    ],
+    "scheduled_for": "2026-07-21T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-002",
+    "subject": "Mathematics",
+    "topic": "Quadratic Equations",
+    "difficulty": "medium",
+    "tags": ["quadratic", "roots", "2026-07-21"],
+    "question": "Solve $x^2-5x+6=0$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["1,6", "2,3", "-2,-3", "-1,-6"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Factor quadratic expressions.",
+      "why": "$(x-2)(x-3)=0$.",
+      "poll_hint": "x²−5x+6=(x−2)(x−3)"
+    },
+    "options_analysis": [
+      {"why": "Product mismatch.", "example": "Not roots."},
+      {"why": "Correct.", "example": "2 and 3."},
+      {"why": "Wrong signs.", "example": "Do not satisfy."},
+      {"why": "Wrong values.", "example": "Not roots."}
+    ],
+    "scheduled_for": "2026-07-21T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-002",
+    "subject": "Mathematics",
+    "topic": "Matrices: Determinants",
+    "difficulty": "hard",
+    "tags": ["matrices", "determinant", "2026-07-21"],
+    "question": "Find the determinant of $\\begin{pmatrix}2&1\\\\5&3\\end{pmatrix}$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["1", "-1", "6", "11"],
+    "correct_option": 0,
+    "poll_explanation": {
+      "rule": "For $2\\times2$, determinant is $ad-bc$.",
+      "why": "$2\\cdot3-1\\cdot5=1$.",
+      "poll_hint": "ad−bc = 6−5 = 1"
+    },
+    "options_analysis": [
+      {"why": "Correct.", "example": "1."},
+      {"why": "Sign error.", "example": "5−6."},
+      {"why": "Used ad only.", "example": "Ignored bc."},
+      {"why": "Added entries.", "example": "Not determinant."}
+    ],
+    "scheduled_for": "2026-07-21T18:00:00+03:00"
+  },
+  {
+    "id": "MATH-EASY-003",
+    "subject": "Mathematics",
+    "topic": "Indices",
+    "difficulty": "easy",
+    "tags": ["powers", "indices", "2026-07-22"],
+    "question": "Evaluate $2^3$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["6", "8", "9", "12"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Repeated multiplication.",
+      "why": "$2\\cdot2\\cdot2=8$.",
+      "poll_hint": "2³ = 2×2×2 = 8"
+    },
+    "options_analysis": [
+      {"why": "Multiplied incorrectly.", "example": "2×3."},
+      {"why": "Correct.", "example": "8."},
+      {"why": "Confused with 3².", "example": "9."},
+      {"why": "Incorrect.", "example": "Not power value."}
+    ],
+    "scheduled_for": "2026-07-22T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-003",
+    "subject": "Mathematics",
+    "topic": "Probability",
+    "difficulty": "medium",
+    "tags": ["probability", "dice", "2026-07-22"],
+    "question": "What is the probability of rolling an even number on a fair die?",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["1/6", "1/3", "1/2", "2/3"],
+    "correct_option": 2,
+    "poll_explanation": {
+      "rule": "Probability = favorable/total.",
+      "why": "3 even outcomes out of 6.",
+      "poll_hint": "3 favorable ÷ 6 total = 1/2"
+    },
+    "options_analysis": [
+      {"why": "One outcome only.", "example": "1/6."},
+      {"why": "Counted two outcomes.", "example": "2/6."},
+      {"why": "Correct.", "example": "3/6=1/2."},
+      {"why": "Too large.", "example": "4/6."}
+    ],
+    "scheduled_for": "2026-07-22T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-003",
+    "subject": "Mathematics",
+    "topic": "Complex Numbers",
+    "difficulty": "hard",
+    "tags": ["complex", "algebra", "2026-07-22"],
+    "question": "Compute $(1+i)^2$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["2i", "2+2i", "-2", "1+2i"],
+    "correct_option": 0,
+    "poll_explanation": {
+      "rule": "Use expansion and $i^2=-1$.",
+      "why": "$1+2i+i^2=2i$.",
+      "poll_hint": "(1+i)²=1+2i−1=2i"
+    },
+    "options_analysis": [
+      {"why": "Correct.", "example": "2i."},
+      {"why": "Forgot i².", "example": "Left +1."},
+      {"why": "Wrong simplification.", "example": "Ignored 2i."},
+      {"why": "Arithmetic error.", "example": "Extra 1."}
+    ],
+    "scheduled_for": "2026-07-22T18:00:00+03:00"
+  },
+  {
+    "id": "MATH-EASY-004",
+    "subject": "Mathematics",
+    "topic": "Coordinate Geometry",
+    "difficulty": "easy",
+    "tags": ["coordinates", "distance", "2026-07-23"],
+    "question": "What is the distance between $(0,0)$ and $(3,4)$?",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["5", "6", "7", "4"],
+    "correct_option": 0,
+    "poll_explanation": {
+      "rule": "Distance formula.",
+      "why": "$\\sqrt{3^2+4^2}=5$.",
+      "poll_hint": "√(3²+4²)=5"
+    },
+    "options_analysis": [
+      {"why": "Correct.", "example": "3-4-5 triangle."},
+      {"why": "Too large.", "example": "Not hypotenuse."},
+      {"why": "Added coordinates.", "example": "3+4."},
+      {"why": "Used one coordinate.", "example": "4 only."}
+    ],
+    "scheduled_for": "2026-07-23T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-004",
+    "subject": "Mathematics",
+    "topic": "Logarithms",
+    "difficulty": "medium",
+    "tags": ["logs", "algebra", "2026-07-23"],
+    "question": "Evaluate $\\log_2 32$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["4", "5", "6", "32"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "$\\log_b a=n$ means $b^n=a$.",
+      "why": "2⁵ = 32.",
+      "poll_hint": "2⁵ = 32"
+    },
+    "options_analysis": [
+      {"why": "Too small.", "example": "2⁴=16."},
+      {"why": "Correct.", "example": "5."},
+      {"why": "Too large.", "example": "2⁶=64."},
+      {"why": "Confused value and log.", "example": "32."}
+    ],
+    "scheduled_for": "2026-07-23T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-004",
+    "subject": "Mathematics",
+    "topic": "Differentiation",
+    "difficulty": "hard",
+    "tags": ["calculus", "derivative", "2026-07-23"],
+    "question": "Find $\\frac{d}{dx}(x^3\\sin x)$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["$3x^2\\sin x+x^3\\cos x$", "$3x^2\\cos x$", "$x^3\\cos x$", "$3x^2\\sin x$"],
+    "correct_option": 0,
+    "poll_explanation": {
+      "rule": "Use the product rule.",
+      "why": "$(uv)'=u'v+uv'$.",
+      "poll_hint": "(uv)' = u'v + uv'"
+    },
+    "options_analysis": [
+      {"why": "Correct.", "example": "Product rule."},
+      {"why": "Missing term.", "example": "Lost x³sinx."},
+      {"why": "Only second part.", "example": "Incomplete."},
+      {"why": "Only first part.", "example": "Incomplete."}
+    ],
+    "scheduled_for": "2026-07-23T18:00:00+03:00"
+  },
+  {
+    "id": "MATH-EASY-005",
+    "subject": "Mathematics",
+    "topic": "Percentages",
+    "difficulty": "easy",
+    "tags": ["percent", "arithmetic", "2026-07-24"],
+    "question": "What is 25% of 80?",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["15", "20", "25", "30"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "25% = 1/4.",
+      "why": "80/4=20.",
+      "poll_hint": "25% of 80 = 80÷4"
+    },
+    "options_analysis": [
+      {"why": "Too small.", "example": "Incorrect quarter."},
+      {"why": "Correct.", "example": "20."},
+      {"why": "Common error.", "example": "Not 25."},
+      {"why": "Too large.", "example": "Not quarter."}
+    ],
+    "scheduled_for": "2026-07-24T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-005",
+    "subject": "Mathematics",
+    "topic": "Sequences",
+    "difficulty": "medium",
+    "tags": ["sequences", "arithmetic", "2026-07-24"],
+    "question": "Find the 10th term of the arithmetic sequence 3, 7, 11, ...",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["35", "39", "43", "47"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "$a_n=a_1+(n-1)d$.",
+      "why": "$3+9\\cdot4=39$.",
+      "poll_hint": "a₁₀=3+9×4=39"
+    },
+    "options_analysis": [
+      {"why": "Used 8 steps.", "example": "Too low."},
+      {"why": "Correct.", "example": "39."},
+      {"why": "Extra difference.", "example": "Too high."},
+      {"why": "Far too high.", "example": "Wrong n."}
+    ],
+    "scheduled_for": "2026-07-24T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-005",
+    "subject": "Mathematics",
+    "topic": "Vector Magnitude",
+    "difficulty": "hard",
+    "tags": ["vectors", "magnitude", "2026-07-24"],
+    "question": "Find $|\\vec v|$ for $\\vec v=(1,2,2)$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["2", "3", "4", "5"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Magnitude is $\\sqrt{x^2+y^2+z^2}$.",
+      "why": "$\\sqrt{1+4+4}=3$.",
+      "poll_hint": "√(1+4+4)=3"
+    },
+    "options_analysis": [
+      {"why": "Too small.", "example": "Ignored terms."},
+      {"why": "Correct.", "example": "3."},
+      {"why": "Forgot square root.", "example": "9→3."},
+      {"why": "Too large.", "example": "Incorrect sum."}
+    ],
+    "scheduled_for": "2026-07-24T18:00:00+03:00"
+  },
+  {
+    "id": "MATH-EASY-006",
+    "subject": "Mathematics",
+    "topic": "Fractions",
+    "difficulty": "easy",
+    "tags": ["fractions", "arithmetic", "2026-07-25"],
+    "question": "Compute $\\frac{1}{2}+\\frac{1}{4}$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["1/2", "2/4", "3/4", "1"],
+    "correct_option": 2,
+    "poll_explanation": {
+      "rule": "Use common denominators.",
+      "why": "$2/4+1/4=3/4$.",
+      "poll_hint": "2/4 + 1/4 = 3/4"
+    },
+    "options_analysis": [
+      {"why": "Ignored addition.", "example": "1/2."},
+      {"why": "Equivalent to 1/2.", "example": "Not sum."},
+      {"why": "Correct.", "example": "3/4."},
+      {"why": "Too large.", "example": "Not whole."}
+    ],
+    "scheduled_for": "2026-07-25T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-006",
+    "subject": "Mathematics",
+    "topic": "Trigonometry",
+    "difficulty": "medium",
+    "tags": ["trigonometry", "angles", "2026-07-25"],
+    "question": "Find $\\sin 30^\\circ$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["0", "1/2", "$\\sqrt2/2$", "1"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Special-angle values.",
+      "why": "$\\sin30^\\circ=1/2$.",
+      "poll_hint": "sin30° = 1/2"
+    },
+    "options_analysis": [
+      {"why": "Incorrect.", "example": "Not zero."},
+      {"why": "Correct.", "example": "1/2."},
+      {"why": "This is 45°.", "example": "√2/2."},
+      {"why": "This is 90°.", "example": "1."}
+    ],
+    "scheduled_for": "2026-07-25T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-006",
+    "subject": "Mathematics",
+    "topic": "Limits",
+    "difficulty": "hard",
+    "tags": ["limits","calculus","2026-07-25"],
+    "question": "Evaluate $\\max_{x\\to2}\\frac{x^2-4}{x-2}$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["2", "3", "4", "Undefined"],
+    "correct_option": 2,
+    "poll_explanation": {
+      "rule": "Factor before substitution.",
+      "why": "$(x-2)(x+2)/(x-2)=x+2$.",
+      "poll_hint": "Cancel (x−2), then x+2 → 4"
+    },
+    "options_analysis": [
+      {"why": "Wrong substitution.", "example": "Too small."},
+      {"why": "Arithmetic error.", "example": "2+1."},
+      {"why": "Correct.", "example": "4."},
+      {"why": "Removable discontinuity.", "example": "Limit exists."}
+    ],
+    "scheduled_for": "2026-07-25T18:00:00+03:00"
+  },
+  {
+    "id": "MATH-EASY-007",
+    "subject": "Mathematics",
+    "topic": "Statistics",
+    "difficulty": "easy",
+    "tags": ["statistics", "mean", "2026-07-26"],
+    "question": "Find the mean of 2, 4, 6, 8.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["4", "5", "6", "7"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Mean = sum/count.",
+      "why": "20/4=5.",
+      "poll_hint": "(2+4+6+8)÷4 = 5"
+    },
+    "options_analysis": [
+      {"why": "Not average.", "example": "Too low."},
+      {"why": "Correct.", "example": "5."},
+      {"why": "Not average.", "example": "Too high."},
+      {"why": "Incorrect mean.", "example": "Too high."}
+    ],
+    "scheduled_for": "2026-07-26T08:00:00+03:00"
+  },
+  {
+    "id": "MATH-MED-007",
+    "subject": "Mathematics",
+    "topic": "Exponential Functions",
+    "difficulty": "medium",
+    "tags": ["exponential","growth","2026-07-26"],
+    "question": "Solve $3^{x}=81$.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["3", "4", "5", "6"],
+    "correct_option": 1,
+    "poll_explanation": {
+      "rule": "Express both sides with same base.",
+      "why": "$81=3^4$.",
+      "poll_hint": "81 = 3⁴"
+    },
+    "options_analysis": [
+      {"why": "Too low.", "example": "3³=27."},
+      {"why": "Correct.", "example": "x=4."},
+      {"why": "Too high.", "example": "3⁵=243."},
+      {"why": "Far too high.", "example": "3⁶=729."}
+    ],
+    "scheduled_for": "2026-07-26T12:00:00+03:00"
+  },
+  {
+    "id": "MATH-HARD-007",
+    "subject": "Mathematics",
+    "topic": "Analytic Geometry",
+    "difficulty": "hard",
+    "tags": ["circles","geometry","2026-07-26"],
+    "question": "For the circle $x^2+y^2-6x+8y=0$, find the radius.",
+    "latex": "\\begin{tikzpicture}\\end{tikzpicture}",
+    "options": ["3", "4", "5", "6"],
+    "correct_option": 2,
+    "poll_explanation": {
+      "rule": "Complete the square.",
+      "why": "$(x-3)^2+(y+4)^2=25$.",
+      "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
+    },
+    "options_analysis": [
+      {"why": "Used x-shift only.", "example": "3."},
+      {"why": "Used y-shift only.", "example": "4."},
+      {"why": "Correct.", "example": "√25=5."},
+      {"why": "Diameter confusion.", "example": "Too large."}
+    ],
+    "scheduled_for": "2026-07-26T18:00:00+03:00"
+  }
+]
