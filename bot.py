@@ -89,27 +89,49 @@ async def main():
 
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
 
-    print(f"{Style.GREEN}Quiz Master Pro is online and connected to {channel}.{Style.RESET}")
+    # Render Web Services automatically provide the PORT environment variable
+    RENDER_PORT = os.getenv("PORT")
 
-    # Headless Cloud Guard: Automatically detect if we are running in an interactive terminal (TTY)
-    run_cli = sys.stdin.isatty()
-
-    if run_cli:
-        try:
-            # Run dashboard panel thread loops concurrently with Telegram's polling scheduler
-            await admin_panel(app, engine)
-        finally:
-            await app.updater.stop()
-            await app.stop()
-            await app.shutdown()
-            print(f"{Style.YELLOW}System successfully shut down.{Style.RESET}")
-    else:
-        print(f"{Style.GREEN}Bot running in headless cloud daemon mode.{Style.RESET}")
-        # Keep the background polling event loop alive indefinitely
+    if RENDER_PORT:
+        # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
+        print(f"{Style.GREEN}Starting cloud Webhook listener on port {RENDER_PORT}...{Style.RESET}")
+        
+        # Point this to your Render Service URL (e.g., https://your-service.onrender.com)
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
+        
+        await app.updater.start_webhook(
+            listen="0.0.0.0",
+            port=int(RENDER_PORT),
+            url_path=token,
+            webhook_url=f"{PUBLIC_URL}/{token}",
+            drop_pending_updates=True
+        )
+        print(f"{Style.GREEN}Webhook is active on {PUBLIC_URL}.{Style.RESET}")
+        
+        # Keep the headless cloud event loop alive indefinitely
         while True:
             await asyncio.sleep(3600)
+    else:
+        # --- LOCAL DEVELOPMENT/ADMIN MODE (POLLING + CLI) ---
+        print(f"{Style.YELLOW}Starting local Polling mode with CLI...{Style.RESET}")
+        await app.updater.start_polling(drop_pending_updates=True)
+        print(f"{Style.GREEN}Quiz Master Pro is online and connected to {channel}.{Style.RESET}")
+        
+        # Run the Admin CLI only if stdin is a real terminal (TTY)
+        run_cli = sys.stdin.isatty()
+        if run_cli:
+            try:
+                await admin_panel(app, engine)
+            finally:
+                await app.updater.stop()
+                await app.stop()
+                await app.shutdown()
+                print(f"{Style.YELLOW}System successfully shut down.{Style.RESET}")
+        else:
+            # Fallback loop if local is run headless
+            while True:
+                await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     try:
