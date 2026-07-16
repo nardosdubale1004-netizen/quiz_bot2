@@ -57,7 +57,9 @@ class UIFactory:
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
-        img_url = cls.get_latex_url(cls.assemble_layout(question_block, figure_block, options_block)) if (question_block or figure_block or options_block) else None
+        
+        # Corrected parameter alignment: passing cls.WATERMARK explicitly as the first argument
+        img_url = cls.get_latex_url(cls.assemble_layout(cls.WATERMARK, question_block, figure_block, options_block)) if (question_block or figure_block or options_block) else None
         return img_url, final_caption, None
 
     @classmethod
