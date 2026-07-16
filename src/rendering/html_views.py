@@ -108,7 +108,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             if i < len(options_analysis) and options_analysis[i].get('example'):
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
             analysis_list.append(analysis_line)
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n\n{'\n'.join(analysis_list)}"
+        
+        # Joined outside the f-string expression to preserve Python 3.11 backward compatibility
+        analysis_str = "\n".join(analysis_list)
+        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n\n{analysis_str}"
         footer_note = ""
 
     spoiler_content = replace_code_with_italic(spoiler_content)
@@ -143,9 +146,18 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
-            analysis_line = f"   {'🟢' if let == correct_letter else '⚪'} <b>{let}:</b> {beautify_markdown_math(options_analysis[i].get('why', '')) if i < len(options_analysis) else ''}"
-            if i < len(options_analysis) and options_analysis[i].get('example'):
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
+            is_correct = (let == correct_letter)
+            status_icon = "🟢" if is_correct else "⚪"
+
+            why_text = ""
+            example_text = ""
+            if i < len(options_analysis):
+                why_text = options_analysis[i].get('why', '')
+                example_text = options_analysis[i].get('example', '')
+
+            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            if example_text:
+                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
         analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list) + "\n"
 
@@ -191,9 +203,18 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
-            analysis_line = f"   {'🟢' if let == correct_letter else '⚪'} <b>{let}:</b> {beautify_markdown_math(options_analysis[i].get('why', '')) if i < len(options_analysis) else ''}"
-            if i < len(options_analysis) and options_analysis[i].get('example'):
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
+            is_correct = (let == correct_letter)
+            status_icon = "🟢" if is_correct else "⚪"
+
+            why_text = ""
+            example_text = ""
+            if i < len(options_analysis):
+                why_text = options_analysis[i].get('why', '')
+                example_text = options_analysis[i].get('example', '')
+
+            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            if example_text:
+                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
         analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list) + "\n"
         footer_note = ""
