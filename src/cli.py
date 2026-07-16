@@ -222,14 +222,17 @@ async def admin_panel(app, engine: QuizEngine):
                             else:
                                 is_photo = (v.get('msg_type') == "photo")
                                 if is_photo:
+                                    print(f" {Style.CYAN}├─ [CLOSE] Rendering widescreen Solution Sheet graphic for REF: {ref}...{Style.RESET}")
                                     sol_latex = UIFactory.build_widescreen_solution_latex(q, ref)
                                     sol_img_url = UIFactory.get_latex_url(sol_latex)
                                     async with httpx.AsyncClient() as client:
                                         resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
                                         if resp and resp.status_code == 200:
-                                            media = InputMediaPhoto(media=resp.content, caption=UIFactory.build_closed_static_view(q, ref, compact=True), parse_mode="HTML")
+                                            # Passes the continuation parameter to generate a completely distinct, un-duplicated derivation sheet
+                                            closed_view = UIFactory.build_closed_static_view(q, ref, compact=True)
+                                            media = InputMediaPhoto(media=resp.content, caption=closed_view, parse_mode="HTML")
                                             await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=None)
-                                            full_text = UIFactory.build_closed_static_view(q, ref, compact=False)
+                                            full_text = UIFactory.build_closed_static_view(q, ref, compact=False, continuation=True)
                                             if len(full_text) > len(media.caption):
                                                 follow_up = await app.bot.send_message(chat_id=engine.config['channel'], text=full_text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=int(mid))
                                                 engine.db_save_track(mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)

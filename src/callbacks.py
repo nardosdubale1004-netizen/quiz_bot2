@@ -76,7 +76,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                             media = InputMediaPhoto(media=resp.content, caption=explanation_html, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=retry_kb)
                             
-                            full_explanation_text = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=False, perf_card=perf_card)
+                            # Passes the continuation parameter to generate a completely distinct, un-duplicated derivation sheet
+                            full_explanation_text = UIFactory.build_answered_view(
+                                question_data, d_id, user_selection, compact=False, perf_card=perf_card, continuation=True
+                            )
                             if len(full_explanation_text) > len(explanation_html):
                                 if "followup_mid" in tracks[mid_key]:
                                     try: await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
