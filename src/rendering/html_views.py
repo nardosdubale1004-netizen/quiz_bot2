@@ -249,10 +249,19 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer_note}"
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
+    """Creates interactive options keyboard as secure, deep-linked PM redirect URLs."""
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    is_o_complex = any(is_complex(o) for o in q['options'])
-    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
+    is_o_complex = any(UIFactory.is_complex(o) for o in q['options'])
+    
+    bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
+    buttons = []
+    for i, opt in enumerate(q['options']):
+        label = letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}"
+        # Convert the standard callback into a secure, single-student PM Deep Link
+        url = f"https://t.me/{bot_user}?start=ans_{display_id}_{i}"
+        buttons.append([InlineKeyboardButton(label, url=url)])
+        
     return InlineKeyboardMarkup(buttons)
 
 def generate_poll_hint(q):

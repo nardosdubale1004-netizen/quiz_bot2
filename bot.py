@@ -12,7 +12,8 @@ from src.database import (
     db_get_user_profile, 
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
-    db_mark_question_as_sent
+    db_mark_question_as_sent,
+    process_user_score
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.callbacks import handle_callback
@@ -153,7 +154,63 @@ async def check_and_publish_scheduled(app):
         print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
 
 async def start_command(update: Update, context):
-    """Greets the student and launches inline grade selection onboarding."""
+    """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz answers."""
+    user_id = update.effective_user.id
+    args = context.args
+    
+    # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
+    if args and args[0].startswith("ans_"):
+        payload = args[0]
+        try:
+            _, ref_id, choice_idx_str = payload.split("_")
+            display_id = int(ref_id)
+            user_selection = int(choice_idx_str)
+            
+            # Fetch question data from the Neon database mapping
+            tracks = engine.db_get_all_tracks()
+            mid_key = next((k for k, v in tracks.items() if v.get('display_id') == display_id), None)
+            
+            if not mid_key:
+                await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.")
+                return
+            
+            engine.refresh_database()
+            all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
+            question_data = all_qs.get(tracks[mid_key]['q_id'])
+            
+            if not question_data:
+                await update.message.reply_text("Error: Question data not found.")
+                return
+            
+            # Evaluate the score privately inside Neon database
+            is_correct = (user_selection == question_data['correct_option'])
+            perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
+            
+            # Generate the beautiful, comprehensive, context-retaining Answered View
+            # Since this is PM (text message), we can comfortably use compact=False (the full un-truncated rich text explanation)!
+            explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
+            
+            # If the question originally had an active diagram, send the solution image card!
+            has_tikz = UIFactory.has_real_diagram(question_data)
+            if has_tikz:
+                latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
+                if latex_code:
+                    img_url = UIFactory.get_latex_url(latex_code)
+                    async with httpx.AsyncClient() as client:
+                        resp = await fetch_kroki_image(client, img_url, latex_code)
+                        if resp and resp.status_code == 200:
+                            await update.message.reply_photo(photo=resp.content, caption=explanation_html, parse_mode="HTML")
+                            return
+            
+            # Fallback to pure text message
+            await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+            return
+        except Exception as e:
+            print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
+            await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.")
+            return
+
+    # --- STANDARD ONBOARDING GRADE SELECTION ---
     keyboard = [
         [InlineKeyboardButton("🎒 Grade 6", callback_data="set_grade|6"),
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
@@ -247,6 +304,11 @@ def main():
             url=f"{PUBLIC_URL}/webhook",
             drop_pending_updates=True
         ))
+        
+        # Dynamically register the active bot username so build_keyboard can construct deep links automatically
+        bot_info = loop.run_until_complete(app.bot.get_me())
+        CONFIG["bot_username"] = bot_info.username
+        print(f"Registered Bot Username: @{bot_info.username}", flush=True)
         print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
         # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
@@ -280,6 +342,10 @@ def main():
         
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
+        
+        # Dynamically register the active bot username for local deep-link simulation
+        bot_info = loop.run_until_complete(app.bot.get_me())
+        CONFIG["bot_username"] = bot_info.username
         print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
 
         # Run the Admin CLI only if stdin is a real terminal (TTY)
