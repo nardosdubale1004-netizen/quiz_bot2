@@ -1,11 +1,18 @@
 import os
 import sys
+import json
 import asyncio
-import threading
+from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style
-from src.database import QuizEngine, db_get_user_profile, db_get_weekly_leaderboard, db_get_pending_scheduled_question, db_mark_question_as_sent
+from src.database import (
+    QuizEngine, 
+    db_get_user_profile, 
+    db_get_weekly_leaderboard,
+    db_get_pending_scheduled_question,
+    db_mark_question_as_sent
+)
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.callbacks import handle_callback
 from src.cli import admin_panel
@@ -15,6 +22,134 @@ from src.typography import lite_math
 
 # Global Application Orchestrator
 engine = QuizEngine()
+
+async def handle_http_request(reader, writer, app, token):
+    """
+    Custom lightweight asynchronous web server handler.
+    Exposes:
+      - GET /health   --> Returns 200 OK (Clean, compliant health check)
+      - POST /webhook  --> Receives Telegram Updates and pushes them directly to the PTB queue
+    """
+    try:
+        # Read the incoming HTTP request headers
+        header_data = await reader.readuntil(b"\r\n\r\n")
+        headers = header_data.decode("utf-8")
+        
+        # Parse the request line
+        request_line = headers.split("\r\n")[0]
+        method, path, _ = request_line.split(" ")
+        
+        # Extract Content-Length for POST payloads
+        content_length = 0
+        for line in headers.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                content_length = int(line.split(":")[1].strip())
+                break
+
+        # 1. Handle GET /health
+        if method == "GET" and path == "/health":
+            response_body = '{"status": "ok"}'
+            response = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(response_body)}\r\n"
+                "Connection: close\r\n\r\n"
+                f"{response_body}"
+            )
+            writer.write(response.encode("utf-8"))
+            await writer.drain()
+            
+        # 2. Handle POST /webhook
+        elif method == "POST" and path == "/webhook":
+            body_data = await reader.readexactly(content_length)
+            body = body_data.decode("utf-8")
+            
+            # De-serialize the Telegram Update payload
+            update_dict = json.loads(body)
+            update = Update.de_json(update_dict, app.bot)
+            
+            # Push the update directly into python-telegram-bot's active update queue
+            await app.update_queue.put(update)
+            
+            response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            writer.write(response.encode("utf-8"))
+            await writer.drain()
+            
+        else:
+            # 3. Handle 404 Fallback
+            response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            writer.write(response.encode("utf-8"))
+            await writer.drain()
+            
+    except Exception as e:
+        # 4. Handle 500 Internal Error
+        try:
+            response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            writer.write(response.encode("utf-8"))
+            await writer.drain()
+        except Exception:
+            pass
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+async def check_and_publish_scheduled(app):
+    """Checks the Neon database for scheduled posts, compiles graphics, and publishes them automatically."""
+    q = db_get_pending_scheduled_question()
+    if not q:
+        return
+
+    print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
+    channel = CONFIG.get("channel")
+    
+    # Track sequence number dynamically
+    tracks = engine.db_get_all_tracks()
+    last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
+
+    try:
+        has_tikz = bool(q.get("latex"))
+        if not has_tikz and not UIFactory.is_complex(q["question"]):
+            # Native Poll
+            poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
+            m = await app.bot.send_poll(
+                chat_id=channel,
+                question=lite_math(q['question'])[:290],
+                options=[lite_math(o)[:90] for o in q['options']],
+                type=Poll.QUIZ,
+                correct_option_id=q['correct_option'],
+                explanation=poll_hint,
+                explanation_parse_mode="HTML"
+            )
+            msg_type = "poll"
+            type_str = "native"
+        else:
+            # Premium Photo UI
+            img_url, caption, _ = UIFactory.create_question_assets(q, last_seq)
+            kb = UIFactory.build_keyboard(q, last_seq)
+            if img_url:
+                async with httpx.AsyncClient() as client:
+                    resp = await fetch_kroki_image(client, img_url)
+                    if resp and resp.status_code == 200:
+                        print(f" {Style.GREEN}[SCHEDULER] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}", flush=True)
+                        m = await app.bot.send_photo(chat_id=channel, photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
+                        msg_type = "photo"
+                        type_str = "premium"
+                    else:
+                        raise Exception("Kroki failed to compile scheduled asset.")
+            else:
+                m = await app.bot.send_message(chat_id=channel, text=caption, reply_markup=kb, parse_mode="HTML")
+                msg_type = "text"
+                type_str = "premium"
+
+        # Register in sent_tracks and mark as sent in questions table
+        engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)
+        db_mark_question_as_sent(q['id'])
+        print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
+    except Exception as e:
+        print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
 
 async def start_command(update: Update, context):
     """Greets the student and launches inline grade selection onboarding."""
@@ -72,62 +207,7 @@ async def leaderboard_command(update: Update, context):
     
     await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
 
-async def check_and_publish_scheduled(app):
-    """Checks the Neon database for scheduled posts, compiles graphics, and publishes them automatically."""
-    q = db_get_pending_scheduled_question()
-    if not q:
-        return
-
-    print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
-    channel = CONFIG.get("channel")
-    
-    # Track sequence number dynamically
-    tracks = engine.db_get_all_tracks()
-    last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
-
-    try:
-        has_tikz = bool(q.get("latex"))
-        if not has_tikz and not UIFactory.is_complex(q["question"]):
-            # Native Poll
-            poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
-            m = await app.bot.send_poll(
-                chat_id=channel,
-                question=lite_math(q['question'])[:290],
-                options=[lite_math(o)[:90] for o in q['options']],
-                type=Poll.QUIZ,
-                correct_option_id=q['correct_option'],
-                explanation=poll_hint,
-                explanation_parse_mode="HTML"
-            )
-            msg_type = "poll"
-            type_str = "native"
-        else:
-            # Premium Photo UI
-            img_url, caption, _ = UIFactory.create_question_assets(q, last_seq)
-            kb = UIFactory.build_keyboard(q, last_seq)
-            if img_url:
-                async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url)
-                    if resp and resp.status_code == 200:
-                        print(f" {Style.GREEN}[SCHEDULER] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}", flush=True)
-                        m = await app.bot.send_photo(chat_id=channel, photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
-                        msg_type = "photo"
-                        type_str = "premium"
-                    else:
-                        raise Exception("Kroki failed to compile scheduled asset.")
-            else:
-                m = await app.bot.send_message(chat_id=channel, text=caption, reply_markup=kb, parse_mode="HTML")
-                msg_type = "text"
-                type_str = "premium"
-
-        # Register in sent_tracks and mark as sent in questions table
-        engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)
-        db_mark_question_as_sent(q['id'])
-        print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
-    except Exception as e:
-        print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
-
-def main():
+async def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
 
@@ -154,19 +234,31 @@ def main():
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
-        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.create_task(check_and_publish_scheduled(app))
-
-        # Using secure generic url_path mappings to hide your private BOT_TOKEN completely from public logs and cron dashboards
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=int(RENDER_PORT),
-            url_path="webhook",
-            webhook_url=f"{PUBLIC_URL}/webhook",
+        await app.initialize()
+        await app.start()
+        
+        # Set the webhook URL with Telegram manually (pointing to /webhook)
+        await app.bot.set_webhook(
+            url=f"{PUBLIC_URL}/webhook",
             drop_pending_updates=True
         )
+        print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
+
+        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
+        asyncio.create_task(check_and_publish_scheduled(app))
+
+        # Spawn our completely custom, lightweight async web server on port RENDER_PORT
+        server = await asyncio.start_server(
+            lambda r, w: handle_http_request(r, w, app, token),
+            "0.0.0.0",
+            int(RENDER_PORT)
+        )
+        print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
+        
+        # Keep both the webserver and the bot running indefinitely
+        async with server:
+            while True:
+                await asyncio.sleep(3600)
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (POLLING + CLI) ---
         print("Starting local Polling mode with CLI...", flush=True)
@@ -202,4 +294,8 @@ def main():
                 time.sleep(3600)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        import sys
+        sys.exit(0)
