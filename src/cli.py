@@ -2,6 +2,7 @@ import math
 import os
 import json
 import asyncio
+from pathlib import Path
 from src.config import CONFIG, Style
 from src.database import QuizEngine
 from src.rendering import UIFactory, fetch_kroki_image
@@ -47,13 +48,38 @@ async def admin_panel(app, engine: QuizEngine):
         # --- 4: AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
         if choice == "4":
             print(f"\n{Style.CYAN}--- DYNAMIC DATABASE QUESTIONS IMPORTER ---{Style.RESET}")
-            file_in = await cli.ask("<b>Enter JSON File Path (e.g. questions/ai_output.json): </b>")
-            if not file_in or not os.path.exists(file_in):
+            
+            # 1. Automatically scan the questions/ directory recursively for any .json files
+            questions_dir = Path("questions")
+            json_files = []
+            if questions_dir.exists():
+                json_files = sorted(list(questions_dir.rglob("*.json")))
+                
+            if not json_files:
+                print(f"{Style.RED}No JSON question files found inside questions/ directory.{Style.RESET}")
+                continue
+                
+            print(f"📁 {Style.YELLOW}Detected Question Files:{Style.RESET}")
+            for i, file_path in enumerate(json_files):
+                # Cleanly display relative paths, e.g. "1. questions/mathematics/math_batch_2026_07_19.json"
+                print(f"  {i+1}. {Style.WHITE}{file_path.as_posix()}{Style.RESET}")
+                
+            file_select = await cli.ask("<b>Select File # to Import (or Enter path manually): </b>")
+            if not file_select:
+                continue
+                
+            selected_file = None
+            if file_select.isdigit() and 1 <= int(file_select) <= len(json_files):
+                selected_file = str(json_files[int(file_select)-1])
+            else:
+                selected_file = file_select
+                
+            if not os.path.exists(selected_file):
                 print(f"{Style.RED}Error: File path not found.{Style.RESET}")
                 continue
                 
             try:
-                with open(file_in, "r", encoding="utf-8") as f:
+                with open(selected_file, "r", encoding="utf-8") as f:
                     raw_data = json.load(f)
                 
                 print(f"{Style.YELLOW}Importing questions to cloud Neon PostgreSQL database...{Style.RESET}")

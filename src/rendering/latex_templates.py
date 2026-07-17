@@ -20,7 +20,7 @@ def has_real_diagram(q) -> bool:
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
         return False
-    
+
     # Must contain actual structural drawing instructions to be classified as a valid diagram
     drawing_triggers = [r"\draw", r"\fill", r"\node", r"\addplot", r"\path", r"\grid", r"\axis"]
     return any(trigger in tikz for trigger in drawing_triggers)
@@ -83,9 +83,6 @@ def build_figure_block(q, add_strut=False):
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str) -> str:
     content_width_cm = 15.0
-    parent_width_cm = 16.5
-    outer_pad = (parent_width_cm - content_width_cm) / 2
-    center_midpoint = parent_width_cm / 2
     latex_blocks = []
     if question_block:
         latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{question_block}\n\\end{{minipage}}")
@@ -122,7 +119,7 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
 \\usepackage[active, tightpage]{preview}
 \\setlength{\\PreviewBorder}{25pt}
-\\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray=20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
+\\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
 \\relpenalty=10000
@@ -280,14 +277,14 @@ def create_explanation_assets(q, user_idx, display_id):
     user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
+    # Evaluates image assets using the robust model (TikZ diagrams or forced images)
     has_tikz = has_real_diagram(q)
 
-    # Widescreen Solution Graphic is ONLY compiled if the question originally had an active diagram
+    # Widescreen Solution Graphic is compiled if the question originally had an active diagram or forced image
     latex_code = None
     if has_tikz:
-        # Avoid direct import to bypass partial circular initialization
-        from src.rendering import UIFactory
-        latex_code = build_widescreen_solution_latex(q, display_id, UIFactory.WATERMARK, get_day_from_tags(q.get('tags', [])))
+        # Passes watermark string directly without any circular imports of UIFactory
+        latex_code = build_widescreen_solution_latex(q, display_id, "@grade12EntranceExam", get_day_from_tags(q.get('tags', [])))
 
     text_parts = [
         f"📚 <b>SOLUTION SHEET</b> | REF: <code>{display_id}</code>",
