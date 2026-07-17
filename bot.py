@@ -25,12 +25,12 @@ from src.typography import lite_math
 # Global Application Orchestrator
 engine = QuizEngine()
 
-async def handle_http_request(reader, writer, app, token):
+async def handle_http_request(reader, writer, app):
     """
     Custom lightweight asynchronous web server handler.
     Exposes:
       - GET /health   --> Returns 200 OK (Clean, compliant health check)
-      - POST /webhook  --> Receives Telegram Updates and pushes them directly to the PTB queue
+      - POST /webhook  --> Receives Telegram Updates and processes them directly via app.process_update()
     """
     try:
         # Read the incoming HTTP request headers
@@ -70,8 +70,8 @@ async def handle_http_request(reader, writer, app, token):
             update_dict = json.loads(body)
             update = Update.de_json(update_dict, app.bot)
             
-            # Push the update directly into python-telegram-bot's active update queue
-            await app.update_queue.put(update)
+            # Instantly and natively process the update through python-telegram-bot's active handlers
+            await app.process_update(update)
             
             response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
@@ -187,7 +187,6 @@ async def start_command(update: Update, context):
             perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
             
             # Generate the beautiful, comprehensive, context-retaining Answered View
-            # Since this is PM (text message), we can comfortably use compact=False (the full un-truncated rich text explanation)!
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
             
             # If the question originally had an active diagram, send the solution image card!
@@ -341,7 +340,7 @@ def main():
 
         # Spawn our completely custom, lightweight async web server on port RENDER_PORT
         server = loop.run_until_complete(asyncio.start_server(
-            lambda r, w: handle_http_request(r, w, app, token),
+            lambda r, w: handle_http_request(r, w, app),
             "0.0.0.0",
             int(RENDER_PORT)
         ))

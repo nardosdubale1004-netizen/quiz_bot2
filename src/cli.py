@@ -5,6 +5,7 @@ import asyncio
 from src.config import CONFIG, Style
 from src.database import QuizEngine
 from src.rendering import UIFactory, fetch_kroki_image
+from src.typography import lite_math  # Added lite_math import to resolve the native poll crash
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import clear as clear_screen

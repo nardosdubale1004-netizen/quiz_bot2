@@ -1,7 +1,7 @@
 import html
 import re
 from src.config import CONFIG
-from src.typography import lite_math, beautify_markdown_math
+from src.typography import lite_math, beautify_markdown_math, clean_latex_to_unicode
 from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag, is_complex
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -128,7 +128,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
     user_letter = letters[user_idx] if user_idx < len(letters) else "?"
-    user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
+    user_status = "🟩 CORRECT!" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
     # 1. Threaded Continuation Layout (strips all header, question, and options redundancy)
@@ -146,8 +146,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
-            is_correct = (let == correct_letter)
-            status_icon = "🟢" if is_correct else "⚪"
+            status_icon = "🟢" if let == correct_letter else "❌"
 
             why_text = ""
             example_text = ""
@@ -155,11 +154,12 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"   {status_icon} <b>[{let}] {beautify_markdown_math(why_text)}</b>"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
-        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list) + "\n"
+        analysis_str = "\n".join(analysis_list)
+        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str + "\n"
 
         explanation_part = replace_code_with_italic(explanation_part)
         analysis_block = replace_code_with_italic(analysis_block)
@@ -178,10 +178,21 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
               f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
               f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
     body = f"{beautify_markdown_math(q['question'])}\n\n"
-    opts_list = [f"   <b>{chr(65+i)})</b> {beautify_markdown_math(o)}" for i, o in enumerate(q['options'])]
+    
+    # Highlight correct choice visibly inside the options block using bold brackets
+    opts_list = []
+    for i, o in enumerate(q['options']):
+        let = chr(65 + i)
+        icon = "🟢" if let == correct_letter else "   "
+        opts_list.append(f" {icon} <b>[{let}]</b> {beautify_markdown_math(o)}")
     opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list) + "\n\n"
 
-    status_block = f"━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 <b>Your Selection:</b> {user_letter} ({user_status})\n⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
+    # Highly prominent, distinct, easily readable status block
+    status_block = (
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 <b>YOUR SELECTION:</b> <b>[ {user_letter} ]</b> ({user_status})\n"
+        f"⭐ <b>CORRECT CHOICE:</b> <b>[ {correct_letter} ]</b> (🟢 <b>KEY ANSWER</b>)\n\n"
+    )
     exp = q.get("poll_explanation", {})
     why = exp.get('why', 'N/A')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
@@ -204,7 +215,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
             is_correct = (let == correct_letter)
-            status_icon = "🟢" if is_correct else "⚪"
+            status_icon = "🟢" if is_correct else "❌"
 
             why_text = ""
             example_text = ""
@@ -212,17 +223,18 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"   {status_icon} <b>[{let}] {beautify_markdown_math(why_text)}</b>"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
-        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list) + "\n"
+        analysis_str = "\n".join(analysis_list)
+        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str + "\n"
         footer_note = ""
 
     explanation_block = replace_code_with_italic(explanation_block)
     analysis_block = replace_code_with_italic(analysis_block)
 
-    # 4. Compile dynamic performance scorecard if analytics are loaded
+    # Compile dynamic performance scorecard if analytics are loaded
     score_segment = ""
     if perf_card:
         if not perf_card['first_try']:
@@ -250,10 +262,18 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     """Creates a single prominent deep-linked redirect button for the public channel."""
+    from src.rendering import UIFactory
+    letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
+    is_o_complex = any(UIFactory.is_complex(o) for o in q['options'])
+    
     bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
-    url = f"https://t.me/{bot_user}?start=workspace_{display_id}"
-    button = [[InlineKeyboardButton("🎯 ENTER EXAM WORKSPACE", url=url)]]
-    return InlineKeyboardMarkup(button)
+    buttons = []
+    for i, opt in enumerate(q['options']):
+        label = letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}"
+        url = f"https://t.me/{bot_user}?start=ans_{display_id}_{i}"
+        buttons.append([InlineKeyboardButton(label, url=url)])
+        
+    return InlineKeyboardMarkup(buttons)
 
 def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     """Creates the interactive options keyboard (callback buttons) sent only inside private PM chats."""
