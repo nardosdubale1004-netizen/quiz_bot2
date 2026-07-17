@@ -1,323 +1,269 @@
-import html
-import re
-from src.config import CONFIG
-from src.typography import lite_math, beautify_markdown_math, clean_latex_to_unicode
-from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag, is_complex
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import math
+import os
+import json
+import asyncio
+from src.config import CONFIG, Style
+from src.database import QuizEngine
+from src.rendering import UIFactory, fetch_kroki_image
+from src.typography import lite_math
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.shortcuts import clear as clear_screen
+from prompt_toolkit.formatted_text import HTML
+import httpx
+from telegram import Poll
 
-def replace_code_with_italic(text: str) -> str:
-    return text.replace("<code>", "<i>").replace("</code>", "</i>") if text else ""
+class CLI:
+    def __init__(self):
+        self.session = PromptSession()
 
-def smart_truncate_html(text: str, max_len: int) -> str:
-    if not text or len(text) <= max_len:
-        return text or ""
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    accumulated = ""
-    for sentence in sentences:
-        if len(accumulated) + len(sentence) + 4 > max_len:
-            break
-        accumulated += (sentence + " ")
-    accumulated = accumulated.strip() or text[:max_len - 3].strip()
-    if accumulated.count('$') % 2 != 0: accumulated += '$'
-    tag_pattern = re.compile(r'<(/?)(code|b|i|span|tg-spoiler|a)(?:\s+[^>]*?)?>')
-    open_tags = []
-    for match in tag_pattern.finditer(accumulated):
-        if not match.group(1): open_tags.append(match.group(2))
-        elif open_tags and open_tags[-1] == match.group(2): open_tags.pop()
-    for tag in reversed(open_tags): accumulated += f'</{tag}>'
-    return accumulated + "..."
+    async def ask(self, text_html):
+        try:
+            with patch_stdout():
+                result = await self.session.prompt_async(HTML(text_html))
+                return result.strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
 
-def get_grade_mastery_title(marks: int) -> str:
-    """Classifies user proficiency level into traditional study ranks."""
-    if marks < 50: return "🛡️ Bronze"
-    if marks < 150: return "⚔️ Silver"
-    if marks < 500: return "👑 Gold"
-    if marks < 1200: return "💎 Platinum"
-    return "🌌 Legend"
+async def admin_panel(app, engine: QuizEngine):
+    cli = CLI()
+    curr_stat, curr_type, page = "active", "bop", 0
+    bot_info = await app.bot.get_me()
 
-def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
-    """Generates the final plain-text static fallback view for closed quizzes."""
-    correct_letter = chr(65 + q['correct_option'])
-    
-    # 1. Threaded Continuation Layout (strips all header, question, and options redundancy)
-    if continuation:
-        exp = q.get("poll_explanation", {})
-        why = exp.get('why', 'N/A')
-        rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
-        
-        explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n"
-                            f"   ▪️ <b>Explanation:</b> {beautify_markdown_math(why)}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b> {beautify_markdown_math(exp['analogy'])}\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
-        
-        analysis_list = []
-        options_analysis = q.get('options_analysis', [])
-        for i, o_text in enumerate(q['options']):
-            letter = chr(65 + i)
-            analysis_line = f"   {'✅' if letter == correct_letter else '❌'} <b>{letter}:</b> {beautify_markdown_math(options_analysis[i].get('why', '')) if i < len(options_analysis) else ''}"
-            if i < len(options_analysis) and options_analysis[i].get('example'):
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
-            analysis_list.append(analysis_line)
-        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + "\n".join(analysis_list)
-        
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n\n{analysis_block}"
-        spoiler_content = replace_code_with_italic(spoiler_content)
-        
-        connection_header = (
-            f"📖 <b>DETAILED SOLUTION (CONTINUATION)</b> | REF: <code>{display_id}</code>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
+    while True:
+        print(f"{Style.CYAN}{Style.BOLD}\n--- QUIZ MASTER PRO DASHBOARD ---{Style.RESET}")
+        print(f" [1] 📤 Send Native Poll (Simple)")
+        print(f" [2] 💎 Send Hybrid UI (Smart Math/Premium)")
+        print(f" [3] ⚙️  Manage Sent Quizzes (Sync/Toggle)")
+        print(f" [4] 📥 Import AI Questions (From Local JSON File)")
+        print(f" [0] 🚪 Shutdown System")
 
-    # 2. Base layouts (for primary photo caption or text updates)
-    day_str = get_day_from_tags(q.get('tags', []))
-    day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
-    header = (f"📚 <b>{q.get('subject','').upper()} STUDY SHEET</b> | REF: <code>{display_id}</code>\n"
-              f"🔖 <b>Topic:</b> {q.get('topic','General')}{day_part}\n"
-              f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
-              f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-    body = f"{beautify_markdown_math(q['question'])}\n\n"
-    
-    # Highlight correct choice visibly inside the options block using bold brackets
-    opts_list = []
-    for i, o in enumerate(q['options']):
-        let = chr(65 + i)
-        icon = "🟢" if let == correct_letter else "   "
-        opts_list.append(f" {icon} <b>[{let}]</b> {beautify_markdown_math(o)}")
-    opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list) + "\n\n"
+        choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
+        if choice in [None, "0"]: break
+        if choice.lower() == 'c':
+            clear_screen()
+            continue
 
-    # Highly prominent, distinct, easily readable status block
-    status_block = (
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>YOUR SELECTION:</b> <b>[ {user_letter} ]</b> ({user_status})\n"
-        f"⭐ <b>CORRECT CHOICE:</b> <b>[ {correct_letter} ]</b> (🟢 <b>KEY ANSWER</b>)\n\n"
-    )
-    exp = q.get("poll_explanation", {})
-    why = exp.get('why', 'N/A')
-    rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
-
-    if compact:
-        truncated_why = smart_truncate_html(why, 300)
-        spoiler_content = (
-            f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
-            f"📝 <b>SOLUTION SUMMARY:</b>\n"
-            f"   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n"
-            f"   ▪️ <b>Explanation:</b> {beautify_markdown_math(truncated_why)}"
-        )
-        footer_note = (
-            "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📖 <i>The complete step-by-step derivation has been posted in the message below.</i>"
-        )
-    else:
-        explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n"
-                            f"   ▪️ <b>Explanation:</b> {beautify_markdown_math(why)}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b> {beautify_markdown_math(exp['analogy'])}\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
-        analysis_list = []
-        options_analysis = q.get('options_analysis', [])
-        for i, o_text in enumerate(q['options']):
-            letter = chr(65 + i)
-            analysis_line = f"   {'✅' if letter == correct_letter else '❌'} <b>{letter}:</b> {beautify_markdown_math(options_analysis[i].get('why', '')) if i < len(options_analysis) else ''}"
-            if i < len(options_analysis) and options_analysis[i].get('example'):
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
-            analysis_list.append(analysis_line)
-        
-        # Joined outside the f-string expression to preserve Python 3.11 backward compatibility
-        analysis_str = "\n".join(analysis_list)
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n\n{analysis_str}"
-        footer_note = ""
-
-    spoiler_content = replace_code_with_italic(spoiler_content)
-    full_text = f"{header}{body}{opts_block}━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer_note}"
-
-    if compact and len(full_text) > 1022:
-        final_why = smart_truncate_html(truncated_why, max(50, len(truncated_why) - (len(full_text) - 1010)))
-        spoiler_content = replace_code_with_italic(f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n📝 <b>SOLUTION SUMMARY:</b>\n   ▪️ <b>Explanation:</b> {beautify_markdown_math(final_why)}")
-        full_text = f"{header}{body}{opts_block}━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer_note}"
-    return full_text
-
-def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_card=None, continuation=False) -> str:
-    """Generates a complete unified view of the question, options, user result, and detailed solutions."""
-    correct_idx = q['correct_option']
-    letters = ["A", "B", "C", "D", "E"]
-    user_letter = letters[user_idx] if user_idx < len(letters) else "?"
-    user_status = "🟩 CORRECT!" if user_idx == correct_idx else "🟥 INCORRECT"
-    correct_letter = letters[correct_idx]
-
-    # 1. Threaded Continuation Layout (strips all header, question, and options redundancy)
-    if continuation:
-        exp = q.get("poll_explanation", {})
-        why = exp.get('why', 'N/A')
-        rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
-        explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n"
-                            f"   ▪️ <b>Explanation:</b> {beautify_markdown_math(why)}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b> {beautify_markdown_math(exp['analogy'])}\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
-        explanation_part += "\n"
-
-        analysis_list = []
-        options_analysis = q.get('options_analysis', [])
-        for i, o_text in enumerate(q['options']):
-            let = chr(65 + i)
-            status_icon = "🟢" if let == correct_letter else "❌"
-
-            why_text = ""
-            example_text = ""
-            if i < len(options_analysis):
-                why_text = options_analysis[i].get('why', '')
-                example_text = options_analysis[i].get('example', '')
-
-            analysis_line = f"   {status_icon} <b>[{let}] {beautify_markdown_math(why_text)}</b>"
-            if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
-            analysis_list.append(analysis_line)
-        analysis_str = "\n".join(analysis_list)
-        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str + "\n"
-
-        explanation_part = replace_code_with_italic(explanation_part)
-        analysis_block = replace_code_with_italic(analysis_block)
-
-        connection_header = (
-            f"📖 <b>DETAILED DERIVATION (CONTINUATION)</b> | REF: <code>{display_id}</code>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        return f"{connection_header}{explanation_part}{analysis_block}"
-
-    # 2. Base layouts (for primary photo caption or text updates)
-    day_str = get_day_from_tags(q.get('tags', []))
-    day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
-    header = (f"📚 <b>{q.get('subject','').upper()} STUDY SHEET</b> | REF: <code>{display_id}</code>\n"
-              f"🔖 <b>Topic:</b> {q.get('topic','General')}{day_part}\n"
-              f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
-              f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-    body = f"{beautify_markdown_math(q['question'])}\n\n"
-    
-    # Highlight correct choice visibly inside the options block using bold brackets
-    opts_list = []
-    for i, o in enumerate(q['options']):
-        let = chr(65 + i)
-        icon = "🟢" if let == correct_letter else "   "
-        opts_list.append(f" {icon} <b>[{let}]</b> {beautify_markdown_math(o)}")
-    opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list) + "\n\n"
-
-    # Highly prominent, distinct, easily readable status block
-    status_block = (
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>YOUR SELECTION:</b> <b>[ {user_letter} ]</b> ({user_status})\n"
-        f"⭐ <b>CORRECT CHOICE:</b> <b>[ {correct_letter} ]</b> (🟢 <b>KEY ANSWER</b>)\n\n"
-    )
-    exp = q.get("poll_explanation", {})
-    why = exp.get('why', 'N/A')
-    rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
-
-    if compact:
-        truncated_why = smart_truncate_html(why, 300)
-        explanation_block = f"📝 <b>SOLUTION SUMMARY:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n   ▪️ <b>Explanation:</b> {beautify_markdown_math(truncated_why)}\n"
-        analysis_block = ""
-        footer_note = (
-            "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📖 <i>The complete step-by-step derivation has been posted in the message below.</i>"
-        )
-    else:
-        explanation_block = f"📝 <b>DETAILED SOLUTION:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n   ▪️ <b>Explanation:</b> {beautify_markdown_math(why)}\n"
-        if exp.get('analogy'): explanation_block += f"   ▪️ <b>Analogy:</b> {beautify_markdown_math(exp['analogy'])}\n"
-        if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
-        explanation_block += "\n"
-        analysis_list = []
-        options_analysis = q.get('options_analysis', [])
-        for i, o_text in enumerate(q['options']):
-            let = chr(65 + i)
-            is_correct = (let == correct_letter)
-            status_icon = "🟢" if is_correct else "❌"
-
-            why_text = ""
-            example_text = ""
-            if i < len(options_analysis):
-                why_text = options_analysis[i].get('why', '')
-                example_text = options_analysis[i].get('example', '')
-
-            # Enhanced high-legibility option breakdowns
-            analysis_line = f"   {status_icon} <b>[{let}] {beautify_markdown_math(why_text)}</b>"
-            if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
-            analysis_list.append(analysis_line)
-        analysis_str = "\n".join(analysis_list)
-        analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str + "\n"
-        footer_note = ""
-
-    explanation_block = replace_code_with_italic(explanation_block)
-    analysis_block = replace_code_with_italic(analysis_block)
-
-    # Compile dynamic performance scorecard if analytics are loaded
-    score_segment = ""
-    if perf_card:
-        if not perf_card['first_try']:
-            marks_notice = "⚠️ <i>Practice Mode: Answer modified. No marks awarded.</i>\n"
-        elif perf_card['is_bonus_winner']:
-            marks_notice = "⚡ <b>EARLY BIRD BONUS!</b> You were among the first to solve this! <b>(+10 Marks)</b>\n"
-        elif perf_card['marks_awarded'] > 0:
-            marks_notice = "✅ <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b>\n"
-        else:
-            marks_notice = "❌ <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>\n"
-
-        accuracy_bar = "🟩" * (perf_card['accuracy'] // 10) + "⬜" * (10 - (perf_card['accuracy'] // 10))
-        mastery = get_grade_mastery_title(perf_card['total_marks'])
-        
-        score_segment = (
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 <b>YOUR PERFORMANCE CARD:</b>\n"
-            f"{marks_notice}"
-            f"├─ Accuracy: {perf_card['accuracy']}% ({perf_card['correct']}/{perf_card['total']})\n"
-            f"├─ Progress:  <code>{accuracy_bar}</code>\n"
-            f"└─ Rank Level: <b>{mastery} ({perf_card['total_marks']} Marks)</b> 🏆\n"
-        )
-
-    return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer_note}"
-
-def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
-    """Creates interactive options keyboard, preserving caption structure."""
-    from src.rendering import UIFactory
-    letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    is_o_complex = any(UIFactory.is_complex(o) for o in q['options'])
-    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
-    return InlineKeyboardMarkup(buttons)
-
-def generate_poll_hint(q):
-    """Generates an extremely precise explanation for native polls (strictly < 200 chars), isolating the core formula."""
-    exp = q.get("poll_explanation", {})
-    custom_hint = exp.get("poll_hint") or exp.get("hint")
-    if custom_hint:
-        cleaned = clean_latex_to_unicode(custom_hint)
-        return cleaned[:195] if len(cleaned) > 195 else cleaned
-        
-    clean_rule = lite_math(exp.get("governing_principle") or exp.get("rule") or "")
-    clean_why = lite_math(exp.get("why", ""))
-    
-    if clean_rule:
-        # Dynamically split title prefixes (e.g. 'Theorem: formula') to isolate the algebraic formula
-        formula_only = clean_rule
-        if ":" in clean_rule:
-            parts = clean_rule.split(":")
-            if len(parts) == 2 and any(char in parts[1] for char in ["=", "√", "∫", "π", "θ", "°"]):
-                formula_only = parts[1].strip()
-
-        combined = f"Formula: {formula_only}"
-        
-        # Extract the final numerical substitution step from 'why'
-        equations = re.findall(r'([A-Za-z\d\-\[\]\(\)]+\s*=\s*[^.\n]+)', clean_why)
-        if equations:
-            combined_eq = f"{combined} | {equations[-1].strip()}"
-            if len(combined_eq) <= 195:
-                return combined_eq
+        # --- 4: AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
+        if choice == "4":
+            print(f"\n{Style.CYAN}--- DYNAMIC DATABASE QUESTIONS IMPORTER ---{Style.RESET}")
+            file_in = await cli.ask("<b>Enter JSON File Path (e.g. questions/ai_output.json): </b>")
+            if not file_in or not os.path.exists(file_in):
+                print(f"{Style.RED}Error: File path not found.{Style.RESET}")
+                continue
                 
-        if len(f"Rule: {clean_rule}") <= 195:
-            return f"Rule: {clean_rule}"
-        if len(combined) <= 195:
-            return combined
+            try:
+                with open(file_in, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
+                
+                print(f"{Style.YELLOW}Importing questions to cloud Neon PostgreSQL database...{Style.RESET}")
+                count = engine.db_import_questions(raw_data)
+                if count > 0:
+                    print(f"{Style.GREEN}✅ SUCCESS: {count} questions successfully imported/synced to Neon database.{Style.RESET}")
+                else:
+                    print(f"{Style.RED}❌ FAILED: No questions were imported. Check your JSON schema.{Style.RESET}")
+            except Exception as e:
+                print(f"{Style.RED}❌ FAILED: JSON syntax error: {e}{Style.RESET}")
+            continue
 
-    # Fallback to the first complete mathematical sentence
-    for sentence in re.split(r'(?<=[.!?])\s+', clean_why):
-        if len(sentence) <= 195 and any(sym in sentence for sym in ["=", "√", "∫", "π", "θ", "°"]):
-            return sentence
+        if choice in ["1", "2"]:
+            db = engine.refresh_database()
+            subjects = list(db.keys())
+            if not subjects:
+                print(f"{Style.RED}No questions found.{Style.RESET}")
+                continue
+
+            for i, s in enumerate(subjects):
+                print(f"  {i+1}. {s.upper()} ({len(db[s])} questions)")
+
+            sub_in = await cli.ask("<b>Select Subject #: </b>")
+            if not sub_in or not sub_in.isdigit() or int(sub_in) > len(subjects):
+                continue
+
+            target_list = db[subjects[int(sub_in)-1]]
+            for i, q in enumerate(target_list):
+                m_tag = f"{Style.MAGENTA}[MATH]{Style.RESET} " if (q.get("latex") or UIFactory.is_complex(q['question'])) else ""
+                diff = q.get("difficulty", "medium").lower()
+                diff_color = f"{Style.GREEN}[EASY]{Style.RESET}" if diff in ["easy", "weak"] else f"{Style.RED}[HARD]{Style.RESET}" if diff == "hard" else f"{Style.YELLOW}[MED]{Style.RESET}"
+                print(f"    {i+1}. {diff_color} {m_tag}[{q['id']}] {q['question'][:45]}...")
+
+            range_in = await cli.ask("<b>Selection (e.g. 1, 3-5 or easy:3): </b>")
+            to_send = []
             
-    return f"Apply {clean_rule[:100]}."[:195] if clean_rule else "Check Premium UI for derivations."[:195]
+            if ":" in range_in:
+                query_parts = [p.strip().split(":") for p in range_in.split(",")]
+                requested = {part[0].lower().strip(): int(part[1].strip()) for part in query_parts if len(part) == 2 and part[1].strip().isdigit()}
+                pools = {"easy": [], "medium": [], "hard": []}
+                for q in target_list:
+                    d = "easy" if q.get("difficulty", "medium").lower() == "weak" else q.get("difficulty", "medium").lower()
+                    if d in pools: pools[d].append(q)
+                for diff, count in requested.items():
+                    if diff in pools: to_send.extend(pools[diff][:count])
+            else:
+                indices = []
+                try:
+                    for part in range_in.replace(' ', '').split(','):
+                        if '-' in part:
+                            start, end = map(int, part.split('-'))
+                            indices.extend(range(start-1, end))
+                        else:
+                            indices.append(int(part)-1)
+                except:
+                    print(f"{Style.RED}Invalid format.{Style.RESET}")
+                    continue
+                for idx in indices:
+                    if 0 <= idx < len(target_list): to_send.append(target_list[idx])
+
+            tracks = engine.db_get_all_tracks()
+            last_seq = tracks.get("last_seq", 100)
+            if tracks:
+                last_seq = max(v.get('display_id', 100) for v in tracks.values())
+
+            for q in to_send:
+                last_seq += 1
+                try:
+                    if choice == "1":
+                        # Check for dedicated native question and options overrides, falling back to lite_math
+                        question_text = q.get("native_question") or lite_math(q['question'])
+                        
+                        options_list = q.get("native_options")
+                        if not options_list:
+                            options_list = [lite_math(o) for o in q['options']]
+
+                        poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
+                        m = await app.bot.send_poll(
+                            chat_id=engine.config['channel'],
+                            question=question_text[:290],
+                            options=[opt[:90] for opt in options_list],
+                            type=Poll.QUIZ,
+                            correct_option_id=q['correct_option'],
+                            explanation=poll_hint,
+                            explanation_parse_mode="HTML"
+                        )
+                        msg_type = "poll"
+                    else:
+                        img_url, caption, _ = UIFactory.create_question_assets(q, last_seq)
+                        kb = UIFactory.build_keyboard(q, last_seq)
+                        if img_url:
+                            async with httpx.AsyncClient() as client:
+                                resp = await fetch_kroki_image(client, img_url)
+                                if resp and resp.status_code == 200:
+                                    m = await app.bot.send_photo(chat_id=engine.config['channel'], photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
+                                    msg_type = "photo"
+                                else:
+                                    raise Exception("Kroki rendering failure.")
+                        else:
+                            m = await app.bot.send_message(chat_id=engine.config['channel'], text=caption, reply_markup=kb, parse_mode="HTML")
+                            msg_type = "text"
+
+                    # Save state dynamically to PostgreSQL Neon table
+                    engine.db_save_track(m.message_id, q['id'], "active", last_seq, "native" if choice == "1" else "premium", msg_type)
+                    print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
+                except Exception as e:
+                    print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
+
+            # Save fallback sequence
+            local_sent_tracks = engine.load_json("logs/sent_tracks.json")
+            local_sent_tracks["last_seq"] = last_seq
+            engine.save_json("logs/sent_tracks.json", local_sent_tracks)
+
+        elif choice == "3":
+            while True:
+                engine.refresh_database()
+                all_qs = {q['id']: q for sub_list in engine.db.values() for q in sub_list}
+                tracks = engine.db_get_all_tracks()
+                
+                filtered_mids = [mid for mid, data in tracks.items() if mid.isdigit() and data.get("status") == curr_stat and (curr_type == "bop" or (curr_type == "nap" and data.get("type") == "native") or (curr_type == "prp" and data.get("type") == "premium"))]
+                items = sorted(filtered_mids, key=int, reverse=True)
+                total_pages = math.ceil(len(items) / 10)
+                page = max(0, min(page, total_pages - 1)) if total_pages > 0 else 0
+
+                clear_screen()
+                print(f"{Style.MAGENTA}{Style.BOLD}--- {curr_stat.upper()} [{curr_type.upper()}] QUIZZES ({len(items)}) ---{Style.RESET}")
+                for i, mid in enumerate(items[page*10 : (page+1)*10]):
+                    v = tracks[mid]
+                    q_obj = all_qs.get(v['q_id'], {'question': 'Unknown ID'})
+                    print(f"  {(page*10)+i+1}. {'[NAT]' if v.get('type')=='native' else '[PRM]'} REF:{v.get('display_id')} | {q_obj['question'][:45]}...")
+
+                print(f"\n  Page {page+1} / {max(1, total_pages)}")
+                print(f"{Style.CYAN}Nav: [n] Next | [p] Prev | [sw] Status | [ft] Filter\nAction: [Index], [ref#], [all] | [clean] Live Sync | [b] Back{Style.RESET}")
+
+                cmd = await cli.ask("<b>Command > </b>")
+                if not cmd or cmd == 'b': break
+                if cmd == 'n': page += 1; continue
+                if cmd == 'p': page -= 1; continue
+                if cmd == 'sw':
+                    curr_stat = "closed" if curr_stat == "active" else "active"
+                    page = 0; continue
+                if cmd == 'ft':
+                    f_val = await cli.ask("<b>Filter [nap/prp/bop]: </b>")
+                    if f_val in ['nap', 'prp', 'bop']:
+                        curr_type = f_val
+                        page = 0; continue
+
+                if cmd == 'clean':
+                    print(f"{Style.YELLOW}Syncing with Telegram...{Style.RESET}")
+                    modified = False
+                    for mid, v in list(tracks.items()):
+                        if mid.isdigit() and v.get("status") != "deleted":
+                            try: await app.bot.forward_message(bot_info.id, engine.config['channel'], int(mid))
+                            except Exception:
+                                # Update Postgres directly
+                                engine.db_update_track_status(mid, "deleted")
+                                modified = True
+                    continue
+
+                targets = [items[int(part)-1] for part in cmd.split(',') if part.strip().isdigit() and 0 <= int(part)-1 < len(items)] if cmd.lower() != 'all' else [m for m in items[page*10 : (page+1)*10] if tracks[m].get('type') != 'native']
+                
+                for mid in set(targets):
+                    v = tracks[mid]
+                    q = all_qs.get(v['q_id'])
+                    ref = v.get('display_id', mid)
+                    try:
+                        if curr_stat == "active":
+                            if "followup_mid" in v:
+                                try: await app.bot.delete_message(engine.config['channel'], int(v["followup_mid"]))
+                                except Exception: pass
+                                del v["followup_mid"]
+                            if v.get('type') == 'native':
+                                await app.bot.stop_poll(engine.config['channel'], int(mid))
+                            else:
+                                is_photo = (v.get('msg_type') == "photo")
+                                if is_photo:
+                                    print(f" {Style.CYAN}├─ [CLOSE] Rendering widescreen Solution Sheet graphic for REF: {ref}...{Style.RESET}")
+                                    sol_latex = UIFactory.build_widescreen_solution_latex(q, ref)
+                                    sol_img_url = UIFactory.get_latex_url(sol_latex)
+                                    async with httpx.AsyncClient() as client:
+                                        resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
+                                        if resp and resp.status_code == 200:
+                                            # Passes the continuation parameter to generate a completely distinct, un-duplicated derivation sheet
+                                            closed_view = UIFactory.build_closed_static_view(q, ref, compact=True)
+                                            media = InputMediaPhoto(media=resp.content, caption=closed_view, parse_mode="HTML")
+                                            await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=None)
+                                            full_text = UIFactory.build_closed_static_view(q, ref, compact=False, continuation=True)
+                                            if len(full_text) > len(media.caption):
+                                                follow_up = await app.bot.send_message(chat_id=engine.config['channel'], text=full_text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=int(mid))
+                                                engine.db_save_track(mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
+                                        else:
+                                            await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=UIFactory.build_closed_static_view(q, ref, compact=True), parse_mode="HTML", reply_markup=None)
+                                            engine.db_update_track_status(mid, "closed", followup_mid=None)
+                                else:
+                                    await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(mid), text=UIFactory.build_closed_static_view(q, ref, compact=False), parse_mode="HTML", reply_markup=None)
+                                    engine.db_update_track_status(mid, "closed", followup_mid=None)
+                            engine.db_update_track_status(mid, "closed")
+                        else:
+                            if v.get('type') == 'native': continue
+                            img_url, cap, _ = UIFactory.create_question_assets(q, ref)
+                            kb = UIFactory.build_keyboard(q, ref)
+                            if v.get('msg_type') == "photo":
+                                async with httpx.AsyncClient() as client:
+                                    resp = await fetch_kroki_image(client, img_url)
+                                    if resp and resp.status_code == 200:
+                                        media = InputMediaPhoto(media=resp.content, caption=cap, parse_mode="HTML")
+                                        await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
+                            else:
+                                await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(mid), text=cap, reply_markup=kb, parse_mode="HTML")
+                            engine.db_update_track_status(mid, "active")
+                    except Exception as e:
+                        print(f"Error processing REF:{ref} | {e}")
+                await asyncio.sleep(0.5)
