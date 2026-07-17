@@ -8,8 +8,8 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style
 from src.database import (
-    QuizEngine, 
-    db_get_user_profile, 
+    QuizEngine,
+    db_get_user_profile,
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
@@ -36,11 +36,11 @@ async def handle_http_request(reader, writer, app):
         # Read the incoming HTTP request headers
         header_data = await reader.readuntil(b"\r\n\r\n")
         headers = header_data.decode("utf-8")
-        
+
         # Parse the request line
         request_line = headers.split("\r\n")[0]
         method, path, _ = request_line.split(" ")
-        
+
         # Extract Content-Length for POST payloads
         content_length = 0
         for line in headers.split("\r\n"):
@@ -60,29 +60,29 @@ async def handle_http_request(reader, writer, app):
             )
             writer.write(response.encode("utf-8"))
             await writer.drain()
-            
+
         # 2. Handle POST /webhook
         elif method == "POST" and path == "/webhook":
             body_data = await reader.readexactly(content_length)
             body = body_data.decode("utf-8")
-            
+
             # De-serialize the Telegram Update payload
             update_dict = json.loads(body)
             update = Update.de_json(update_dict, app.bot)
-            
+
             # Instantly and natively process the update through python-telegram-bot's active handlers
             await app.process_update(update)
-            
+
             response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
             await writer.drain()
-            
+
         else:
             # 3. Handle 404 Fallback
             response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
             await writer.drain()
-            
+
     except Exception as e:
         # 4. Handle 500 Internal Error
         try:
@@ -106,7 +106,7 @@ async def check_and_publish_scheduled(app):
 
     print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
     channel = CONFIG.get("channel")
-    
+
     # Track sequence number dynamically
     tracks = engine.db_get_all_tracks()
     last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
@@ -157,7 +157,7 @@ async def start_command(update: Update, context):
     """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz answers."""
     user_id = update.effective_user.id
     args = context.args
-    
+
     # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
     if args and args[0].startswith("ans_"):
         payload = args[0]
@@ -165,42 +165,48 @@ async def start_command(update: Update, context):
             _, ref_id, choice_idx_str = payload.split("_")
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
-            
+
             # Fetch question data from the Neon database mapping
             tracks = engine.db_get_all_tracks()
             mid_key = next((k for k, v in tracks.items() if k.isdigit() and v.get('display_id') == display_id), None)
-            
+
             if not mid_key:
                 await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.")
                 return
-            
+
             engine.refresh_database()
             all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
             question_data = all_qs.get(tracks[mid_key]['q_id'])
-            
+
             if not question_data:
                 await update.message.reply_text("Error: Question data not found.")
                 return
-            
+
             # Evaluate the score privately inside Neon database
             is_correct = (user_selection == question_data['correct_option'])
             perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
-            
-            # Generate the beautiful, comprehensive, context-retaining Answered View
+
+            # Generate the comprehensive, context-retaining Answered View
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
-            
+
             # If the question originally had an active diagram, send the solution image card!
             has_tikz = UIFactory.has_real_diagram(question_data)
             if has_tikz:
+                # Generate a COMPACT caption to stay safely under Telegram's 1024-character caption limit
+                explanation_html_compact = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=True, perf_card=perf_card)
                 latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
                 if latex_code:
                     img_url = UIFactory.get_latex_url(latex_code)
                     async with httpx.AsyncClient() as client:
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
-                            await update.message.reply_photo(photo=resp.content, caption=explanation_html, parse_mode="HTML")
+                            m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
+
+                            # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply
+                            full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
+                            await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
                             return
-            
+
             # Fallback to pure text message
             await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
             return
@@ -254,18 +260,18 @@ async def leaderboard_command(update: Update, context):
     """Pulls current user's profile and compiles the Grade-Level Weekly Top 10."""
     user_id = update.effective_user.id
     profile = db_get_user_profile(user_id)
-    
+
     if not profile:
         await update.message.reply_text("⚠️ Please register your grade first by typing /start.")
         return
-        
+
     grade = profile['grade']
     user_marks = profile['total_marks']
     mastery = get_grade_mastery_title(user_marks)
-    
+
     # Compile the top 10 weekly responders for this specific grade
     weekly_top = db_get_weekly_leaderboard(grade)
-    
+
     leaderboard_text = [
         f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
         f"🏅 <b>Your Rank Status:</b>",
@@ -275,18 +281,18 @@ async def leaderboard_command(update: Update, context):
         "━━━━━━━━━━━━━━━━━━━━━━━━",
         "🔥 <b>TOP 10 THIS WEEK:</b>"
     ]
-    
+
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, row in enumerate(weekly_top):
         user_label = f"Student {row['user_id'][-4:]}"
         leaderboard_text.append(f" {medals[i]} {user_label} — <b>{row['total_score']} Marks</b>")
-        
+
     leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
     leaderboard_text.append(
         "💡 <i>Tip: Slower students can easily reach Gold level by completing exercises daily! "
         "Habitual study builds Mastery.</i>"
     )
-    
+
     await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
 
 def main():
@@ -302,7 +308,7 @@ def main():
 
     # Initialize complete async python-telegram-bot application wrapper
     app = Application.builder().token(token).build()
-    
+
     # Register core command and callback handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
@@ -314,21 +320,21 @@ def main():
     if RENDER_PORT:
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
-        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
-        
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         # Initialize and start the application so we can make outbound API calls
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-        
+
         # Register the webhook URL with Telegram manually
         loop.run_until_complete(app.bot.set_webhook(
             url=f"{PUBLIC_URL}/webhook",
             drop_pending_updates=True
         ))
-        
+
         # Dynamically register the active bot username so build_keyboard can construct deep links automatically
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
@@ -345,7 +351,7 @@ def main():
             int(RENDER_PORT)
         ))
         print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
-        
+
         # Run the single, custom asynchronous event loop forever
         try:
             loop.run_forever()
@@ -358,15 +364,15 @@ def main():
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
-        
+
         # We initialize and start the application so we can make outbound API calls
         # But we DO NOT start any polling listener! This prevents all webhook/polling conflicts!
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-        
+
         # Dynamically register the active bot username for local deep-link simulation
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
