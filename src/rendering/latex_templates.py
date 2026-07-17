@@ -8,6 +8,19 @@ def is_complex(text):
     triggers = [r"\begin", r"\frac", r"\int", r"\sum", r"\vec", r"\addplot", r"\\", r"\matrix", r"\cases", r"\sqrt{"]
     return any(t in str(text) for t in triggers)
 
+def has_real_diagram(q) -> bool:
+    """Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram."""
+    tikz = q.get("latex")
+    if not tikz:
+        return False
+    tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
+    if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
+        return False
+    
+    # Must contain actual structural drawing instructions to be classified as a valid diagram
+    drawing_triggers = [r"\draw", r"\fill", r"\node", r"\addplot", r"\path", r"\grid", r"\axis"]
+    return any(trigger in tikz for trigger in drawing_triggers)
+
 def escape_latex(text: str) -> str:
     if not text:
         return ""
@@ -66,6 +79,9 @@ def build_figure_block(q, add_strut=False):
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str) -> str:
     content_width_cm = 15.0
+    parent_width_cm = 16.5
+    outer_pad = (parent_width_cm - content_width_cm) / 2
+    center_midpoint = parent_width_cm / 2
     latex_blocks = []
     if question_block:
         latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{question_block}\n\\end{{minipage}}")
@@ -260,15 +276,14 @@ def create_explanation_assets(q, user_idx, display_id):
     user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
-    is_q_complex = is_complex(q.get('question', ''))
-    has_tikz = bool(q.get("latex"))
+    has_tikz = has_real_diagram(q)
 
-    # Only build widescreen LaTeX solution graphic if there are complex formulas or TikZ diagrams
+    # Widescreen Solution Graphic is ONLY compiled if the question originally had an active diagram
     latex_code = None
-    if has_tikz or is_q_complex:
+    if has_tikz:
         # Avoid direct import to bypass partial circular initialization
-        from src.rendering.kroki_client import KROKI_ENDPOINT
-        latex_code = build_widescreen_solution_latex(q, display_id, f"@{display_id}", get_day_from_tags(q.get('tags', [])))
+        from src.rendering import UIFactory
+        latex_code = build_widescreen_solution_latex(q, display_id, UIFactory.WATERMARK, get_day_from_tags(q.get('tags', [])))
 
     text_parts = [
         f"📚 <b>SOLUTION SHEET</b> | REF: <code>{display_id}</code>",
