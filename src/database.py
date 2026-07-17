@@ -86,8 +86,8 @@ class QuizEngine:
                 options_analysis = json.dumps(q.get("options_analysis", []))
                 
                 cur.execute("""
-                    INSERT INTO questions (id, subject, topic, difficulty, tags, question, latex, options, correct_option, poll_explanation, options_analysis)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO questions (id, subject, topic, difficulty, tags, question, latex, options, correct_option, poll_explanation, options_analysis, force_image)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         subject = EXCLUDED.subject,
                         topic = EXCLUDED.topic,
@@ -98,11 +98,12 @@ class QuizEngine:
                         options = EXCLUDED.options,
                         correct_option = EXCLUDED.correct_option,
                         poll_explanation = EXCLUDED.poll_explanation,
-                        options_analysis = EXCLUDED.options_analysis;
+                        options_analysis = EXCLUDED.options_analysis,
+                        force_image = EXCLUDED.force_image;
                 """, (
                     q["id"], q["subject"], q["topic"], q.get("difficulty", "medium"),
                     tags, q["question"], q.get("latex"), options, int(q["correct_option"]),
-                    poll_explanation, options_analysis
+                    poll_explanation, options_analysis, q.get("force_image", False)
                 ))
                 imported_count += 1
                 
