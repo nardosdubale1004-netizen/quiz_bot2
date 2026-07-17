@@ -25,22 +25,22 @@ from src.typography import lite_math
 # Global Application Orchestrator
 engine = QuizEngine()
 
-async def handle_http_request(reader, writer, app):
+async def handle_http_request(reader, writer, app, token):
     """
     Custom lightweight asynchronous web server handler.
     Exposes:
       - GET /health   --> Returns 200 OK (Clean, compliant health check)
-      - POST /webhook  --> Receives Telegram Updates and processes them directly via app.process_update()
+      - POST /webhook  --> Receives Telegram Updates and pushes them directly to the PTB queue
     """
     try:
         # Read the incoming HTTP request headers
         header_data = await reader.readuntil(b"\r\n\r\n")
         headers = header_data.decode("utf-8")
-
+        
         # Parse the request line
         request_line = headers.split("\r\n")[0]
         method, path, _ = request_line.split(" ")
-
+        
         # Extract Content-Length for POST payloads
         content_length = 0
         for line in headers.split("\r\n"):
@@ -60,29 +60,29 @@ async def handle_http_request(reader, writer, app):
             )
             writer.write(response.encode("utf-8"))
             await writer.drain()
-
+            
         # 2. Handle POST /webhook
         elif method == "POST" and path == "/webhook":
             body_data = await reader.readexactly(content_length)
             body = body_data.decode("utf-8")
-
+            
             # De-serialize the Telegram Update payload
             update_dict = json.loads(body)
             update = Update.de_json(update_dict, app.bot)
-
-            # Instantly and natively process the update through python-telegram-bot's active handlers
-            await app.process_update(update)
-
+            
+            # Push the update directly into python-telegram-bot's active update queue
+            await app.update_queue.put(update)
+            
             response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
             await writer.drain()
-
+            
         else:
             # 3. Handle 404 Fallback
             response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
             await writer.drain()
-
+            
     except Exception as e:
         # 4. Handle 500 Internal Error
         try:
@@ -106,7 +106,7 @@ async def check_and_publish_scheduled(app):
 
     print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
     channel = CONFIG.get("channel")
-
+    
     # Track sequence number dynamically
     tracks = engine.db_get_all_tracks()
     last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
@@ -186,13 +186,10 @@ async def start_command(update: Update, context):
             is_correct = (user_selection == question_data['correct_option'])
             perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
 
-            # Generate the comprehensive, context-retaining Answered View
-            explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
-
-            # If the question originally had an active diagram, send the solution image card!
+            # If the question originally had an active diagram, compile explanation graphic + text
             has_tikz = UIFactory.has_real_diagram(question_data)
             if has_tikz:
-                # Generate a COMPACT caption to stay safely under Telegram's 1024-character caption limit
+                # Generate compact view for caption to stay under 1024 characters
                 explanation_html_compact = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=True, perf_card=perf_card)
                 latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
                 if latex_code:
@@ -202,12 +199,13 @@ async def start_command(update: Update, context):
                         if resp and resp.status_code == 200:
                             m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
 
-                            # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply
+                            # Deliver full step-by-step derivation text as a follow-up reply
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
                             await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
                             return
 
-            # Fallback to pure text message
+            # Fallback to pure text message for standard algebraic questions
+            explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
             await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
             return
         except Exception as e:
@@ -308,7 +306,7 @@ def main():
 
     # Initialize complete async python-telegram-bot application wrapper
     app = Application.builder().token(token).build()
-
+    
     # Register core command and callback handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
@@ -320,25 +318,20 @@ def main():
     if RENDER_PORT:
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
-        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
-
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
+        
         # Initialize and start the application so we can make outbound API calls
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-
-        # Register the webhook URL with Telegram manually
+        
+        # Set the webhook URL with Telegram manually (pointing to /webhook)
         loop.run_until_complete(app.bot.set_webhook(
             url=f"{PUBLIC_URL}/webhook",
             drop_pending_updates=True
         ))
-
-        # Dynamically register the active bot username so build_keyboard can construct deep links automatically
-        bot_info = loop.run_until_complete(app.bot.get_me())
-        CONFIG["bot_username"] = bot_info.username
-        print(f"Registered Bot Username: @{bot_info.username}", flush=True)
         print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
         # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
@@ -346,36 +339,33 @@ def main():
 
         # Spawn our completely custom, lightweight async web server on port RENDER_PORT
         server = loop.run_until_complete(asyncio.start_server(
-            lambda r, w: handle_http_request(r, w, app),
+            lambda r, w: handle_http_request(r, w, app, token),
             "0.0.0.0",
             int(RENDER_PORT)
         ))
         print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
-
-        # Run the single, custom asynchronous event loop forever
-        try:
-            loop.run_forever()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            loop.run_until_complete(app.stop())
-            loop.run_until_complete(app.shutdown())
-            print(f"System successfully shut down.", flush=True)
+        
+        # Keep both the webserver and the bot running indefinitely
+        async with server:
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                loop.run_until_complete(app.stop())
+                loop.run_until_complete(app.shutdown())
+                print(f"System successfully shut down.", flush=True)
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
-
+        
         # We initialize and start the application so we can make outbound API calls
         # But we DO NOT start any polling listener! This prevents all webhook/polling conflicts!
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
+        
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-
-        # Dynamically register the active bot username for local deep-link simulation
-        bot_info = loop.run_until_complete(app.bot.get_me())
-        CONFIG["bot_username"] = bot_info.username
         print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
 
         # Run the Admin CLI only if stdin is a real terminal (TTY)
