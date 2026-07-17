@@ -12,7 +12,8 @@ from src.database import (
     db_get_user_profile, 
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
-    db_mark_question_as_sent
+    db_mark_question_as_sent,
+    process_user_score
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.callbacks import handle_callback
@@ -153,26 +154,21 @@ async def check_and_publish_scheduled(app):
         print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
 
 async def start_command(update: Update, context):
-    """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz workspaces."""
+    """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz answers."""
     user_id = update.effective_user.id
     args = context.args
     
-    # --- DEEP-LINKED PRIVATE EXAM WORKSPACE ---
-    if args and args[0].startswith("workspace_"):
+    # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
+    if args and args[0].startswith("ans_"):
         payload = args[0]
         try:
-            # 1. Cleanly delete the incoming /start text command to keep the chat completely quiet and clean
-            try:
-                await update.message.delete()
-            except Exception:
-                pass
-            
-            _, ref_id = payload.split("_")
+            _, ref_id, choice_idx_str = payload.split("_")
             display_id = int(ref_id)
+            user_selection = int(choice_idx_str)
             
             # Fetch question data from the Neon database mapping
             tracks = engine.db_get_all_tracks()
-            mid_key = next((k for k, v in tracks.items() if v.get('display_id') == display_id), None)
+            mid_key = next((k for k, v in tracks.items() if k.isdigit() and v.get('display_id') == display_id), None)
             
             if not mid_key:
                 await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.")
@@ -186,68 +182,32 @@ async def start_command(update: Update, context):
                 await update.message.reply_text("Error: Question data not found.")
                 return
             
-            # Check if this user has already answered this question in the database
-            from src.database import get_db_connection
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT is_correct, marks_awarded, answered_at 
-                FROM user_responses 
-                WHERE user_id = %s AND message_id = %s;
-            """, (str(user_id), str(mid_key)))
-            user_res = cur.fetchone()
-            cur.close()
-            conn.close()
+            # Evaluate the score privately inside Neon database
+            is_correct = (user_selection == question_data['correct_option'])
+            perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
             
+            # Generate the beautiful, comprehensive, context-retaining Answered View
+            # Since this is PM (text message), we can comfortably use compact=False (the full un-truncated rich text explanation)!
+            explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
+            
+            # If the question originally had an active diagram, send the solution image card!
             has_tikz = UIFactory.has_real_diagram(question_data)
+            if has_tikz:
+                latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
+                if latex_code:
+                    img_url = UIFactory.get_latex_url(latex_code)
+                    async with httpx.AsyncClient() as client:
+                        resp = await fetch_kroki_image(client, img_url, latex_code)
+                        if resp and resp.status_code == 200:
+                            await update.message.reply_photo(photo=resp.content, caption=explanation_html, parse_mode="HTML")
+                            return
             
-            # A. If the user has ALREADY answered this question, show their scorecard immediately!
-            if user_res:
-                profile = db_get_user_profile(user_id)
-                accuracy = int((profile['correct']/profile['total'])*100) if profile['total'] > 0 else 0
-                
-                perf_card = {
-                    "total": profile['total'],
-                    "correct": profile['correct'],
-                    "accuracy": accuracy,
-                    "total_marks": profile['total_marks'],
-                    "marks_awarded": user_res['marks_awarded'],
-                    "first_try": True,
-                    "is_bonus_winner": (user_res['marks_awarded'] == 10),
-                    "grade": profile['grade']
-                }
-                
-                explanation_html = UIFactory.build_answered_view(question_data, str(display_id), question_data['correct_option'], compact=False, perf_card=perf_card)
-                
-                if has_tikz:
-                    latex_code, _ = UIFactory.create_explanation_assets(question_data, question_data['correct_option'], display_id)
-                    if latex_code:
-                        img_url = UIFactory.get_latex_url(latex_code)
-                        async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, img_url, latex_code)
-                            if resp and resp.status_code == 200:
-                                await context.bot.send_photo(chat_id=user_id, photo=resp.content, caption=explanation_html, parse_mode="HTML")
-                                return
-                
-                await context.bot.send_message(chat_id=user_id, text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
-                return
-            
-            # B. If the user has NOT answered yet, present the active question with interactive buttons!
-            img_url, caption, _ = UIFactory.create_question_assets(question_data, display_id)
-            interactive_kb = UIFactory.build_interactive_keyboard(question_data, str(display_id))
-            
-            if img_url:
-                async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url)
-                    if resp and resp.status_code == 200:
-                        await context.bot.send_photo(chat_id=user_id, photo=resp.content, caption=caption, reply_markup=interactive_kb, parse_mode="HTML")
-                        return
-            
-            await context.bot.send_message(chat_id=user_id, text=caption, reply_markup=interactive_kb, parse_mode="HTML")
+            # Fallback to pure text message
+            await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
             return
         except Exception as e:
-            print(f" {Style.RED}[ERROR] Failed to load private workspace: {e}{Style.RESET}")
-            await update.message.reply_text("⚠️ Failed to load your workspace. Please try again.")
+            print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
+            await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.")
             return
 
     # --- PERSISTENT PROFILE METRICS GREETER ---
