@@ -168,7 +168,7 @@ async def start_command(update: Update, context):
             
             # Fetch question data from the Neon database mapping
             tracks = engine.db_get_all_tracks()
-            mid_key = next((k for k, v in tracks.items() if v.get('display_id') == display_id), None)
+            mid_key = next((k for k, v in tracks.items() if k.isdigit() and str(v.get('display_id')) == display_id), None)
             
             if not mid_key:
                 await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.")
@@ -187,7 +187,6 @@ async def start_command(update: Update, context):
             perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
             
             # Generate the beautiful, comprehensive, context-retaining Answered View
-            # Since this is PM (text message), we can comfortably use compact=False (the full un-truncated rich text explanation)!
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
             
             # If the question originally had an active diagram, send the solution image card!
@@ -209,6 +208,31 @@ async def start_command(update: Update, context):
             print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
             await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.")
             return
+
+    # --- PERSISTENT PROFILE METRICS GREETER ---
+    profile = db_get_user_profile(user_id)
+    if profile and profile.get("grade"):
+        grade = profile['grade']
+        user_marks = profile['total_marks']
+        mastery = get_grade_mastery_title(user_marks)
+        accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
+        accuracy_bar = "🟩" * (accuracy // 10) + "⬜" * (10 - (accuracy // 10))
+
+        await update.message.reply_text(
+            f"👋 <b>Welcome Back, Scholar!</b>\n\n"
+            f"Your academic profile is active and fully synchronized.\n\n"
+            f"📊 <b>YOUR STUDY METRICS:</b>\n"
+            f"├─ Registered Level: <b>Grade {grade}</b>\n"
+            f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
+            f"├─ Mastery Level:   <b>{mastery}</b>\n"
+            f"├─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']}/{profile['total']})\n"
+            f"└─ Progress:         <code>{accuracy_bar}</code>\n\n"
+            f"💬 <b>STUDY CHANNELS:</b>\n"
+            f"• Check the main channel for active scheduled questions!\n"
+            f"• Use the /leaderboard command here to view your rank standings!",
+            parse_mode="HTML"
+        )
+        return
 
     # --- STANDARD ONBOARDING GRADE SELECTION ---
     keyboard = [
