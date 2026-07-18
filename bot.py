@@ -57,7 +57,7 @@ async def handle_http_request(reader, writer, app):
             response = (
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: application/json\r\n"
-                f"Content-Length: {len(response_body)}\r\n"
+                f"Content-Length: {response_body}\r\n"
                 "Connection: close\r\n\r\n"
                 f"{response_body}"
             )

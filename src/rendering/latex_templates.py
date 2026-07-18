@@ -111,11 +111,11 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         f"\\end{{tikzpicture}}"
     )
 
-    template = """\\documentclass[12pt, border=25pt, varwidth=16.5cm]{standalone}
+    template = """\\documentclass[12pt, border=25pt, class=article]{standalone}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
-\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
+\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -124,8 +124,11 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\begin{document}
 \\pagecolor{white}
 \\centering
+\\begin{varwidth}{16.5cm}
+\\vbox{\\strut}
 __WATERMARK_TIKZ__
 __BODY_CONTENT__
+\\end{varwidth}
 \\end{document}"""
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
@@ -153,11 +156,11 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"\\end{{tikzpicture}}"
     )
 
-    template = """\\documentclass[12pt, border=25pt, varwidth=16.5cm]{standalone}
+    template = """\\documentclass[12pt, border=25pt, class=article]{standalone}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
-\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
+\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -166,6 +169,8 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\begin{document}
 \\pagecolor{white}
 \\centering
+\\begin{varwidth}{16.5cm}
+\\vbox{\\strut}
 __WATERMARK_TIKZ__
 \\begin{minipage}{15.0cm}
     \\flushleft
@@ -206,6 +211,7 @@ __DIAGRAM_BLOCK__
     \\vspace{0.8em}
     \\centering \\small \\color{gray} \\textbf{\\textsf{Channel: t.me/grade12EntranceExam}}
 \\end{minipage}
+\\end{varwidth}
 \\end{document}"""
     return (template.replace("__DIAGRAM_BLOCK__", diagram_block).replace("__WATERMARK_TIKZ__", watermark_tikz)
                 .replace("__DISPLAY_ID__", str(display_id)).replace("__SUBJECT__", subject_escaped)
