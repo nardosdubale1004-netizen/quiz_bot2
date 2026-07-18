@@ -54,31 +54,32 @@ def convert_subscripts(text):
 def clean_latex_to_unicode(text):
     if not text:
         return ""
-    text = text.replace(r"\par", " ").replace(r"\\", " ").replace(r"\quad", "   ").replace(r"\,", " ")
+    # Convert standard LaTeX breaks into raw newline characters
+    text = text.replace(r"\par", "\n").replace(r"\\", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
 
     text = re.sub(r'\\int_\{([^}]+)\}\^\{([^}]+)\}', r'∫(limits \1 to \2) ', text)
     text = re.sub(r'\\int_([a-zA-Z0-9+-])\^([a-zA-Z0-9+-])', r'∫(limits \1 to \2) ', text)
     text = text.replace(r"\int", "∫")
-    
+
     def frac_repl(match):
         num, denom = match.group(1), match.group(2)
         if len(num) == 1 and len(denom) == 1:
             return f"{num}/{denom}"
         return f"({num})/({denom})"
-    
+
     text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', frac_repl, text)
     text = re.sub(r'\\sqrt\{([^{}]+)\}', r'√(\1)', text)
-    
+
     text = convert_superscripts(text)
     text = convert_subscripts(text)
-    
+
     for latex_sym, unicode_sym in MATH_MAP.items():
         text = text.replace(latex_sym, unicode_sym)
-        
+
     text = text.replace("\\", "").replace("{", "(").replace("}", ")")
-    return re.sub(r'\s+', ' ', text).strip()
+    return re.sub(r'[ \t]+', ' ', text).strip()
 
 def lite_math(text):
     if not text:
@@ -88,11 +89,50 @@ def lite_math(text):
 def beautify_markdown_math(text):
     if not text:
         return ""
+        
+    text = str(text)
+    # Aggressively translate all variations of literal escaped \n strings to real newlines
+    text = text.replace("\\\\n", "\n")
+    text = text.replace("\\n", "\n")
+    text = text.replace(r"\n", "\n")
+    text = text.replace("<br>", "\n").replace("<br/>", "\n")
+    text = text.replace("\r", "")
+    
+    # Automatically identify steps and convert them to beautifully formatted emoji blocks
+    def step_repl(match):
+        step_num = match.group(1)
+        emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
+        emoji = emojis.get(step_num, "▪️")
+        return f"\n\n{emoji} <b>Step {step_num}:</b>"
+        
+    text = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
+    
     parts = text.split('$')
     for i in range(len(parts)):
         if i % 2 == 1:
+            # Mathematical block inside $ ... $
             seg = clean_latex_to_unicode(parts[i])
-            parts[i] = f"<code>{html.escape(seg)}</code>"
+            
+            # If the math segment contains operations, break it onto an isolated indented line
+            operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "∥", "⊥", "dx", "/"]
+            if any(op in seg for op in operators):
+                parts[i] = f"\n   <code> {html.escape(seg)} </code>\n"
+            else:
+                parts[i] = f"<code>{html.escape(seg)}</code>"
         else:
-            parts[i] = html.escape(parts[i])
-    return "".join(parts)
+            # Plain text part - verify if there are any unbracketed equations
+            lines = parts[i].split('\n')
+            for j in range(len(lines)):
+                line_clean = lines[j].strip()
+                # Auto-detect unbracketed equations (containing =, /, or other operators) and isolate them
+                operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "/"]
+                if len(line_clean) > 3 and any(op in line_clean for op in operators) and not line_clean.startswith("<"):
+                    lines[j] = f"\n   <code> {html.escape(clean_latex_to_unicode(line_clean))} </code>\n"
+                else:
+                    lines[j] = html.escape(lines[j])
+            parts[i] = "\n".join(lines)
+            
+    # Assemble and remove double empty lines caused by block breaks
+    result = "".join(parts)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip()

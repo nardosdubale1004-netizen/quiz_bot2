@@ -14,7 +14,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "For a standard linear form $ax+b=c$:\\par\\vspace{0.5em}\\noindent Isolate $x$ by subtracting $b$, then dividing by $a$:\\par\\vspace{0.4em}\\noindent $ax = c - b \\implies x = \\frac{c - b}{a}$",
-      "why": "Step 1: Write down the given linear expression:\\par\\noindent $2x + 3 = 11$\\n\\nStep 2: Subtract 3 from both sides to isolate the variable term $2x$:\\par\\noindent $2x = 11 - 3$\\par\\noindent $2x = 8$\\n\\nStep 3: Solve for $x$ by dividing both sides of the equation by 2:\\par\\noindent $x = \\frac{8}{2}$\\par\\noindent $x = 4$.",
+      "why": "Step 1: Write down the given linear expression:\\n$2x + 3 = 11$\\n\\nStep 2: Subtract 3 from both sides to isolate the variable term $2x$:\\n$2x = 11 - 3$\\n$2x = 8$\\n\\nStep 3: Solve for $x$ by dividing both sides of the equation by 2:\\n$x = \\frac{8}{2}$\\n$x = 4$.",
       "poll_hint": "2x+3=11 ⇒ 2x=8 ⇒ x=4"
     },
     "options_analysis": [
@@ -40,7 +40,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "The Fundamental Theorem of Calculus (Part 2):\\par\\vspace{0.5em}\\noindent If $F'(x) = f(x)$, then:\\par\\vspace{0.4em}\\noindent $\\int_{a}^{b} f(x)\\,dx = [F(x)]_a^b = F(b) - F(a)$",
-      "why": "Step 1: Identify the integration rule. Apply the standard power rule of integration:\\par\\noindent $\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C$\\n\\nStep 2: Find the general antiderivative $F(x)$ of the integrand $f(x) = x^2$:\\par\\noindent $F(x) = \\frac{x^{2+1}}{2+1} = \\frac{x^3}{3}$\\n\\nStep 3: Evaluate this antiderivative at the boundaries $a=0$ and $b=2$:\\par\\noindent $\\int_{0}^{2} x^2\\,dx = \\left[ \\frac{x^3}{3} \\right]_0^2 = F(2) - F(0)$\\n\\nStep 4: Substitute the upper limit $x=2$:\\par\\noindent $F(2) = \\frac{2^3}{3} = \\frac{8}{3}$\\n\\nStep 5: Substitute the lower limit $x=0$:\\par\\noindent $F(0) = \\frac{0^3}{3} = 0$\\n\\nStep 6: Compute the definitive difference:\\par\\noindent $F(2) - F(0) = \\frac{8}{3} - 0 = \\frac{8}{3}$.",
+      "why": "Step 1: Identify the integration rule. Apply the standard power rule of integration:\\n$\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C$\\n\\nStep 2: Find the general antiderivative $F(x)$ of the integrand $f(x) = x^2$:\\n$F(x) = \\frac{x^{2+1}}{2+1} = \\frac{x^3}{3}$\\n\\nStep 3: Apply the integration boundaries $a=0$ and $b=2$:\\n$\\int_{0}^{2} x^2\\,dx = \\left[ \\frac{x^3}{3} \\right]_0^2 = F(2) - F(0)$\\n\\nStep 4: Substitute the upper limit $x=2$:\\n$F(2) = \\frac{2^3}{3} = \\frac{8}{3}$\\n\\nStep 5: Substitute the lower limit $x=0$:\\n$F(0) = \\frac{0^3}{3} = 0$\\n\\nStep 6: Compute the definitive difference:\\n$F(2) - F(0) = \\frac{8}{3} - 0 = \\frac{8}{3}$.",
       "poll_hint": "∫₀²x²dx=[x³/3]₀²=8/3"
     },
     "options_analysis": [
@@ -66,7 +66,7 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "Vector Dot Product Definition:\\par\\vspace{0.5em}\\noindent $\\cos\\theta = \\frac{\\vec{a} \\cdot \\vec{b}}{\\|\\vec{a}\\| \\|\\vec{b}\\|}$",
-      "why": "Step 1: Write down the components of the vectors:\\par\\noindent $\\vec{a} = (1, \\sqrt{3})$\\par\\noindent $\\vec{b} = (\\sqrt{3}, 1)$\\n\\nStep 2: Calculate the coordinate dot product:\\par\\noindent $\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\\par\\noindent $\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$\\n\\nStep 3: Calculate the vector magnitudes:\\par\\noindent $\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$\\par\\noindent $\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$\\n\\nStep 4: Substitute values into the formulation to solve for $\\cos\\theta$:\\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$\\n\\nStep 5: Determine the reference angle:\\par\\noindent $\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
+      "why": "Step 1: Write down the components of the vectors:\\n$\\vec{a} = (1, \\sqrt{3})$\\n$\\vec{b} = (\\sqrt{3}, 1)$\\n\\nStep 2: Calculate the coordinate dot product:\\n$\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\\n$\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$\\n\\nStep 3: Calculate the vector magnitudes:\\n$\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$\\n$\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$\\n\\nStep 4: Substitute values into the formulation to solve for $\\cos\\theta$:\\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$\\n\\nStep 5: Determine the reference angle:\\n$\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
       "poll_hint": "cos(θ) = (a·b)/(||a||·||b||) = √3/2 ⇒ θ = 30° = π/6 rad"
     },
     "options_analysis": [
@@ -92,7 +92,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Euclidean Angle Sum Theorem:\\par\\vspace{0.5em}\\noindent The sum of the interior angles of a triangle is always $180^\\circ$ (or $\\pi$ radians).",
-      "why": "This is a fundamental geometry fact: for any triangle with angles $\\alpha$, $\\beta$, and $\\gamma$:\\par\\vspace{0.4em}\\noindent $\\alpha + \\beta + \\gamma = 180^\\circ$",
+      "why": "This is a fundamental geometry fact: for any triangle with angles $\\alpha$, $\\beta$, and $\\gamma$:\\n$\\alpha + \\beta + \\gamma = 180^\\circ$",
       "poll_hint": "Triangle interior angles = 180°"
     },
     "options_analysis": [
@@ -118,7 +118,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Factoring Monic Quadratics:\\par\\vspace{0.5em}\\noindent For $x^2+bx+c=0$, find two numbers that multiply to $c$ and sum to $b$:\\par\\vspace{0.4em}\\noindent $(x - p)(x - q) = 0 \\implies x = p, q$",
-      "why": "Step 1: Write down the quadratic equation:\\par\\noindent $x^2 - 5x + 6 = 0$\\n\\nStep 2: Identify two factors that multiply to $+6$ and sum to $-5$. These are $-2$ and $-3$:\\par\\noindent $(-2) \\times (-3) = 6$\\par\\noindent $(-2) + (-3) = -5$\\n\\nStep 3: Express in factored form:\\par\\noindent $(x - 2)(x - 3) = 0$\\n\\nStep 4: Solve for $x$ by setting each linear factor to zero:\\par\\noindent $x - 2 = 0 \\implies x = 2$\\par\\noindent $x - 3 = 0 \\implies x = 3$.",
+      "why": "Step 1: Write down the quadratic expression:\\n$x^2 - 5x + 6 = 0$\\n\\nStep 2: Find two numbers that multiply to $+6$ and sum to $-5$. These are $-2$ and $-3$:\\n$(-2) \\times (-3) = 6$\\n$(-2) + (-3) = -5$\\n\\nStep 3: Express in factored form:\\n$(x - 2)(x - 3) = 0$\\n\\nStep 4: Solve for $x$ by setting each linear factor to zero:\\n$x - 2 = 0 \\implies x = 2$\\n$x - 3 = 0 \\implies x = 3$.",
       "poll_hint": "x²−5x+6=(x−2)(x−3)"
     },
     "options_analysis": [
@@ -139,12 +139,12 @@
     "question": "Find the determinant of the $2 \\times 2$ matrix:\\par\\vspace{0.5em}\\noindent $\\begin{pmatrix}2&1\\\\5&3\\end{pmatrix}$.",
     "native_question": "Find the determinant of the 2x2 matrix: [[2, 1], [5, 3]].",
     "latex": null,
-    "options": ["1", "5", "7", "11"],
+    "options": ["3", "5", "7", "11"],
     "native_options": ["A) det = 1", "B) det = 5", "C) det = 7", "D) det = 11"],
-    "correct_option": 0,
+    "correct_option": 2,
     "poll_explanation": {
       "rule": "Determinant of a $2\\times2$ Matrix:\\par\\vspace{0.5em}\\noindent For $A = \\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$, the determinant is:\\par\\vspace{0.4em}\\noindent $\\det(A) = ad - bc$",
-      "why": "Step 1: Write down the entries of the matrix:\\par\\noindent $a = 2, b = 1, c = 5, d = 3$\\n\\nStep 2: Substitute the entry values into the determinant formula:\\par\\noindent $\\det(M) = (2)(3) - (1)(5)$\\n\\nStep 3: Calculate the arithmetic result:\\par\\noindent $\\det(M) = 6 - 5 = 1$.",
+      "why": "Step 1: Write down the entries of the matrix:\\n$a = 2, b = 1, c = 5, d = 3$\\n\\nStep 2: Substitute the entry values into the determinant formula:\\n$\\det(M) = (2)(3) - (1)(5)$\\n\\nStep 3: Calculate the arithmetic result:\\n$\\det(M) = 6 - 5 = 1$.",
       "poll_hint": "ad−bc = 6−5 = 1"
     },
     "options_analysis": [
@@ -170,7 +170,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Definition of Integer Power:\\par\\vspace{0.5em}\\noindent For any base $a$ and positive integer power $n$:\\par\\vspace{0.4em}\\noindent $a^n = \\underbrace{a \\times a \\times \\dots \\times a}_{n\\text{ times}}$",
-      "why": "Step 1: Write down the term:\\par\\noindent $2^3$\\n\\nStep 2: Express as repeated multiplication of base 2 three times:\\par\\noindent $2^3 = 2 \\times 2 \\times 2$\\n\\nStep 3: Solve step-by-step:\\par\\noindent $2 \\times 2 = 4$\\par\\noindent $4 \\times 2 = 8$.",
+      "why": "Step 1: Write down the term:\\n$2^3$\\n\\nStep 2: Express as repeated multiplication of base 2 three times:\\n$2^3 = 2 \\times 2 \\times 2$\\n\\nStep 3: Solve step-by-step:\\n$2 \\times 2 = 4$\\n$4 \\times 2 = 8$.",
       "poll_hint": "2³ = 2×2×2 = 8"
     },
     "options_analysis": [
@@ -196,7 +196,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Classical Probability Formula:\\par\\vspace{0.5em}\\noindent $P(E) = \\frac{n(E)}{n(S)}$\\par\\vspace{0.4em}\\noindent where $n(E)$ is the count of favorable events, and $n(S)$ is the total sample space.",
-      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\\par\\noindent $S = \\\\{1, 2, 3, 4, 5, 6\\\\} \\implies n(S) = 6$\\n\\nStep 2: List the favorable outcomes (even numbers):\\par\\noindent $E = \\\\{2, 4, 6\\\\} \\implies n(E) = 3$\\n\\nStep 3: Apply the probability formula:\\par\\noindent $P(E) = \\frac{3}{6}$\\n\\nStep 4: Simplify the fraction:\\par\\noindent $P(E) = \\frac{1}{2}$.",
+      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\\n$S = \\\\{1, 2, 3, 4, 5, 6\\\\} \\implies n(S) = 6$\\n\\nStep 2: List the favorable outcomes (even numbers):\\n$E = \\\\{2, 4, 6\\\\} \\implies n(E) = 3$\\n\\nStep 3: Apply the probability formula:\\nP = \\frac{3}{6}\\n\\nStep 4: Simplify the fraction:\\nP = \\frac{1}{2}$.",
       "poll_hint": "3 favorable ÷ 6 total = 1/2"
     },
     "options_analysis": [
@@ -222,7 +222,7 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "Complex Algebra Rules:\\par\\vspace{0.5em}\\noindent Expand using binomial expansion, then apply $i^2 = -1$:\\par\\vspace{0.4em}\\noindent $(a + bi)^2 = a^2 + 2abi - b^2$",
-      "why": "Step 1: Write down the expression:\\par\\noindent $(1 + i)^2$\\n\\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\\par\\noindent $(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\\par\\noindent $(1 + i)^2 = 1 + 2i + i^2$\\n\\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\\par\\noindent $(1 + i)^2 = 1 + 2i - 1$\\n\\nStep 4: Cancel real parts to find the final result:\\par\\noindent $(1 + i)^2 = 2i$.",
+      "why": "Step 1: Write down the expression:\\n$(1 + i)^2$\\n\\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\\n$(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\\n$(1 + i)^2 = 1 + 2i + i^2$\\n\\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\\n$(1 + i)^2 = 1 + 2i - 1$\\n\\nStep 4: Cancel real parts to find the final result:\\n$(1 + i)^2 = 2i$.",
       "poll_hint": "(1+i)²=1+2i−1=2i"
     },
     "options_analysis": [
@@ -248,7 +248,7 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "The Distance Formula in $\\mathbb{R}^2$:\\par\\vspace{0.5em}\\noindent For any two points $P_1(x_1, y_1)$ and $P_2(x_2, y_2)$:\\par\\vspace{0.4em}\\noindent $d = \\sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}$",
-      "why": "Step 1: Write down the point coordinates:\\par\\noindent $P_1 = (0,0)$ and $P_2 = (3,4)$\\n\\nStep 2: Substitute the coordinate values into the distance formula:\\par\\noindent $d = \\sqrt{(3 - 0)^2 + (4 - 0)^2}$\\par\\noindent $d = \\sqrt{3^2 + 4^2}$\\n\\nStep 3: Solve the arithmetic sum inside the square root:\\par\\noindent $d = \\sqrt{9 + 16}$\\par\\noindent $d = \\sqrt{25}$\\n\\nStep 4: Solve the square root:\\par\\noindent $d = 5$.",
+      "why": "Step 1: Write down the point coordinates:\\n$P_1 = (0,0)$ and $P_2 = (3,4)$\\n\\nStep 2: Substitute the coordinate values into the distance formula:\\n$d = \\sqrt{(3 - 0)^2 + (4 - 0)^2}$\\n$d = \\sqrt{3^2 + 4^2}$\\n\\nStep 3: Solve the arithmetic sum inside the square root:\\nd = \\sqrt{9 + 16}\\nd = \\sqrt{25}\\n\\nStep 4: Solve the square root:\\nd = 5.",
       "poll_hint": "√(3²+4²)=5"
     },
     "options_analysis": [
@@ -274,7 +274,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Logarithm Definition:\\par\\vspace{0.5em}\\noindent $\\log_b(a) = c \\iff b^c = a$ ",
-      "why": "Step 1: Set up the equivalent equation:\\par\\noindent $\\log_2(32) = x \\iff 2^x = 32$\\n\\nStep 2: Find the power of base 2 that equals 32:\\par\\noindent $2^1 = 2$\\par\\noindent $2^2 = 4$\\par\\noindent $2^3 = 8$\\par\\noindent $2^4 = 16$\\par\\noindent $2^5 = 32$\\n\\nStep 3: Since $2^5 = 32$, we conclude:\\par\\noindent $x = 5$.",
+      "why": "Step 1: Set up the equivalent equation:\\n$\\log_2(32) = x \\iff 2^x = 32$\\n\\nStep 2: Find the power of base 2 that equals 32:\\n$2^1 = 2$\\n$2^2 = 4$\\n$2^3 = 8$\\n$2^4 = 16$\\n$2^5 = 32$\\n\\nStep 3: Since $2^5 = 32$, we conclude:\\nx = 5.",
       "poll_hint": "2⁵ = 32"
     },
     "options_analysis": [
@@ -300,7 +300,7 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "The Derivative Product Rule:\\par\\vspace{0.5em}\\noindent For any two functions $u(x)$ and $v(x)$:\\par\\vspace{0.4em}\\noindent $\\frac{d}{dx}(uv) = u'v + uv'$",
-      "why": "Step 1: Identify the two parts of the function:\\par\\noindent $u(x) = x^3$\\par\\noindent $v(x) = \\sin x$\\n\\nStep 2: Find their individual derivatives:\\par\\noindent $u'(x) = 3x^2$ (by Power Rule)\\par\\noindent $v'(x) = \\cos x$ (by Trig derivative rule)\\n\\nStep 3: Substitute functions into the product rule formula:\\par\\noindent $\\frac{d}{dx}(x^3\\sin x) = u'v + uv'$\\par\\noindent $\\frac{d}{dx}(x^3\\sin x) = (3x^2)(\\sin x) + (x^3)(\\cos x)$\\n\\nStep 4: Combine the terms:\\par\\noindent $\\frac{d}{dx}(x^3\\sin x) = 3x^2\\sin x + x^3\\cos x$.",
+      "why": "Step 1: Identify the two parts of the function:\\n$u(x) = x^3$\\n$v(x) = \\sin x$\\n\\nStep 2: Find their individual derivatives:\\n$u'(x) = 3x^2$ (by Power Rule)\\n$v'(x) = \\cos x$ (by Trig derivative rule)\\n\\nStep 3: Substitute functions into the product rule formula:\\n$\\frac{d}{dx}(x^3\\sin x) = u'v + uv'$\\n$\\frac{d}{dx}(x^3\\sin x) = (3x^2)(\\sin x) + (x^3)(\\cos x)$\\n\\nStep 4: Combine the terms:\\n$\\frac{d}{dx}(x^3\\sin x) = 3x^2\\sin x + x^3\\cos x$.",
       "poll_hint": "(uv)' = u'v + uv'"
     },
     "options_analysis": [
@@ -326,7 +326,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Percentage Calculation:\\par\\vspace{0.5em}\\noindent To find $p\\%$ of value $x$, calculate:\\par\\vspace{0.4em}\\noindent $\\text{Result} = \\frac{p}{100} \\times x$",
-      "why": "Step 1: Convert the percentage to a simple fraction:\\par\\noindent $25\\% = \\frac{25}{100} = \\frac{1}{4}$\\n\\nStep 2: Multiply the fraction by the value 80:\\par\\noindent $\\text{Result} = \\frac{1}{4} \\times 80$\\n\\nStep 3: Solve the division:\\par\\noindent $\\text{Result} = 20$.",
+      "why": "Step 1: Convert the percentage to a simple fraction:\\n$25\\% = \\frac{25}{100} = \\frac{1}{4}$\\n\\nStep 2: Multiply the fraction by the value 80:\\n$\\text{Result} = \\frac{1}{4} \\times 80$\\n\\nStep 3: Solve the division:\\n$\\text{Result} = 20$.",
       "poll_hint": "25% of 80 = 80÷4"
     },
     "options_analysis": [
@@ -352,12 +352,12 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Arithmetic Sequence General Term:\\par\\vspace{0.5em}\\noindent For a first term $a_1$ and common difference $d$:\\par\\vspace{0.4em}\\noindent $a_n = a_1 + (n - 1)d$",
-      "why": "Step 1: Identify the key parameters of the sequence:\\par\\noindent First term $a_1 = 3$\\par\\noindent Common difference $d = 7 - 3 = 4$\\par\\noindent Target term index $n = 10$\\n\\nStep 2: Write down the arithmetic sequence formula:\\par\\noindent $a_n = a_1 + (n - 1)d$\\n\\nStep 3: Substitute parameters into the formula:\\par\\noindent $a_{10} = 3 + (10 - 1)(4)$\\par\\noindent $a_{10} = 3 + (9)(4)$\\n\\nStep 4: Compute the final arithmetic result:\\par\\noindent $a_{10} = 3 + 36$\\par\\noindent $a_{10} = 39$.",
+      "why": "Step 1: Identify the key parameters of the sequence:\\nFirst term $a_1 = 3$\\nCommon difference $d = 7 - 3 = 4$\\nTarget term index $n = 10$\\n\\nStep 2: Write down the arithmetic sequence formula:\\n$a_n = a_1 + (n - 1)d$\\n\\nStep 3: Substitute parameters into the formula:\\n$a_{10} = 3 + (10 - 1)(4)$\\n$a_{10} = 3 + (9)(4)$\\n\\nStep 4: Compute the final arithmetic result:\\na_{10} = 3 + 36\\na_{10} = 39$.",
       "poll_hint": "a₁₀=3+9×4=39"
     },
     "options_analysis": [
       {"why": "Incorrect. Value corresponds to the 9th term of the sequence.", "example": "N/A"},
-      {"why": "Correct. Formula calculation yields exactly 39.", "example": "a10 = 39"},
+      {"why": "Correct. Formula calculation evaluates exactly 39.", "example": "a10 = 39"},
       {"why": "Incorrect. Value corresponds to the 11th term.", "example": "N/A"},
       {"why": "Incorrect. General computation error.", "example": "N/A"}
     ],
@@ -378,7 +378,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\\par\\vspace{0.5em}\\noindent For any 3D vector $\\vec{v} = (x, y, z)$:\\par\\vspace{0.4em}\\noindent $\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
-      "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\\par\\noindent $x = 1, y = 2, z = 2$\\n\\nStep 2: Recall the 3D magnitude formula:\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$\\n\\nStep 3: Substitute component values into the formula:\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$\\n\\nStep 4: Solve the arithmetic sum and root:\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{9}$\\par\\noindent $\\|\\vec{v}\\| = 3$.",
+      "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\\n$x = 1, y = 2, z = 2$\\n\\nStep 2: Recall the 3D magnitude formula:\\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$\\n\\nStep 3: Substitute component values into the formula:\\n$\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\\n$\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$\\n\\nStep 4: Solve the arithmetic sum and root:\\n$\\|\\vec{v}\\| = \\sqrt{9}$\\n$\\|\\vec{v}\\| = 3$.",
       "poll_hint": "v = (1,2,2) ⇒ |v| = √(1+4+4) = 3"
     },
     "options_analysis": [
@@ -404,7 +404,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Fraction Addition Rule:\\par\\vspace{0.5em}\\noindent Find the Least Common Multiple (LCM) of denominators to convert to identical fractions.",
-      "why": "Step 1: Find a common denominator for the two fractions. The least common multiple for 2 and 4 is 4.\\n\\nStep 2: Convert the first fraction $\\frac{1}{2}$ into an equivalent fraction with denominator 4:\\par\\noindent $\\frac{1}{2} = \\frac{1 \\times 2}{2 \\times 2} = \\frac{2}{4}$\\n\\nStep 3: Add the two fractions together:\\par\\noindent $\\frac{2}{4} + \\frac{1}{4} = \\frac{2+1}{4} = \\frac{3}{4}$.",
+      "why": "Step 1: Find a common denominator for the two fractions. The least common multiple for 2 and 4 is 4.\\n\\nStep 2: Convert the first fraction $\\frac{1}{2}$ into an equivalent fraction with denominator 4:\\n$\\frac{1}{2} = \\frac{1 \\times 2}{2 \\times 2} = \\frac{2}{4}$\\n\\nStep 3: Add the two fractions together:\\n$\\frac{2}{4} + \\frac{1}{4} = \\frac{2+1}{4} = \\frac{3}{4}$.",
       "poll_hint": "2/4 + 1/4 = 3/4"
     },
     "options_analysis": [
@@ -430,7 +430,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Unit Circle Trigonometric Projections:\\par\\vspace{0.5em}\\noindent On a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\\par\\vspace{0.4em}\\noindent $P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
-      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\par\\noindent $P(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\par\\noindent $\\sin 30^\\circ = \\frac{1}{2}$.",
+      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\n$P(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n$\\sin 30^\\circ = \\frac{1}{2}$.",
       "poll_hint": "sin30° = 1/2"
     },
     "options_analysis": [
@@ -456,7 +456,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Indeterminate Limits by Factoring:\\par\\vspace{0.5em}\\noindent If direct substitution yields $\\frac{0}{0}$ (indeterminate), simplify the algebraic quotient before taking limits.",
-      "why": "Step 1: Write down the limit equation:\\par\\noindent $\\lim_{x\\to2}\\frac{x^2-4}{x-2}$\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\par\\noindent $x^2 - 4 = (x-2)(x+2)$\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\par\\noindent $\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)$\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\par\\noindent $\\text{Limit} = 2 + 2 = 4$.",
+      "why": "Step 1: Write down the limit equation:\\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\n$x^2 - 4 = (x-2)(x+2)$\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\n$\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)$\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\n$\\text{Limit} = 2 + 2 = 4$.",
       "poll_hint": "Cancel (x−2), then x+2 → 4"
     },
     "options_analysis": [
@@ -482,7 +482,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "The Arithmetic Mean Formula:\\par\\vspace{0.5em}\\noindent For any set of $n$ numbers:\\par\\vspace{0.4em}\\noindent $\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
-      "why": "Step 1: Add all the numbers in the given set together:\\par\\noindent $\\text{Sum} = 2 + 4 + 6 + 8 = 20$\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\par\\noindent $\\text{Mean} = \\frac{20}{4} = 5$.",
+      "why": "Step 1: Add all the numbers in the given set together:\\n$\\text{Sum} = 2 + 4 + 6 + 8 = 20$\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n$\\text{Mean} = \\frac{20}{4} = 5$.",
       "poll_hint": "(2+4+6+8)÷4 = 5"
     },
     "options_analysis": [
@@ -508,7 +508,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Identical Base Exponential Equivalence:\\par\\vspace{0.5em}\\noindent For any base $a > 0$, if $a^x = a^y$, then $x = y$.",
-      "why": "Step 1: Write down the exponential equation:\\par\\noindent $3^x = 81$\\n\\nStep 2: Express the right side (81) as a power with base 3:\\par\\noindent $81 = 3 \\times 3 \\times 3 \\times 3 = 3^4$\\n\\nStep 3: Equate exponents since the bases are identical:\\par\\noindent $3^x = 3^4 \\implies x = 4$.",
+      "why": "Step 1: Write down the exponential equation:\\n$3^x = 81$\\n\\nStep 2: Express the right side (81) as a power with base 3:\\n$81 = 3 \\times 3 \\times 3 \\times 3 = 3^4$\\n\\nStep 3: Equate exponents since the bases are identical:\\n$3^x = 3^4 \\implies x = 4$.",
       "poll_hint": "81 = 3⁴"
     },
     "options_analysis": [
@@ -534,7 +534,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Standard Circle Equation Formulation:\\par\\vspace{0.5em}\\noindent Complete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\\par\\vspace{0.4em}\\noindent $(x - h)^2 + (y - k)^2 = r^2$",
-      "why": "Step 1: Group x-terms and y-terms together:\\par\\noindent $(x^2 - 6x) + (y^2 + 8y) = 0$\\n\\nStep 2: Complete the square for the x-terms by adding $(\\frac{-6}{2})^2 = 9$ to both sides of the equation:\\par\\noindent $x^2 - 6x + 9 = (x-3)^2$\\n\\nStep 3: Complete the square for the y-terms by adding $(\\frac{8}{2})^2 = 16$ to both sides of the equation:\\par\\noindent $y^2 + 8y + 16 = (y+4)^2$\\n\\nStep 4: Balance the right side of the equation by adding both values:\\par\\noindent $(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25$\\n\\nStep 5: Identify the radius squared ($r^2 = 25$) to solve for the radius:\\par\\noindent $r = \\sqrt{25} = 5$.",
+      "why": "Step 1: Group x-terms and y-terms together:\\n$(x^2 - 6x) + (y^2 + 8y) = 0$\\n\\nStep 2: Complete the square for the x-terms by adding $(\\frac{-6}{2})^2 = 9$ to both sides of the equation:\\n$x^2 - 6x + 9 = (x-3)^2$\\n\\nStep 3: Complete the square for the y-terms by adding $(\\frac{8}{2})^2 = 16$ to both sides of the equation:\\ny^2 + 8y + 16 = (y+4)^2\\n\\nStep 4: Balance the right side of the equation by adding both values:\\n$(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25$\\n\\nStep 5: Identify the radius squared ($r^2 = 25$) to solve for the radius:\\nr = \\sqrt{25} = 5$.",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
     "options_analysis": [
