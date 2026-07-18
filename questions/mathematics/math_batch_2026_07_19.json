@@ -18,10 +18,10 @@
       "poll_hint": "2x+3=11 ⇒ 2x=8 ⇒ x=4"
     },
     "options_analysis": [
-      {"why": "Incorrect. This value yields a left-hand equivalence of 7.", "example": "2(2)+3 = 7"},
-      {"why": "Incorrect. This represents a minor computational shift.", "example": "2(3)+3 = 9"},
-      {"why": "Correct. Substituting x=4 balances the algebraic statement.", "example": "2(4)+3 = 11"},
-      {"why": "Incorrect. This value yields a left-hand equivalence of 13.", "example": "2(5)+3 = 13"}
+      {"why": "Incorrect. Substituting x = 2 into the left side of the equation yields 7, which does not equal 11.", "example": "2(2)+3 = 7"},
+      {"why": "Incorrect. Substituting x = 3 into the left side of the equation yields 9, which does not equal 11.", "example": "2(3)+3 = 9"},
+      {"why": "Correct. Substituting x = 4 balances the algebraic statement perfectly.", "example": "2(4)+3 = 11"},
+      {"why": "Incorrect. Substituting x = 5 into the left side of the equation yields 13, which does not equal 11.", "example": "2(5)+3 = 13"}
     ],
     "scheduled_for": "2026-07-20T08:00:00+03:00"
   },
@@ -44,10 +44,10 @@
       "poll_hint": "∫₀²x²dx=[x³/3]₀²=8/3"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents a scaling factor computational omission.", "example": "Evaluated incorrectly."},
-      {"why": "Correct. Fundamental integration yields exactly 8/3.", "example": "Area = 8/3"},
-      {"why": "Incorrect. Likely evaluated f(x) directly without integrating.", "example": "f(2) = 4"},
-      {"why": "Incorrect. An integer rounding approximation error.", "example": "N/A"}
+      {"why": "Incorrect. This represents a scaling factor computational omission.", "example": "4/3 < 8/3"},
+      {"why": "Correct. Fundamental integration yields exactly 8/3.", "example": "Area = 8/3 = 2.67"},
+      {"why": "Incorrect. Likely evaluated f(x) directly at x=2 without integrating.", "example": "f(2) = 2^2 / 2 = 2"},
+      {"why": "Incorrect. An integer rounding approximation error.", "example": "8/3 ≈ 2.67 ≠ 3"}
     ],
     "scheduled_for": "2026-07-20T12:00:00+03:00"
   },
@@ -70,9 +70,9 @@
       "poll_hint": "cos(θ) = (a·b)/(||a||·||b||) = √3/2 ⇒ θ = 30° = π/6 rad"
     },
     "options_analysis": [
-      {"why": "Correct. Substitution resolves to a cosine ratio of exactly √3/2.", "example": "cos(π/6) = √3/2"},
-      {"why": "Incorrect. This represents a 45-degree spatial offset.", "example": "cos(π/4) = √2/2"},
-      {"why": "Incorrect. This is 60 degrees.", "example": "cos(π/3) = 1/2"},
+      {"why": "Correct. Substitution resolves to a cosine ratio of exactly √3/2.", "example": "cos(π/6) = √3/2 = 0.866"},
+      {"why": "Incorrect. This represents a 45-degree spatial offset.", "example": "cos(π/4) = √2/2 = 0.707"},
+      {"why": "Incorrect. This is 60 degrees.", "example": "cos(π/3) = 1/2 = 0.5"},
       {"why": "Incorrect. Perpendicular vectors yield a product of zero.", "example": "cos(π/2) = 0"}
     ],
     "scheduled_for": "2026-07-20T18:00:00+03:00"
@@ -96,10 +96,10 @@
       "poll_hint": "Triangle interior angles = 180°"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents a right angle, not a complete sum.", "example": "N/A"},
-      {"why": "Correct. Euclid's first parallel postulate guarantees exactly 180°.", "example": "Sum = 180°"},
-      {"why": "Incorrect. Value exceeds standard triangular bounds.", "example": "N/A"},
-      {"why": "Incorrect. This is the sum of a quadrilateral.", "example": "N/A"}
+      {"why": "Incorrect. This represents a right angle, not a complete sum.", "example": "90° < 180°"},
+      {"why": "Correct. Euclid's parallel postulate guarantees exactly 180°.", "example": "60° + 60° + 60° = 180°"},
+      {"why": "Incorrect. Value exceeds standard triangular bounds.", "example": "270° > 180°"},
+      {"why": "Incorrect. This is the sum of a quadrilateral.", "example": "4 * 90° = 360°"}
     ],
     "scheduled_for": "2026-07-21T08:00:00+03:00"
   },
@@ -122,10 +122,10 @@
       "poll_hint": "x²−5x+6=(x−2)(x−3)"
     },
     "options_analysis": [
-      {"why": "Incorrect. Sum of these roots equals 7, not 5.", "example": "1+6=7"},
-      {"why": "Correct. Factoring yields root solutions at x = 2 and x = 3.", "example": "Roots: 2, 3"},
-      {"why": "Incorrect. Leads to a sign coefficient error.", "example": "N/A"},
-      {"why": "Incorrect. Product is correct, but sum is negative.", "example": "N/A"}
+      {"why": "Incorrect. Sum of these roots equals 7, not 5.", "example": "1 + 6 = 7"},
+      {"why": "Correct. Factoring yields root solutions at x = 2 and x = 3.", "example": "(2)^2 - 5(2) + 6 = 0"},
+      {"why": "Incorrect. Leads to a sign coefficient error.", "example": "(-2)^2 - 5(-2) + 6 = 20 ≠ 0"},
+      {"why": "Incorrect. Product is correct, but sum is negative.", "example": "(-1)^2 - 5(-1) + 6 = 12 ≠ 0"}
     ],
     "scheduled_for": "2026-07-21T12:00:00+03:00"
   },
@@ -148,10 +148,10 @@
       "poll_hint": "ad−bc = 6−5 = 1"
     },
     "options_analysis": [
-      {"why": "Correct. Standard determinant expansion yields exactly 1.", "example": "6 - 5 = 1"},
-      {"why": "Incorrect. This represents a computational sign translation slip.", "example": "N/A"},
-      {"why": "Incorrect. Likely resulted from adding entries instead of subtracting.", "example": "6 + 5 = 11"},
-      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
+      {"why": "Incorrect. This represents a distinct computational error.", "example": "3 ≠ 1"},
+      {"why": "Incorrect. This represents a computational sign translation slip.", "example": "5 ≠ 1"},
+      {"why": "Correct. Standard determinant expansion yields exactly 1.", "example": "(2)(3) - (1)(5) = 1"},
+      {"why": "Incorrect. Likely resulted from adding entries instead of subtracting.", "example": "(2)(3) + (1)(5) = 11"}
     ],
     "scheduled_for": "2026-07-21T18:00:00+03:00"
   },
@@ -175,9 +175,9 @@
     },
     "options_analysis": [
       {"why": "Incorrect. Multiplied the base by the exponent instead of self-multiplying.", "example": "2 * 3 = 6"},
-      {"why": "Correct. Repeated multiplication evaluates to 8.", "example": "2^3 = 8"},
+      {"why": "Correct. Repeated multiplication evaluates to 8.", "example": "2 * 2 * 2 = 8"},
       {"why": "Incorrect. Confused with 3².", "example": "3^2 = 9"},
-      {"why": "Incorrect. General computation error.", "example": "N/A"}
+      {"why": "Incorrect. Multiplied exponents incorrectly.", "example": "2 * 2 * 3 = 12"}
     ],
     "scheduled_for": "2026-07-22T08:00:00+03:00"
   },
@@ -200,10 +200,10 @@
       "poll_hint": "3 favorable ÷ 6 total = 1/2"
     },
     "options_analysis": [
-      {"why": "Incorrect. Only represents the probability of rolling a single specific number.", "example": "N/A"},
-      {"why": "Incorrect. Corresponds to rolling only two even outcomes.", "example": "N/A"},
-      {"why": "Correct. Since exactly half the outcomes are even, the probability is 1/2.", "example": "P = 3/6 = 1/2"},
-      {"why": "Incorrect. Exceeds even ratio bounds.", "example": "N/A"}
+      {"why": "Incorrect. Only represents the probability of rolling a single specific number.", "example": "1/6 = 0.167"},
+      {"why": "Incorrect. Corresponds to rolling only two even outcomes.", "example": "2/6 = 1/3 = 0.333"},
+      {"why": "Correct. Since exactly half the outcomes are even, the probability is 1/2.", "example": "3/6 = 1/2 = 0.5"},
+      {"why": "Incorrect. Exceeds even ratio bounds.", "example": "4/6 = 2/3 = 0.667"}
     ],
     "scheduled_for": "2026-07-22T12:00:00+03:00"
   },
@@ -222,14 +222,14 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "Complex Algebra Rules:\n\nExpand using binomial expansion, then apply $i^2 = -1$:\n\n$(a + bi)^2 = a^2 + 2abi - b^2$",
-      "why": "Step 1: Write down the expression:\n$(1 + i)^2$\n\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\n$(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\n$(1 + i)^2 = 1 + 2i + i^2$\n\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\n$(1 + i)^2 = 1 + 2i - 1$\n\nStep 4: Cancel real parts to find the final result:\\n$(1 + i)^2 = 2i$.",
+      "why": "Step 1: Write down the expression:\n$(1 + i)^2$\n\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\n$(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\n$(1 + i)^2 = 1 + 2i + i^2$\n\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\n$(1 + i)^2 = 1 + 2i - 1$\n\nStep 4: Cancel real parts to find the final result:\n$(1 + i)^2 = 2i$.",
       "poll_hint": "(1+i)²=1+2i−1=2i"
     },
     "options_analysis": [
       {"why": "Correct. Binomial expansion and substitution of i²=-1 yields exactly 2i.", "example": "2i"},
-      {"why": "Incorrect. Failed to apply the identity i² = -1.", "example": "Left +1"},
-      {"why": "Incorrect. Erroneously simplified the imaginary component.", "example": "Ignored 2i"},
-      {"why": "Incorrect. Basic arithmetic error.", "example": "Extra 1"}
+      {"why": "Incorrect. Failed to apply the identity i² = -1.", "example": "1 + 2i + 1 = 2 + 2i"},
+      {"why": "Incorrect. Erroneously simplified the imaginary component.", "example": "1 - 1 = 0 ≠ -2"},
+      {"why": "Incorrect. Basic arithmetic error.", "example": "1 + 2i + 0 = 1 + 2i"}
     ],
     "scheduled_for": "2026-07-22T18:00:00+03:00"
   },
@@ -252,10 +252,10 @@
       "poll_hint": "√(3²+4²)=5"
     },
     "options_analysis": [
-      {"why": "Correct. Standard 3-4-5 right triangle hypotenuse ratio.", "example": "Distance = 5"},
-      {"why": "Incorrect. Too large.", "example": "Not hypotenuse"},
-      {"why": "Incorrect. Erroneously added components directly.", "example": "3+4 = 7"},
-      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
+      {"why": "Correct. Standard 3-4-5 right-triangle ratio evaluates hypotenuse to exactly 5.", "example": "d = 5"},
+      {"why": "Incorrect. Computational estimate error.", "example": "6 ≠ 5"},
+      {"why": "Incorrect. Erroneously added components directly.", "example": "3 + 4 = 7"},
+      {"why": "Incorrect. Represents a subset coordinate dimension.", "example": "4 ≠ 5"}
     ],
     "scheduled_for": "2026-07-23T08:00:00+03:00"
   },
@@ -278,10 +278,10 @@
       "poll_hint": "2⁵ = 32"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "2^4 = 16"},
-      {"why": "Correct. Power of 2 is 5.", "example": "2^5 = 32"},
-      {"why": "Incorrect. Too large.", "example": "2^6 = 64"},
-      {"why": "Incorrect. Confused log index value with output.", "example": "N/A"}
+      {"why": "Incorrect. Too small.", "example": "2^4 = 16 ≠ 32"},
+      {"why": "Correct. Power exponent evaluates to exactly 5.", "example": "2^5 = 32"},
+      {"why": "Incorrect. Too large.", "example": "2^6 = 64 ≠ 32"},
+      {"why": "Incorrect. Confused the base coordinate directly.", "example": "2^32 ≠ 32"}
     ],
     "scheduled_for": "2026-07-23T12:00:00+03:00"
   },
@@ -304,10 +304,10 @@
       "poll_hint": "(uv)' = u'v + uv'"
     },
     "options_analysis": [
-      {"why": "Correct. Applying the product rule yields the sum.", "example": "Product rule"},
-      {"why": "Incorrect. Derivative of second part only.", "example": "Incomplete"},
-      {"why": "Incorrect. Incomplete expansion.", "example": "N/A"},
-      {"why": "Incorrect. Derivative of first part only.", "example": "Incomplete"}
+      {"why": "Correct. Multi-part product expansion balances coordinates cleanly.", "example": "Product rule"},
+      {"why": "Incorrect. Omitted the linear power derivative sum segment.", "example": "Incomplete"},
+      {"why": "Incorrect. Omitted the trigonometric segment.", "example": "N/A"},
+      {"why": "Incorrect. Omitted the secondary exponential segment.", "example": "Incomplete"}
     ],
     "scheduled_for": "2026-07-23T18:00:00+03:00"
   },
@@ -330,10 +330,10 @@
       "poll_hint": "25% of 80 = 80÷4"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "N/A"},
-      {"why": "Correct. A quarter of 80 is 20.", "example": "80/4 = 20"},
-      {"why": "Incorrect. Erroneously repeated the percentage value.", "example": "N/A"},
-      {"why": "Incorrect. Too large.", "example": "N/A"}
+      {"why": "Incorrect. Too small.", "example": "15/80 = 18.75% ≠ 25%"},
+      {"why": "Correct. Evaluating standard ratio yields exactly 20.", "example": "20/80 = 1/4 = 25%"},
+      {"why": "Incorrect. Confused the percentage base value directly.", "example": "25/80 = 31.25% ≠ 25%"},
+      {"why": "Incorrect. Too large.", "example": "30/80 = 37.5% ≠ 25%"}
     ],
     "scheduled_for": "2026-07-24T08:00:00+03:00"
   },
@@ -351,15 +351,15 @@
     "native_options": ["A) 35", "B) 39", "C) 43", "D) 47"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Arithmetic Sequence General Term:\n\nFor a first term $a_1$ and common difference $d$:\\par\\vspace{0.4em}\\noindent $a_n = a_1 + (n - 1)d$",
+      "rule": "Arithmetic Sequence General Term:\n\nFor a first term $a_1$ and common difference $d$:\n\n$a_n = a_1 + (n - 1)d$",
       "why": "Step 1: Identify the key parameters of the sequence:\nFirst term $a_1 = 3$\nCommon difference $d = 7 - 3 = 4$\nTarget term index $n = 10$\n\nStep 2: Write down the arithmetic sequence formula:\n$a_n = a_1 + (n - 1)d$\n\nStep 3: Substitute parameters into the formula:\n$a_{10} = 3 + (10 - 1)(4)$\n$a_{10} = 3 + (9)(4)$\n\nStep 4: Compute the final arithmetic result:\na_{10} = 3 + 36\na_{10} = 39.",
       "poll_hint": "a₁₀=3+9×4=39"
     },
     "options_analysis": [
-      {"why": "Incorrect. Value corresponds to the 9th term of the sequence.", "example": "N/A"},
-      {"why": "Correct. Formula calculation evaluates exactly 39.", "example": "a10 = 39"},
-      {"why": "Incorrect. Value corresponds to the 11th term.", "example": "N/A"},
-      {"why": "Incorrect. General computation error.", "example": "N/A"}
+      {"why": "Incorrect. Value represents the 9th term of the sequence.", "example": "3 + 8(4) = 35"},
+      {"why": "Correct. Sequence evaluations balance exactly to 39.", "example": "3 + 9(4) = 39"},
+      {"why": "Incorrect. Value represents the 11th term.", "example": "3 + 10(4) = 43"},
+      {"why": "Incorrect. Value represents the 12th term.", "example": "3 + 11(4) = 47"}
     ],
     "scheduled_for": "2026-07-24T12:00:00+03:00"
   },
@@ -377,15 +377,15 @@
     "native_options": ["A) |v| = 2", "B) |v| = 3", "C) |v| = 4", "D) |v| = 5"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\n\nFor any 3D vector $\\vec{v} = (x, y, z)$:\\par\\vspace{0.4em}\\noindent $\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
+      "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\n\nFor any 3D vector $\\vec{v} = (x, y, z)$:\n\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
       "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\n$x = 1, y = 2, z = 2$\n\nStep 2: Recall the 3D magnitude formula:\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$\n\nStep 3: Substitute component values into the formula:\n$\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\n$\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$\n\nStep 4: Solve the arithmetic sum and root:\n$\\|\\vec{v}\\| = \\sqrt{9}$\n$\\|\\vec{v}\\| = 3$.",
       "poll_hint": "v = (1,2,2) ⇒ |v| = √(1+4+4) = 3"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "N/A"},
-      {"why": "Correct. Coordinate expansion evaluates to exactly 3.", "example": "Magnitude = 3"},
-      {"why": "Incorrect. Forgot square root subtraction step.", "example": "N/A"},
-      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
+      {"why": "Incorrect. Too small.", "example": "2 < 3"},
+      {"why": "Correct. Coordinate expansion evaluates to exactly 3.", "example": "sqrt(1 + 4 + 4) = 3"},
+      {"why": "Incorrect. Computational estimate error.", "example": "4 ≠ 3"},
+      {"why": "Incorrect. Computational estimate error.", "example": "5 ≠ 3"}
     ],
     "scheduled_for": "2026-07-24T18:00:00+03:00"
   },
@@ -408,10 +408,10 @@
       "poll_hint": "2/4 + 1/4 = 3/4"
     },
     "options_analysis": [
-      {"why": "Incorrect. Ignored the second fractional term.", "example": "N/A"},
-      {"why": "Incorrect. Equivalent to 1/2.", "example": "N/A"},
-      {"why": "Correct. Fraction addition evaluates cleanly to 3/4.", "example": "Sum = 3/4"},
-      {"why": "Incorrect. Exceeds standard fractional addition rules.", "example": "N/A"}
+      {"why": "Incorrect. Ignored the second fractional term.", "example": "1/2 < 3/4"},
+      {"why": "Incorrect. This is equivalent to 1/2.", "example": "2/4 = 1/2"},
+      {"why": "Correct. Fraction addition evaluates cleanly to 3/4.", "example": "2/4 + 1/4 = 3/4"},
+      {"why": "Incorrect. This represents a whole unit.", "example": "1 > 3/4"}
     ],
     "scheduled_for": "2026-07-25T08:00:00+03:00"
   },
@@ -429,15 +429,15 @@
     "native_options": ["A) 0", "B) 1/2", "C) √2/2", "D) 1"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Unit Circle Trigonometric Projections:\n\nOn a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\\par\\vspace{0.4em}\\noindent $P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
+      "rule": "Unit Circle Trigonometric Projections:\n\nOn a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\n\n$P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
       "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\nP(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n\\sin 30^\\circ = \\frac{1}{2}.",
       "poll_hint": "sin30° = 1/2"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents sin(0°).", "example": "N/A"},
-      {"why": "Correct. Projection coordinates yield exactly 1/2.", "example": "sin(30) = 1/2"},
-      {"why": "Incorrect. This is sin(45°).", "example": "N/A"},
-      {"why": "Incorrect. This is sin(90°).", "example": "N/A"}
+      {"why": "Incorrect. This represents sin(0°).", "example": "sin(0°) = 0"},
+      {"why": "Correct. Projection coordinates yield exactly 1/2.", "example": "sin(30°) = 0.5"},
+      {"why": "Incorrect. This represents sin(45°).", "example": "sin(45°) = √2/2 ≈ 0.707"},
+      {"why": "Incorrect. This represents sin(90°).", "example": "sin(90°) = 1"}
     ],
     "scheduled_for": "2026-07-25T12:00:00+03:00"
   },
@@ -448,7 +448,7 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["limits","calculus","2026-07-25"],
-    "question": "Evaluate the limit as $x$ approaches 2 of:\n\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$.",
+    "question": "Evaluate the limit as $x$ approaches 2 of:\n\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$",
     "native_question": "Evaluate the limit of (x²-4)/(x-2) as x approaches 2.",
     "latex": null,
     "options": ["2", "3", "4", "Undefined"],
@@ -460,9 +460,9 @@
       "poll_hint": "Cancel (x−2), then x+2 → 4"
     },
     "options_analysis": [
-      {"why": "Incorrect. General computational mistake.", "example": "N/A"},
-      {"why": "Incorrect. Minor arithmetic slip.", "example": "N/A"},
-      {"why": "Correct. Difference of squares factoring and canceling yields 4.", "example": "Limit = 4"},
+      {"why": "Incorrect. General computational mistake.", "example": "2 + 0 = 2 ≠ 4"},
+      {"why": "Incorrect. Minor arithmetic slip.", "example": "2 + 1 = 3 ≠ 4"},
+      {"why": "Correct. Difference of squares factoring and canceling yields 4.", "example": "2 + 2 = 4"},
       {"why": "Incorrect. Discontinuity is removable, meaning the limit exists.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-25T18:00:00+03:00"
@@ -481,15 +481,15 @@
     "native_options": ["A) 4", "B) 5", "C) 6", "D) 7"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "The Arithmetic Mean Formula:\n\nFor any set of $n$ numbers:\\par\\vspace{0.4em}\\noindent $\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
+      "rule": "The Arithmetic Mean Formula:\n\nFor any set of $n$ numbers:\n\n$\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
       "why": "Step 1: Add all the numbers in the given set together:\\n\\text{Sum} = 2 + 4 + 6 + 8 = 20\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n\\text{Mean} = \\frac{20}{4} = 5.",
       "poll_hint": "(2+4+6+8)÷4 = 5"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "N/A"},
-      {"why": "Correct. Quotient balances to exactly 5.", "example": "Mean = 5"},
-      {"why": "Incorrect. Value exceeds standard arithmetic mean bounds.", "example": "N/A"},
-      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
+      {"why": "Incorrect. Too small.", "example": "4 < 5"},
+      {"why": "Correct. Quotient balances to exactly 5.", "example": "20 / 4 = 5"},
+      {"why": "Incorrect. Too large.", "example": "6 > 5"},
+      {"why": "Incorrect. Computational mistake.", "example": "7 > 5"}
     ],
     "scheduled_for": "2026-07-26T08:00:00+03:00"
   },
@@ -515,7 +515,7 @@
       {"why": "Incorrect. Too low.", "example": "3^3 = 27"},
       {"why": "Correct. Power exponent matches 4.", "example": "3^4 = 81"},
       {"why": "Incorrect. Too high.", "example": "3^5 = 243"},
-      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
+      {"why": "Incorrect. Computational mistake.", "example": "3^6 = 729"}
     ],
     "scheduled_for": "2026-07-26T12:00:00+03:00"
   },
@@ -533,15 +533,15 @@
     "native_options": ["A) r = 3", "B) r = 4", "C) r = 5", "D) r = 6"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\\par\\vspace{0.4em}\\noindent $(x - h)^2 + (y - k)^2 = r^2$",
+      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\n\n$(x - h)^2 + (y - k)^2 = r^2$",
       "why": "Step 1: Group x-terms and y-terms together:\n(x^2 - 6x) + (y^2 + 8y) = 0\n\nStep 2: Complete the square for the x-terms by adding (\\frac{-6}{2})^2 = 9 to both sides of the equation:\n(x-3)^2 = x^2-6x+9\n\nStep 3: Complete the square for the y-terms by adding (\\frac{8}{2})^2 = 16 to both sides of the equation:\n(y+4)^2 = y^2+8y+16\n\nStep 4: Balance the right side of the equation by adding both values:\n(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25\n\nStep 5: Identify the radius squared (r^2 = 25) to solve for the radius:\nr = \\sqrt{25} = 5.",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents the x-coordinate offset center value h.", "example": "N/A"},
-      {"why": "Incorrect. This represents the y-coordinate offset center value k.", "example": "N/A"},
+      {"why": "Incorrect. This represents the x-coordinate offset center value h.", "example": "h = 3 ≠ 5"},
+      {"why": "Incorrect. This represents the y-coordinate offset center value k.", "example": "k = -4 ≠ 5"},
       {"why": "Correct. Completing the square evaluates radius to exactly 5.", "example": "r = √25 = 5"},
-      {"why": "Incorrect. Diameter confusion or computational mistake.", "example": "N/A"}
+      {"why": "Incorrect. Diameter confusion or computational mistake.", "example": "d = 10 ≠ 5"}
     ],
     "scheduled_for": "2026-07-26T18:00:00+03:00"
   }
