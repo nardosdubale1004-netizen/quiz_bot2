@@ -57,7 +57,7 @@ async def handle_http_request(reader, writer, app):
             response = (
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: application/json\r\n"
-                f"Content-Length: {len(response_body)}\r\n"
+                f"Content-Length: {response_body}\r\n"
                 "Connection: close\r\n\r\n"
                 f"{response_body}"
             )
@@ -211,7 +211,7 @@ async def start_command(update: Update, context):
                     accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
                     next_rank = get_next_rank_info(user_marks)
                     
-                    # 4. Re-post a clean lockout notification at the bottom of their chat
+                    # 4. Re-post a clean lockout notification at the bottom of their chat (No duplication of 2000-char derivations)
                     m = await update.message.reply_text(
                         f"👋 <b>Welcome Back, Scholar!</b>\n\n"
                         f"⚠️ <b>Lockout active: You have already answered this question!</b>\n"
