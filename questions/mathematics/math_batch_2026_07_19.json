@@ -448,14 +448,14 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["limits","calculus","2026-07-25"],
-    "question": "Evaluate the limit as $x$ approaches 2 of:\n\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$.",
+    "question": "Evaluate the limit as $x$ approaches 2 of:\\par\\vspace{0.5em}\\noindent $\\lim_{x\\to2}\\frac{x^2-4}{x-2}$.",
     "native_question": "Evaluate the limit of (x²-4)/(x-2) as x approaches 2.",
     "latex": null,
     "options": ["2", "3", "4", "Undefined"],
     "native_options": ["A) 2", "B) 3", "C) 4", "D) Undefined"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Indeterminate Limits by Factoring:\n\nIf direct substitution yields $\\frac{0}{0}$ (indeterminate), simplify the algebraic quotient before taking limits.",
+      "rule": "Indeterminate Limits by Factoring:\\par\\vspace{0.5em}\\noindent If direct substitution yields $\\frac{0}{0}$ (indeterminate), simplify the algebraic quotient before taking limits.",
       "why": "Step 1: Write down the limit equation:\\n\\lim_{x\\to2}\\frac{x^2-4}{x-2}\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\nx^2 - 4 = (x-2)(x+2)\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\n\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\n\\text{Limit} = 2 + 2 = 4.",
       "poll_hint": "Cancel (x−2), then x+2 → 4"
     },
@@ -526,15 +526,15 @@
     "difficulty": "hard",
     "force_image": false,
     "tags": ["circles","geometry","2026-07-26"],
-    "question": "For the circle equation $x^2+y^2-6x+8y=0$, find the exact radius $r$:\\par\\vspace{0.5em}\\noindent $r = \\sqrt{h^2+k^2-F}$.",
+    "question": "For the circle equation $x^2+y^2-6x+8y=0$, find the exact radius $r$:\n\n$r = \\sqrt{h^2+k^2-F}$.",
     "native_question": "For the circle x² + y² - 6x + 8y = 0, find the radius r.",
     "latex": null,
     "options": ["3", "4", "5", "6"],
     "native_options": ["A) r = 3", "B) r = 4", "C) r = 5", "D) r = 6"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Standard Circle Equation Formulation:\\par\\vspace{0.5em}\\noindent Complete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\\par\\vspace{0.4em}\\noindent $(x - h)^2 + (y - k)^2 = r^2$",
-      "why": "Step 1: Group x-terms and y-terms together:\\n(x^2 - 6x) + (y^2 + 8y) = 0\\n\\nStep 2: Complete the square for the x-terms by adding (\\frac{-6}{2})^2 = 9 to both sides of the equation:\\n(x-3)^2 = x^2-6x+9\\n\\nStep 3: Complete the square for the y-terms by adding (\\frac{8}{2})^2 = 16 to both sides of the equation:\\n(y+4)^2 = y^2+8y+16\\n\\nStep 4: Balance the right side of the equation by adding both values:\\n(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25\\n\\nStep 5: Identify the radius squared (r^2 = 25) to solve for the radius:\\nr = \\sqrt{25} = 5.",
+      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\n\n$(x - h)^2 + (y - k)^2 = r^2$",
+      "why": "Step 1: Group x-terms and y-terms together:\n(x^2 - 6x) + (y^2 + 8y) = 0\n\nStep 2: Complete the square for the x-terms by adding (\\frac{-6}{2})^2 = 9 to both sides of the equation:\n(x-3)^2 = x^2-6x+9\n\nStep 3: Complete the square for the y-terms by adding (\\frac{8}{2})^2 = 16 to both sides of the equation:\n(y+4)^2 = y^2+8y+16\n\nStep 4: Balance the right side of the equation by adding both values:\n(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25\n\nStep 5: Identify the radius squared (r^2 = 25) to solve for the radius:\nr = \\sqrt{25} = 5.",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
     "options_analysis": [

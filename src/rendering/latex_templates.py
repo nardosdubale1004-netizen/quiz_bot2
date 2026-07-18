@@ -111,29 +111,21 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         f"\\end{{tikzpicture}}"
     )
 
-    template = """\\documentclass[12pt]{article}
+    template = """\\documentclass[12pt, border=25pt, varwidth=16.5cm]{standalone}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
-\\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
-\\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{25pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
 \\relpenalty=10000
 \\sloppy
 \\begin{document}
-\\begin{preview}
-\\begin{minipage}{16.5cm}
 \\pagecolor{white}
 \\centering
-\\noindent\\rule{16.5cm}{0pt}\par
 __WATERMARK_TIKZ__
 __BODY_CONTENT__
-\\end{minipage}
-\\end{preview}
 \\end{document}"""
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
@@ -161,67 +153,59 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"\\end{{tikzpicture}}"
     )
 
-    template = """\\documentclass[12pt]{article}
+    template = """\\documentclass[12pt, border=25pt, varwidth=16.5cm]{standalone}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
-\\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
-\\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{25pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
 \\relpenalty=10000
 \\sloppy
 \\begin{document}
-\\begin{preview}
-\\begin{minipage}{16.5cm}
 \\pagecolor{white}
 \\centering
-\\noindent\\rule{16.5cm}{0pt}\\par
-    __WATERMARK_TIKZ__
-    \\begin{minipage}{15.0cm}
-        \\flushleft
-        {\\noindent \\large \\textbf{SOLUTION SHEET: REF __DISPLAY_ID__}} \\par
-        \\vspace{0.3em}
-        {\\noindent \\small \\color{gray} Subject: __SUBJECT__ \\quad $\\bullet$ \\quad Topic: __TOPIC__} \\par
-        \\vspace{0.8em}
-        \\noindent\\hrulefill \\par
-    \\end{minipage}
-    \\par\\vspace{2.0em}
-    __DIAGRAM_BLOCK__
-    \\begin{minipage}{15.0cm}
-        \\flushleft
-        {\\noindent \\large \\textbf{PROBLEM CANVAS}} \\par
-        \\vspace{0.4em}
-        \\noindent\\hrulefill \\par
-        \\vspace{1.0em}
-        {\\noindent \\small \\textbf{Question Details:} \\\\ __QUESTION__} \\par
-        \\vspace{1.5em}
-        \\begin{adjustbox}{minipage=14.2cm, margin=0.8ex, bgcolor=gray!5, frame=0.3pt}
-            {\\noindent \\small \\textbf{Governing Principle \\& Formulation:}} \\\\
-            \\vspace{0.4em}
-            __RULE__
-        \\end{adjustbox} \\par
-    \\end{minipage}
-    \\par\\vspace{2.5em}
-    \\begin{minipage}{15.0cm}
-        \\flushleft
-        {\\noindent \\large \\textbf{DERIVATION \\& STEPS}} \\par
-        \\vspace{0.4em}
-        \\noindent\\hrulefill \\par
-        \\vspace{1.0em}
-        {\\noindent \\small \\textbf{Step-by-Step Calculation:} \\\\ __WHY__} \\par
-    \\end{minipage}
-    \\par\\vspace{2.5em}
-    \\begin{minipage}{15.0cm}
-        \\noindent\\hrulefill \\par
-        \\vspace{0.8em}
-        \\centering \\small \\color{gray} \\textbf{\\textsf{Channel: t.me/grade12EntranceExam}}
-    \\end{minipage}
+__WATERMARK_TIKZ__
+\\begin{minipage}{15.0cm}
+    \\flushleft
+    {\\noindent \\large \\textbf{SOLUTION SHEET: REF __DISPLAY_ID__}} \\par
+    \\vspace{0.3em}
+    {\\noindent \\small \\color{gray} Subject: __SUBJECT__ \\quad $\\bullet$ \\quad Topic: __TOPIC__} \\par
+    \\vspace{0.8em}
+    \\noindent\\hrulefill \\par
 \\end{minipage}
-\\end{preview}
+\\par\\vspace{2.0em}
+__DIAGRAM_BLOCK__
+\\begin{minipage}{15.0cm}
+    \\flushleft
+    {\\noindent \\large \\textbf{PROBLEM CANVAS}} \\par
+    \\vspace{0.4em}
+    \\noindent\\hrulefill \\par
+    \\vspace{1.0em}
+    {\\noindent \\small \\textbf{Question Details:} \\\\ __QUESTION__} \\par
+    \\vspace{1.5em}
+    \\begin{adjustbox}{minipage=14.2cm, margin=0.8ex, bgcolor=gray!5, frame=0.3pt}
+        {\\noindent \\small \\textbf{Governing Principle \\& Formulation:}} \\\\
+        \\vspace{0.4em}
+        __RULE__
+    \\end{adjustbox} \\par
+\\end{minipage}
+\\par\\vspace{2.5em}
+\\begin{minipage}{15.0cm}
+    \\flushleft
+    {\\noindent \\large \\textbf{DERIVATION \\& STEPS}} \\par
+    \\vspace{0.4em}
+    \\noindent\\hrulefill \\par
+    \\vspace{1.0em}
+    {\\noindent \\small \\textbf{Step-by-Step Calculation:} \\\\ __WHY__} \\par
+\\end{minipage}
+\\par\\vspace{2.5em}
+\\begin{minipage}{15.0cm}
+    \\noindent\\hrulefill \\par
+    \\vspace{0.8em}
+    \\centering \\small \\color{gray} \\textbf{\\textsf{Channel: t.me/grade12EntranceExam}}
+\\end{minipage}
 \\end{document}"""
     return (template.replace("__DIAGRAM_BLOCK__", diagram_block).replace("__WATERMARK_TIKZ__", watermark_tikz)
                 .replace("__DISPLAY_ID__", str(display_id)).replace("__SUBJECT__", subject_escaped)
