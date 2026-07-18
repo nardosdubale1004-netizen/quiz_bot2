@@ -57,7 +57,7 @@ async def handle_http_request(reader, writer, app):
             response = (
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: application/json\r\n"
-                f"Content-Length: {len(response_body)}\r\n"
+                f"Content-Length: {response_body}\r\n"
                 "Connection: close\r\n\r\n"
                 f"{response_body}"
             )
@@ -354,7 +354,7 @@ async def run_cloud_server(app, port):
     # Set the webhook URL with Telegram manually (pointing to /webhook)
     await app.bot.set_webhook(
         url=f"{PUBLIC_URL}/webhook",
-        drop_updates=True
+        drop_pending_updates=True
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 

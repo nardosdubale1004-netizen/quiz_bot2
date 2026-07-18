@@ -15,7 +15,7 @@ def has_real_diagram(q) -> bool:
         return True
 
     tikz = q.get("latex")
-    if not text:
+    if not tikz:
         return False
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
@@ -226,9 +226,9 @@ __DIAGRAM_BLOCK__
 \\end{preview}
 \\end{document}"""
     return (template.replace("__DIAGRAM_BLOCK__", diagram_block).replace("__WATERMARK_TIKZ__", watermark_tikz)
-                .replace("__DISPLAY_ID__", str(display_id)).replace("__SUBJECT__", subject_escaped)
-                .replace("__TOPIC__", topic_escaped).replace("__QUESTION__", question_escaped)
-                .replace("__RULE__", rule_escaped).replace("__WHY__", why_escaped))
+                    .replace("__DISPLAY_ID__", str(display_id)).replace("__SUBJECT__", subject_escaped)
+                    .replace("__TOPIC__", topic_escaped).replace("__QUESTION__", question_escaped)
+                    .replace("__RULE__", rule_escaped).replace("__WHY__", why_escaped))
 
 def get_day_from_tags(tags=None):
     now = datetime.now()
