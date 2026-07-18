@@ -6,22 +6,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["algebra", "linear", "2026-07-20"],
-    "question": "Solve $2x+3=11$.",
-    "native_question": "Solve 2x + 3 = 11.",
+    "question": "Solve the linear equation:\\par\\vspace{0.5em}\\noindent $2x+3=11$.",
+    "native_question": "Solve the linear equation: 2x + 3 = 11.",
     "latex": null,
     "options": ["2", "3", "4", "5"],
     "native_options": ["A) x = 2", "B) x = 3", "C) x = 4", "D) x = 5"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "For $ax+b=c$, subtract $b$ then divide by $a$.",
-      "why": "Step 1: Write down the linear equation:\\n$2x + 3 = 11$.\\n\\nStep 2: Isolate the variable term by subtracting 3 from both sides of the equation:\\n$2x = 11 - 3$\\n$2x = 8$.\\n\\nStep 3: Solve for $x$ by dividing both sides by 2:\\n$x = \\frac{8}{2}$ so $x = 4$.",
+      "rule": "For a standard linear form $ax+b=c$:\\par\\vspace{0.5em}\\noindent Isolate $x$ by subtracting $b$, then dividing by $a$:\\par\\vspace{0.4em}\\noindent $ax = c - b \\implies x = \\frac{c - b}{a}$",
+      "why": "Step 1: Write down the given linear expression:\\par\\noindent $2x + 3 = 11$\\n\\nStep 2: Subtract 3 from both sides to isolate the variable term $2x$:\\par\\noindent $2x = 11 - 3$\\par\\noindent $2x = 8$\\n\\nStep 3: Solve for $x$ by dividing both sides of the equation by 2:\\par\\noindent $x = \\frac{8}{2}$\\par\\noindent $x = 4$.",
       "poll_hint": "2x+3=11 ⇒ 2x=8 ⇒ x=4"
     },
     "options_analysis": [
-      {"why": "Too small.", "example": "Gives 7, not 11."},
-      {"why": "Common arithmetic slip.", "example": "2·3+3=9."},
-      {"why": "Correct solution.", "example": "2·4+3=11."},
-      {"why": "Too large.", "example": "2·5+3=13."}
+      {"why": "Incorrect. This value yields a left-hand equivalence of 7.", "example": "2(2)+3 = 7"},
+      {"why": "Incorrect. This represents a minor computational shift.", "example": "2(3)+3 = 9"},
+      {"why": "Correct. Substituting x=4 balances the algebraic statement.", "example": "2(4)+3 = 11"},
+      {"why": "Incorrect. This value yields a left-hand equivalence of 13.", "example": "2(5)+3 = 13"}
     ],
     "scheduled_for": "2026-07-20T08:00:00+03:00"
   },
@@ -30,24 +30,24 @@
     "subject": "Mathematics",
     "topic": "Calculus: Definite Integrals",
     "difficulty": "medium",
-    "force_image": false,
+    "force_image": true,
     "tags": ["calculus", "integrals", "2026-07-20"],
-    "question": "Find $\\int_{0}^{2} x^2\\,dx$.",
+    "question": "Find the exact area under the parabola $f(x) = x^2$ over the interval $[0, 2]$, corresponding to:\\par\\vspace{0.5em}\\noindent $\\int_{0}^{2} x^2\\,dx$.",
     "native_question": "Find the definite integral of x² from x = 0 to x = 2.",
-    "latex": null,
+    "latex": "\\begin{tikzpicture}[scale=1.2] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,4.5); \\draw[-{Stealth}, line width=1pt] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}, line width=1pt] (0,-0.5) -- (0,4.5) node[above] {$y$}; \\fill[fill=blue!15, opacity=0.6, domain=0:2, samples=100] (0,0) -- plot (\\x, {\\x*\\x}) -- (2,0) -- cycle; \\draw[domain=0:2.1, samples=100, color=blue, line width=1.5pt] plot (\\x, {\\x*\\x}) node[right] {$f(x)=x^2$}; \\draw[dashed, draw=gray] (2,0) -- (2,4); \\node[below] at (2,0) {$2$}; \\node[below left] at (0,0) {$0$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
     "options": ["4/3", "8/3", "2", "3"],
     "native_options": ["A) 4/3", "B) 8/3", "C) 2", "D) 3"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "The Fundamental Theorem of Calculus: $\\int_{a}^{b} f(x)\\,dx = [F(x)]_a^b = F(b) - F(a)$",
-      "why": "Step 1: Identify the integration rule. To integrate a power of $x$, apply the power rule: $\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C$.\\n\\nStep 2: Find the antiderivative $F(x)$ of the function $f(x) = x^2$:\\n$F(x) = \\int x^2\\,dx = \\frac{x^{2+1}}{2+1} = \\frac{x^3}{3}$.\\n\\nStep 3: Apply the Fundamental Theorem of Calculus over boundaries $a=0$ and $b=2$:\\n$\\int_{0}^{2} x^2\\,dx = \\left[ \\frac{x^3}{3} \\right]_0^2 = F(2) - F(0)$.\\n\\nStep 4: Substitute the upper limit ($x=2$):\\n$F(2) = \\frac{2^3}{3} = \\frac{8}{3}$.\\n\\nStep 5: Substitute the lower limit ($x=0$):\\n$F(0) = \\frac{0^3}{3} = 0$.\\n\\nStep 6: Compute the final definite difference:\\n$F(2) - F(0) = \\frac{8}{3} - 0 = \\frac{8}{3}$.",
+      "rule": "The Fundamental Theorem of Calculus (Part 2):\\par\\vspace{0.5em}\\noindent If $F'(x) = f(x)$, then:\\par\\vspace{0.4em}\\noindent $\\int_{a}^{b} f(x)\\,dx = [F(x)]_a^b = F(b) - F(a)$",
+      "why": "Step 1: Identify the integration rule. Apply the standard power rule of integration:\\par\\noindent $\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C$\\n\\nStep 2: Find the general antiderivative $F(x)$ of the integrand $f(x) = x^2$:\\par\\noindent $F(x) = \\frac{x^{2+1}}{2+1} = \\frac{x^3}{3}$\\n\\nStep 3: Evaluate this antiderivative at the boundaries $a=0$ and $b=2$:\\par\\noindent $\\int_{0}^{2} x^2\\,dx = \\left[ \\frac{x^3}{3} \\right]_0^2 = F(2) - F(0)$\\n\\nStep 4: Substitute the upper limit $x=2$:\\par\\noindent $F(2) = \\frac{2^3}{3} = \\frac{8}{3}$\\n\\nStep 5: Substitute the lower limit $x=0$:\\par\\noindent $F(0) = \\frac{0^3}{3} = 0$\\n\\nStep 6: Compute the definitive difference:\\par\\noindent $F(2) - F(0) = \\frac{8}{3} - 0 = \\frac{8}{3}$.",
       "poll_hint": "∫₀²x²dx=[x³/3]₀²=8/3"
     },
     "options_analysis": [
-      {"why": "Missed upper value.", "example": "Incorrect evaluation."},
-      {"why": "Correct area.", "example": "8/3."},
-      {"why": "Too small.", "example": "Not integral value."},
-      {"why": "Arithmetic error.", "example": "Rounded badly."}
+      {"why": "Incorrect. This represents a scaling factor computational omission.", "example": "Evaluated incorrectly."},
+      {"why": "Correct. Fundamental integration yields exactly 8/3.", "example": "Area = 8/3"},
+      {"why": "Incorrect. Likely evaluated f(x) directly without integrating.", "example": "f(2) = 4"},
+      {"why": "Incorrect. An integer rounding approximation error.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-20T12:00:00+03:00"
   },
@@ -58,22 +58,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["vectors", "dot-product", "angles", "2026-07-20"],
-    "question": "Calculate the exact angle $\\theta$ between the vectors $\\vec{a} = \\vec{i} + \\sqrt{3}\\vec{j}$ and $\\vec{b} = \\sqrt{3}\\vec{i} + \\vec{j}$.",
+    "question": "Calculate the exact spatial angle $\\theta$ between the vectors:\\par\\vspace{0.5em}\\noindent $\\vec{a} = \\vec{i} + \\sqrt{3}\\vec{j}$ and $\\vec{b} = \\sqrt{3}\\vec{i} + \\vec{j}$.",
     "native_question": "Calculate the exact angle θ between vectors a = i + √3 j and b = √3 i + j.",
-    "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,2.5); \\draw[-{Stealth}] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-0.5) -- (0,2.5) node[above] {$y$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (1, 1.732) node[above right] {$\\vec{a}$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red] (0,0) -- (1.732, 1) node[above right] {$\\vec{b}$}; \\draw[draw=violet, line width=1pt, -{Stealth}] (0.6,0.346) arc (30:60:0.7) node[midway, above right=1pt] {$\\theta$}; \\end{tikzpicture}",
+    "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,2.5); \\draw[-{Stealth}] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-0.5) -- (0,2.5) node[above] {$y$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (1, 1.732) node[above right] {$\\vec{a}$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red] (0,0) -- (1.732, 1) node[above right] {$\\vec{b}$}; \\draw[draw=violet, line width=1pt, -{Stealth}] (0.6,0.346) arc (30:60:0.7) node[midway, above right=1pt] {$\\theta$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
     "options": ["\\pi/6", "\\pi/4", "\\pi/3", "\\pi/2"],
     "native_options": ["A) π/6", "B) π/4", "C) π/3", "D) π/2"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "Vector Dot Product Definition: $\\cos\\theta = \\frac{\\vec{a} \\cdot \\vec{b}}{\\|\\vec{a}\\| \\|\\vec{b}\\|}$",
-      "why": "Step 1: Write down the components of the vectors:\\n$\\vec{a} = (1, \\sqrt{3})$ so $a_x = 1$ and $a_y = \\sqrt{3}$.\\n$\\vec{b} = (\\sqrt{3}, 1)$ so $b_x = \\sqrt{3}$ and $b_y = 1$.\\n\\nStep 2: Calculate the dot product:\\n$\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\\n$\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$.\\n\\nStep 3: Calculate the vector magnitudes:\\n$\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$.\\n$\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$.\\n\\nStep 4: Solve for $\\cos\\theta$:\\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$.\\n\\nStep 5: Determine the reference angle:\\n$\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
+      "rule": "Vector Dot Product Definition:\\par\\vspace{0.5em}\\noindent $\\cos\\theta = \\frac{\\vec{a} \\cdot \\vec{b}}{\\|\\vec{a}\\| \\|\\vec{b}\\|}$",
+      "why": "Step 1: Write down the components of the vectors:\\par\\noindent $\\vec{a} = (1, \\sqrt{3})$\\par\\noindent $\\vec{b} = (\\sqrt{3}, 1)$\\n\\nStep 2: Calculate the coordinate dot product:\\par\\noindent $\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\\par\\noindent $\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$\\n\\nStep 3: Calculate the vector magnitudes:\\par\\noindent $\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$\\par\\noindent $\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$\\n\\nStep 4: Substitute values into the formulation to solve for $\\cos\\theta$:\\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$\\n\\nStep 5: Determine the reference angle:\\par\\noindent $\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
       "poll_hint": "cos(θ) = (a·b)/(||a||·||b||) = √3/2 ⇒ θ = 30° = π/6 rad"
     },
     "options_analysis": [
-      {"why": "Correct.", "example": "8−3=5."},
-      {"why": "Sign mistake.", "example": "8−1."},
-      {"why": "Ignored y-part.", "example": "Only 2·4."},
-      {"why": "Added magnitudes.", "example": "Not dot product."}
+      {"why": "Correct. Substitution resolves to a cosine ratio of exactly √3/2.", "example": "cos(π/6) = √3/2"},
+      {"why": "Incorrect. This represents a 45-degree spatial offset.", "example": "cos(π/4) = √2/2"},
+      {"why": "Incorrect. This is 60 degrees.", "example": "cos(π/3) = 1/2"},
+      {"why": "Incorrect. Perpendicular vectors yield a product of zero.", "example": "cos(π/2) = 0"}
     ],
     "scheduled_for": "2026-07-20T18:00:00+03:00"
   },
@@ -84,22 +84,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["geometry", "angles", "2026-07-21"],
-    "question": "The angles of a triangle sum to?",
+    "question": "The interior angles of any triangle in Euclidean space always sum to?",
     "native_question": "The sum of the interior angles of a triangle is equal to?",
     "latex": null,
     "options": ["90°", "180°", "270°", "360°"],
     "native_options": ["A) 90°", "B) 180°", "C) 270°", "D) 360°"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Interior angles of a triangle total $180^\\circ$.",
-      "why": "A fundamental geometry fact.",
+      "rule": "Euclidean Angle Sum Theorem:\\par\\vspace{0.5em}\\noindent The sum of the interior angles of a triangle is always $180^\\circ$ (or $\\pi$ radians).",
+      "why": "This is a fundamental geometry fact: for any triangle with angles $\\alpha$, $\\beta$, and $\\gamma$:\\par\\vspace{0.4em}\\noindent $\\alpha + \\beta + \\gamma = 180^\\circ$",
       "poll_hint": "Triangle interior angles = 180°"
     },
     "options_analysis": [
-      {"why": "Right angle only.", "example": "Not all angles."},
-      {"why": "Correct.", "example": "180°."},
-      {"why": "Too large.", "example": "Not triangle sum."},
-      {"why": "Full turn.", "example": "Not applicable."}
+      {"why": "Incorrect. This represents a right angle, not a complete sum.", "example": "N/A"},
+      {"why": "Correct. Euclid's first parallel postulate guarantees exactly 180°.", "example": "Sum = 180°"},
+      {"why": "Incorrect. Value exceeds standard triangular bounds.", "example": "N/A"},
+      {"why": "Incorrect. This is the sum of a quadrilateral.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-21T08:00:00+03:00"
   },
@@ -110,22 +110,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["quadratic", "roots", "2026-07-21"],
-    "question": "Solve $x^2-5x+6=0$.",
+    "question": "Solve the quadratic equation:\\par\\vspace{0.5em}\\noindent $x^2-5x+6=0$.",
     "native_question": "Solve the quadratic equation x² - 5x + 6 = 0.",
     "latex": null,
     "options": ["1,6", "2,3", "-2,-3", "-1,-6"],
     "native_options": ["A) x = 1, 6", "B) x = 2, 3", "C) x = -2, -3", "D) x = -1, -6"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Factor quadratic expressions.",
-      "why": "Step 1: Write down the equation:\\n$x^2 - 5x + 6 = 0$.\\n\\nStep 2: Find two numbers that multiply to $+6$ and add up to $-5$. These are $-2$ and $-3$.\\n\\nStep 3: Factor the quadratic term:\\n$(x - 2)(x - 3) = 0$.\\n\\nStep 4: Solve for $x$ by setting each factor to zero:\\n$x - 2 = 0 \\implies x = 2$.\\n$x - 3 = 0 \\implies x = 3$.",
+      "rule": "Factoring Monic Quadratics:\\par\\vspace{0.5em}\\noindent For $x^2+bx+c=0$, find two numbers that multiply to $c$ and sum to $b$:\\par\\vspace{0.4em}\\noindent $(x - p)(x - q) = 0 \\implies x = p, q$",
+      "why": "Step 1: Write down the quadratic equation:\\par\\noindent $x^2 - 5x + 6 = 0$\\n\\nStep 2: Identify two factors that multiply to $+6$ and sum to $-5$. These are $-2$ and $-3$:\\par\\noindent $(-2) \\times (-3) = 6$\\par\\noindent $(-2) + (-3) = -5$\\n\\nStep 3: Express in factored form:\\par\\noindent $(x - 2)(x - 3) = 0$\\n\\nStep 4: Solve for $x$ by setting each linear factor to zero:\\par\\noindent $x - 2 = 0 \\implies x = 2$\\par\\noindent $x - 3 = 0 \\implies x = 3$.",
       "poll_hint": "x²−5x+6=(x−2)(x−3)"
     },
     "options_analysis": [
-      {"why": "Product mismatch.", "example": "Not roots."},
-      {"why": "Correct.", "example": "2 and 3."},
-      {"why": "Wrong signs.", "example": "Do not satisfy."},
-      {"why": "Wrong values.", "example": "Not roots."}
+      {"why": "Incorrect. Sum of these roots equals 7, not 5.", "example": "1+6=7"},
+      {"why": "Correct. Factoring yields root solutions at x = 2 and x = 3.", "example": "Roots: 2, 3"},
+      {"why": "Incorrect. Leads to a sign coefficient error.", "example": "N/A"},
+      {"why": "Incorrect. Product is correct, but sum is negative.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-21T12:00:00+03:00"
   },
@@ -136,22 +136,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["matrices", "determinant", "2026-07-21"],
-    "question": "Find the determinant of $\\begin{pmatrix}2&1\\\\5&3\\end{pmatrix}$.",
+    "question": "Find the determinant of the $2 \\times 2$ matrix:\\par\\vspace{0.5em}\\noindent $\\begin{pmatrix}2&1\\\\5&3\\end{pmatrix}$.",
     "native_question": "Find the determinant of the 2x2 matrix: [[2, 1], [5, 3]].",
-    "latex": "\\begin{tikzpicture}[scale=0.8] \\draw[step=1cm, draw=gray!15, line width=0.5pt] (-2,-1) grid (3,6); \\draw[-{Stealth}, line width=1pt] (-2.2,0) -- (3.2,0) node[right] {$x$}; \\draw[-{Stealth}, line width=1pt] (0,-1.2) -- (0,6.2) node[above] {$y$}; \\fill[fill=blue!15, opacity=0.6] (0,0) -- (2,3) -- (1,5) -- (-1,2) -- cycle; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (2,3) node[midway, right] {$\\vec{u}$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red] (0,0) -- (-1,2) node[midway, left] {$\\vec{v}$}; \\draw[dashed, line width=1pt] (2,3) -- (1,5) -- (-1,2); \\end{tikzpicture}",
-    "options": ["3", "5", "7", "11"],
-    "native_options": ["A) Area = 3", "B) Area = 5", "C) Area = 7", "D) Area = 11"],
-    "correct_option": 2,
+    "latex": null,
+    "options": ["1", "5", "7", "11"],
+    "native_options": ["A) det = 1", "B) det = 5", "C) det = 7", "D) det = 11"],
+    "correct_option": 0,
     "poll_explanation": {
-      "rule": "Geometric Area by Determinant Magnitude: $\\text{Area} = |u_x v_y - u_y v_x|$",
-      "why": "Step 1: Write down the given matrix:\\n$M = \\begin{pmatrix} 2 & 1 \\\\ 5 & 3 \\end{pmatrix}$.\\n\\nStep 2: Recall the formula for the determinant of a $2\\times2$ matrix $\\det(M) = ad - bc$.\\n\\nStep 3: Map matrix entries to coefficients:\\n$a = 2$, $b = 1$, $c = 5$, and $d = 3$.\\n\\nStep 4: Substitute the values into the formula:\\n$\\det(M) = (2)(3) - (1)(5)$\\n$\\det(M) = 6 - 5 = 1$.",
+      "rule": "Determinant of a $2\\times2$ Matrix:\\par\\vspace{0.5em}\\noindent For $A = \\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$, the determinant is:\\par\\vspace{0.4em}\\noindent $\\det(A) = ad - bc$",
+      "why": "Step 1: Write down the entries of the matrix:\\par\\noindent $a = 2, b = 1, c = 5, d = 3$\\n\\nStep 2: Substitute the entry values into the determinant formula:\\par\\noindent $\\det(M) = (2)(3) - (1)(5)$\\n\\nStep 3: Calculate the arithmetic result:\\par\\noindent $\\det(M) = 6 - 5 = 1$.",
       "poll_hint": "ad−bc = 6−5 = 1"
     },
     "options_analysis": [
-      {"why": "Correct.", "example": "1."},
-      {"why": "Sign error.", "example": "5−6."},
-      {"why": "Used ad only.", "example": "Ignored bc."},
-      {"why": "Added entries.", "example": "Not determinant."}
+      {"why": "Correct. Standard determinant expansion yields exactly 1.", "example": "6 - 5 = 1"},
+      {"why": "Incorrect. This represents a computational sign translation slip.", "example": "N/A"},
+      {"why": "Incorrect. Likely resulted from adding entries instead of subtracting.", "example": "6 + 5 = 11"},
+      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-21T18:00:00+03:00"
   },
@@ -162,22 +162,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["powers", "indices", "2026-07-22"],
-    "question": "Evaluate $2^3$.",
+    "question": "Evaluate the exponential term:\\par\\vspace{0.5em}\\noindent $2^3$.",
     "native_question": "Evaluate 2³.",
     "latex": null,
     "options": ["6", "8", "9", "12"],
     "native_options": ["A) 6", "B) 8", "C) 9", "D) 12"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Repeated multiplication.",
-      "why": "Step 1: Understand that $2^3$ represents the base 2 multiplied by itself 3 times:\\n$2^3 = 2 \\times 2 \\times 2$.\\n\\nStep 2: Compute step-by-step:\\n$2 \\times 2 = 4$\\n$4 \\times 2 = 8$.",
+      "rule": "Definition of Integer Power:\\par\\vspace{0.5em}\\noindent For any base $a$ and positive integer power $n$:\\par\\vspace{0.4em}\\noindent $a^n = \\underbrace{a \\times a \\times \\dots \\times a}_{n\\text{ times}}$",
+      "why": "Step 1: Write down the term:\\par\\noindent $2^3$\\n\\nStep 2: Express as repeated multiplication of base 2 three times:\\par\\noindent $2^3 = 2 \\times 2 \\times 2$\\n\\nStep 3: Solve step-by-step:\\par\\noindent $2 \\times 2 = 4$\\par\\noindent $4 \\times 2 = 8$.",
       "poll_hint": "2³ = 2×2×2 = 8"
     },
     "options_analysis": [
-      {"why": "Multiplied incorrectly.", "example": "2×3."},
-      {"why": "Correct.", "example": "8."},
-      {"why": "Confused with 3².", "example": "9."},
-      {"why": "Incorrect.", "example": "Not power value."}
+      {"why": "Incorrect. Multiplied the base by the exponent instead of self-multiplying.", "example": "2 * 3 = 6"},
+      {"why": "Correct. Repeated multiplication evaluates to 8.", "example": "2^3 = 8"},
+      {"why": "Incorrect. Confused with 3².", "example": "3^2 = 9"},
+      {"why": "Incorrect. General computation error.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-22T08:00:00+03:00"
   },
@@ -188,22 +188,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["probability", "dice", "2026-07-22"],
-    "question": "What is the probability of rolling an even number on a fair die?",
+    "question": "What is the exact probability of rolling an even number on a fair standard 6-sided die?",
     "native_question": "What is the probability of rolling an even number on a fair 6-sided die?",
     "latex": null,
     "options": ["1/6", "1/3", "1/2", "2/3"],
     "native_options": ["A) 1/6", "B) 1/3", "C) 1/2", "D) 2/3"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Probability = favorable/total.",
-      "why": "Step 1: List the total possible outcomes of a standard 6-sided die: \\\\{1, 2, 3, 4, 5, 6\\\\} (6 outcomes).\\n\\nStep 2: List the favorable outcomes (even numbers): \\\\{2, 4, 6\\\\} (3 outcomes).\\n\\nStep 3: Apply the probability formula:\\n$P = \\frac{\\text{Favorable Outcomes}}{\\text{Total Outcomes}} = \\frac{3}{6}$.\\n\\nStep 4: Simplify the fraction:\\n$P = \\frac{1}{2}$.",
+      "rule": "Classical Probability Formula:\\par\\vspace{0.5em}\\noindent $P(E) = \\frac{n(E)}{n(S)}$\\par\\vspace{0.4em}\\noindent where $n(E)$ is the count of favorable events, and $n(S)$ is the total sample space.",
+      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\\par\\noindent $S = \\\\{1, 2, 3, 4, 5, 6\\\\} \\implies n(S) = 6$\\n\\nStep 2: List the favorable outcomes (even numbers):\\par\\noindent $E = \\\\{2, 4, 6\\\\} \\implies n(E) = 3$\\n\\nStep 3: Apply the probability formula:\\par\\noindent $P(E) = \\frac{3}{6}$\\n\\nStep 4: Simplify the fraction:\\par\\noindent $P(E) = \\frac{1}{2}$.",
       "poll_hint": "3 favorable ÷ 6 total = 1/2"
     },
     "options_analysis": [
-      {"why": "One outcome only.", "example": "1/6."},
-      {"why": "Counted two outcomes.", "example": "2/6."},
-      {"why": "Correct.", "example": "3/6=1/2."},
-      {"why": "Too large.", "example": "4/6."}
+      {"why": "Incorrect. Only represents the probability of rolling a single specific number.", "example": "N/A"},
+      {"why": "Incorrect. Corresponds to rolling only two even outcomes.", "example": "N/A"},
+      {"why": "Correct. Since exactly half the outcomes are even, the probability is 1/2.", "example": "P = 3/6 = 1/2"},
+      {"why": "Incorrect. Exceeds even ratio bounds.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-22T12:00:00+03:00"
   },
@@ -214,22 +214,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["complex", "algebra", "2026-07-22"],
-    "question": "Compute $(1+i)^2$.",
+    "question": "Compute the complex square:\\par\\vspace{0.5em}\\noindent $(1+i)^2$.",
     "native_question": "Compute (1 + i)².",
     "latex": null,
     "options": ["2i", "2+2i", "-2", "1+2i"],
     "native_options": ["A) 2i", "B) 2 + 2i", "C) -2", "D) 1 + 2i"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "Use expansion and $i^2=-1$.",
-      "why": "Step 1: Expand the squared binomial using $(a+b)^2 = a^2 + 2ab + b^2$:\\n$(1+i)^2 = 1^2 + 2(1)(i) + i^2$.\\n\\nStep 2: Simplify using the fundamental complex identity $i^2 = -1$:\\n$(1+i)^2 = 1 + 2i - 1$.\\n\\nStep 3: Add real parts to find the final result:\\n$(1+i)^2 = 2i$.",
+      "rule": "Complex Algebra Rules:\\par\\vspace{0.5em}\\noindent Expand using binomial expansion, then apply $i^2 = -1$:\\par\\vspace{0.4em}\\noindent $(a + bi)^2 = a^2 + 2abi - b^2$",
+      "why": "Step 1: Write down the expression:\\par\\noindent $(1 + i)^2$\\n\\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\\par\\noindent $(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\\par\\noindent $(1 + i)^2 = 1 + 2i + i^2$\\n\\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\\par\\noindent $(1 + i)^2 = 1 + 2i - 1$\\n\\nStep 4: Cancel real parts to find the final result:\\par\\noindent $(1 + i)^2 = 2i$.",
       "poll_hint": "(1+i)²=1+2i−1=2i"
     },
     "options_analysis": [
-      {"why": "Correct.", "example": "2i."},
-      {"why": "Forgot i².", "example": "Left +1."},
-      {"why": "Wrong simplification.", "example": "Ignored 2i."},
-      {"why": "Arithmetic error.", "example": "Extra 1."}
+      {"why": "Correct. Binomial expansion and substitution of i²=-1 yields exactly 2i.", "example": "2i"},
+      {"why": "Incorrect. Failed to apply the identity i² = -1.", "example": "Left +1"},
+      {"why": "Incorrect. Erroneously simplified the imaginary component.", "example": "Ignored 2i"},
+      {"why": "Incorrect. Basic arithmetic error.", "example": "Extra 1"}
     ],
     "scheduled_for": "2026-07-22T18:00:00+03:00"
   },
@@ -240,22 +240,22 @@
     "difficulty": "easy",
     "force_image": true,
     "tags": ["coordinates", "distance", "2026-07-23"],
-    "question": "What is the distance between $(0,0)$ and $(3,4)$?",
+    "question": "What is the Euclidean distance between the origin $(0,0)$ and the coordinate point $(3,4)$?",
     "native_question": "What is the distance between origin (0,0) and point (3,4)?",
-    "latex": "\\begin{tikzpicture}[scale=0.8] \\draw[step=1cm, draw=gray!15, line width=0.5pt] (-1,-1) grid (4,5); \\draw[-{Stealth}] (-1.2,0) -- (4.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,5.2) node[above] {$y$}; \\draw[dashed, draw=gray] (3,0) -- (3,4); \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (3,4) node[midway, above left] {$d$}; \\filldraw[red] (3,4) circle (2pt) node[above right] {$(3,4)$}; \\end{tikzpicture}",
+    "latex": "\\begin{tikzpicture}[scale=0.8] \\draw[step=1cm, draw=gray!15, line width=0.5pt] (-1,-1) grid (4,5); \\draw[-{Stealth}] (-1.2,0) -- (4.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,5.2) node[above] {$y$}; \\draw[dashed, draw=gray] (3,0) -- (3,4); \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (3,4) node[midway, above left] {$d$}; \\filldraw[red] (3,4) circle (2pt) node[above right] {$(3,4)$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
     "options": ["5", "6", "7", "4"],
     "native_options": ["A) d = 5", "B) d = 6", "C) d = 7", "D) d = 4"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "Distance formula.",
-      "why": "Step 1: Write down the coordinates of the two points: $P_1 = (0,0)$ and $P_2 = (3,4)$.\\n\\nStep 2: Recall the distance formula:\\n$d = \\sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}$.\\n\\nStep 3: Substitute the coordinates into the formula:\\n$d = \\sqrt{(3 - 0)^2 + (4 - 0)^2}$\\n$d = \\sqrt{3^2 + 4^2}$.\\n\\nStep 4: Solve arithmetic operations:\\n$d = \\sqrt{9 + 16}$\\n$d = \\sqrt{25}$\\n$d = 5$.",
+      "rule": "The Distance Formula in $\\mathbb{R}^2$:\\par\\vspace{0.5em}\\noindent For any two points $P_1(x_1, y_1)$ and $P_2(x_2, y_2)$:\\par\\vspace{0.4em}\\noindent $d = \\sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}$",
+      "why": "Step 1: Write down the point coordinates:\\par\\noindent $P_1 = (0,0)$ and $P_2 = (3,4)$\\n\\nStep 2: Substitute the coordinate values into the distance formula:\\par\\noindent $d = \\sqrt{(3 - 0)^2 + (4 - 0)^2}$\\par\\noindent $d = \\sqrt{3^2 + 4^2}$\\n\\nStep 3: Solve the arithmetic sum inside the square root:\\par\\noindent $d = \\sqrt{9 + 16}$\\par\\noindent $d = \\sqrt{25}$\\n\\nStep 4: Solve the square root:\\par\\noindent $d = 5$.",
       "poll_hint": "√(3²+4²)=5"
     },
     "options_analysis": [
-      {"why": "Correct.", "example": "3-4-5 triangle."},
-      {"why": "Too large.", "example": "Not hypotenuse."},
-      {"why": "Added coordinates.", "example": "3+4."},
-      {"why": "Used one coordinate.", "example": "4 only."}
+      {"why": "Correct. Standard 3-4-5 right triangle hypotenuse ratio.", "example": "Distance = 5"},
+      {"why": "Incorrect. Too large.", "example": "Not hypotenuse"},
+      {"why": "Incorrect. Erroneously added components directly.", "example": "3+4 = 7"},
+      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-23T08:00:00+03:00"
   },
@@ -266,22 +266,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["logs", "algebra", "2026-07-23"],
-    "question": "Evaluate $\\log_2 32$.",
+    "question": "Evaluate the logarithmic expression:\\par\\vspace{0.5em}\\noindent $\\log_2 32$.",
     "native_question": "Evaluate log₂ 32.",
     "latex": null,
     "options": ["4", "5", "6", "32"],
     "native_options": ["A) 4", "B) 5", "C) 6", "D) 32"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "$\\log_b a=n$ means $b^n=a$.",
-      "why": "Step 1: Set the equation to find the logarithm exponent $x$:\\n$\\log_2 32 = x$.\\n\\nStep 2: Rewrite in exponential form:\\n$2^x = 32$.\\n\\nStep 3: Find the power of 2 that equals 32:\\n$2^1=2, 2^2=4, 2^3=8, 2^4=16, 2^5=32$.\\n\\nStep 4: Thus, $x = 5$.",
+      "rule": "Logarithm Definition:\\par\\vspace{0.5em}\\noindent $\\log_b(a) = c \\iff b^c = a$ ",
+      "why": "Step 1: Set up the equivalent equation:\\par\\noindent $\\log_2(32) = x \\iff 2^x = 32$\\n\\nStep 2: Find the power of base 2 that equals 32:\\par\\noindent $2^1 = 2$\\par\\noindent $2^2 = 4$\\par\\noindent $2^3 = 8$\\par\\noindent $2^4 = 16$\\par\\noindent $2^5 = 32$\\n\\nStep 3: Since $2^5 = 32$, we conclude:\\par\\noindent $x = 5$.",
       "poll_hint": "2⁵ = 32"
     },
     "options_analysis": [
-      {"why": "Too small.", "example": "2⁴=16."},
-      {"why": "Correct.", "example": "5."},
-      {"why": "Too large.", "example": "2⁶=64."},
-      {"why": "Confused value and log.", "example": "32."}
+      {"why": "Incorrect. Too small.", "example": "2^4 = 16"},
+      {"why": "Correct. Power of 2 is 5.", "example": "2^5 = 32"},
+      {"why": "Incorrect. Too large.", "example": "2^6 = 64"},
+      {"why": "Incorrect. Confused log index value with output.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-23T12:00:00+03:00"
   },
@@ -292,22 +292,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["calculus", "derivative", "2026-07-23"],
-    "question": "Find $\\frac{d}{dx}(x^3\\sin x)$.",
+    "question": "Find the derivative with respect to $x$ of:\\par\\vspace{0.5em}\\noindent $\\frac{d}{dx}(x^3\\sin x)$.",
     "native_question": "Find the derivative with respect to x of x³ sin x.",
     "latex": null,
     "options": ["$3x^2\\sin x+x^3\\cos x$", "$3x^2\\cos x$", "$x^3\\cos x$", "$3x^2\\sin x$"],
     "native_options": ["A) 3x² sin x + x³ cos x", "B) 3x² cos x", "C) x³ cos x", "D) 3x² sin x"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "Use the product rule.",
-      "why": "Step 1: Identify the two parts of the function: $u(x) = x^3$ and $v(x) = \\sin x$.\\n\\nStep 2: Find their individual derivatives:\\n$u'(x) = 3x^2$ (power rule).\\n$v'(x) = \\cos x$ (trig rule).\\n\\nStep 3: Apply the product rule formula $(uv)' = u'v + uv'$:\\n$\\frac{d}{dx}(x^3\\sin x) = (3x^2)(\\sin x) + (x^3)(\\cos x)$.\\n\\nStep 4: Combine the terms:\\n$\\frac{d}{dx}(x^3\\sin x) = 3x^2\\sin x + x^3\\cos x$.",
+      "rule": "The Derivative Product Rule:\\par\\vspace{0.5em}\\noindent For any two functions $u(x)$ and $v(x)$:\\par\\vspace{0.4em}\\noindent $\\frac{d}{dx}(uv) = u'v + uv'$",
+      "why": "Step 1: Identify the two parts of the function:\\par\\noindent $u(x) = x^3$\\par\\noindent $v(x) = \\sin x$\\n\\nStep 2: Find their individual derivatives:\\par\\noindent $u'(x) = 3x^2$ (by Power Rule)\\par\\noindent $v'(x) = \\cos x$ (by Trig derivative rule)\\n\\nStep 3: Substitute functions into the product rule formula:\\par\\noindent $\\frac{d}{dx}(x^3\\sin x) = u'v + uv'$\\par\\noindent $\\frac{d}{dx}(x^3\\sin x) = (3x^2)(\\sin x) + (x^3)(\\cos x)$\\n\\nStep 4: Combine the terms:\\par\\noindent $\\frac{d}{dx}(x^3\\sin x) = 3x^2\\sin x + x^3\\cos x$.",
       "poll_hint": "(uv)' = u'v + uv'"
     },
     "options_analysis": [
-      {"why": "Correct.", "example": "Product rule."},
-      {"why": "Missing term.", "example": "Lost x³sinx."},
-      {"why": "Only second part.", "example": "Incomplete."},
-      {"why": "Only first part.", "example": "Incomplete."}
+      {"why": "Correct. Applying the product rule yields the sum.", "example": "Product rule"},
+      {"why": "Incorrect. Derivative of second part only.", "example": "Incomplete"},
+      {"why": "Incorrect. Incomplete expansion.", "example": "N/A"},
+      {"why": "Incorrect. Derivative of first part only.", "example": "Incomplete"}
     ],
     "scheduled_for": "2026-07-23T18:00:00+03:00"
   },
@@ -325,15 +325,15 @@
     "native_options": ["A) 15", "B) 20", "C) 25", "D) 30"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "25% = 1/4.",
-      "why": "Step 1: Convert the percentage to a simple fraction:\\n$25\\% = \\frac{25}{100} = \\frac{1}{4}$.\\n\\nStep 2: Multiply the fraction by 80:\\n$\\text{Result} = \\frac{1}{4} \\times 80$\\n$\\text{Result} = 20$.",
+      "rule": "Percentage Calculation:\\par\\vspace{0.5em}\\noindent To find $p\\%$ of value $x$, calculate:\\par\\vspace{0.4em}\\noindent $\\text{Result} = \\frac{p}{100} \\times x$",
+      "why": "Step 1: Convert the percentage to a simple fraction:\\par\\noindent $25\\% = \\frac{25}{100} = \\frac{1}{4}$\\n\\nStep 2: Multiply the fraction by the value 80:\\par\\noindent $\\text{Result} = \\frac{1}{4} \\times 80$\\n\\nStep 3: Solve the division:\\par\\noindent $\\text{Result} = 20$.",
       "poll_hint": "25% of 80 = 80÷4"
     },
     "options_analysis": [
-      {"why": "Too small.", "example": "Incorrect quarter."},
-      {"why": "Correct.", "example": "20."},
-      {"why": "Common error.", "example": "Not 25."},
-      {"why": "Too large.", "example": "Not quarter."}
+      {"why": "Incorrect. Too small.", "example": "N/A"},
+      {"why": "Correct. A quarter of 80 is 20.", "example": "80/4 = 20"},
+      {"why": "Incorrect. Erroneously repeated the percentage value.", "example": "N/A"},
+      {"why": "Incorrect. Too large.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-24T08:00:00+03:00"
   },
@@ -344,22 +344,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["sequences", "arithmetic", "2026-07-24"],
-    "question": "Find the 10th term of the arithmetic sequence 3, 7, 11, ...",
+    "question": "Find the 10th term of the arithmetic sequence:\\par\\vspace{0.5em}\\noindent $3, 7, 11, \\dots$",
     "native_question": "Find the 10th term of the arithmetic sequence: 3, 7, 11, ...",
     "latex": null,
     "options": ["35", "39", "43", "47"],
     "native_options": ["A) 35", "B) 39", "C) 43", "D) 47"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "$a_n=a_1+(n-1)d$.",
-      "why": "Step 1: Identify the key sequence parameters:\\nFirst term $a_1 = 3$.\\nCommon difference $d = 7 - 3 = 4$.\\nTarget term index $n = 10$.\\n\\nStep 2: Recall the general arithmetic formula:\\n$a_n = a_1 + (n-1)d$.\\n\\nStep 3: Substitute the parameters into the formula:\\n$a_{10} = 3 + (10 - 1)(4)$\\n$a_{10} = 3 + (9)(4)$.\\n\\nStep 4: Compute the final arithmetic result:\\n$a_{10} = 3 + 36 = 39$.",
+      "rule": "Arithmetic Sequence General Term:\\par\\vspace{0.5em}\\noindent For a first term $a_1$ and common difference $d$:\\par\\vspace{0.4em}\\noindent $a_n = a_1 + (n - 1)d$",
+      "why": "Step 1: Identify the key parameters of the sequence:\\par\\noindent First term $a_1 = 3$\\par\\noindent Common difference $d = 7 - 3 = 4$\\par\\noindent Target term index $n = 10$\\n\\nStep 2: Write down the arithmetic sequence formula:\\par\\noindent $a_n = a_1 + (n - 1)d$\\n\\nStep 3: Substitute parameters into the formula:\\par\\noindent $a_{10} = 3 + (10 - 1)(4)$\\par\\noindent $a_{10} = 3 + (9)(4)$\\n\\nStep 4: Compute the final arithmetic result:\\par\\noindent $a_{10} = 3 + 36$\\par\\noindent $a_{10} = 39$.",
       "poll_hint": "a₁₀=3+9×4=39"
     },
     "options_analysis": [
-      {"why": "Used 8 steps.", "example": "Too low."},
-      {"why": "Correct.", "example": "39."},
-      {"why": "Extra difference.", "example": "Too high."},
-      {"why": "Far too high.", "example": "Wrong n."}
+      {"why": "Incorrect. Value corresponds to the 9th term of the sequence.", "example": "N/A"},
+      {"why": "Correct. Formula calculation yields exactly 39.", "example": "a10 = 39"},
+      {"why": "Incorrect. Value corresponds to the 11th term.", "example": "N/A"},
+      {"why": "Incorrect. General computation error.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-24T12:00:00+03:00"
   },
@@ -370,22 +370,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["vectors", "magnitude", "2026-07-24"],
-    "question": "Find $|\\vec v|$ for $\\vec v=(1,2,2)$.",
+    "question": "Find the magnitude $|\\vec v|$ of the 3D vector:\\par\\vspace{0.5em}\\noindent $\\vec v=(1,2,2)$.",
     "native_question": "Find the magnitude |v| of the 3D vector v = (1,2,2).",
-    "latex": "\\begin{tikzpicture}[scale=0.8, x={(0.707cm,0.707cm)}, z={(0cm,1cm)}, y={(-0.866cm,0.5cm)}] \\draw[-{Stealth}] (0,0,0) -- (3,0,0) node[right] {$x$}; \\draw[-{Stealth}] (0,0,0) -- (0,3,0) node[left] {$y$}; \\draw[-{Stealth}] (0,0,0) -- (0,0,3) node[above] {$z$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0,0) -- (1,2,2) node[above right] {$\\vec{v}$}; \\filldraw[red] (1,2,2) circle (1.5pt) node[above] {$(1,2,2)$}; \\end{tikzpicture}",
+    "latex": "\\begin{tikzpicture}[scale=0.8, x={(0.707cm,0.707cm)}, z={(0cm,1cm)}, y={(-0.866cm,0.5cm)}] \\draw[-{Stealth}] (0,0,0) -- (3,0,0) node[right] {$x$}; \\draw[-{Stealth}] (0,0,0) -- (0,3,0) node[left] {$y$}; \\draw[-{Stealth}] (0,0,0) -- (0,0,3) node[above] {$z$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0,0) -- (1,2,2) node[above right] {$\\vec{v}$}; \\filldraw[red] (1,2,2) circle (1.5pt) node[above] {$(1,2,2)$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
     "options": ["2", "3", "4", "5"],
     "native_options": ["A) |v| = 2", "B) |v| = 3", "C) |v| = 4", "D) |v| = 5"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Magnitude is $\\sqrt{x^2+y^2+z^2}$.",
-      "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\\n$x = 1, y = 2, z = 2$.\\n\\nStep 2: Recall the 3D magnitude formula:\\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$.\\n\\nStep 3: Substitute the component values into the formula:\\n$\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\\n$\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$.\\n\\nStep 4: Solve the arithmetic sum and root:\\n$\\|\\vec{v}\\| = \\sqrt{9}$\\n$\\|\\vec{v}\\| = 3$.",
-      "poll_hint": "Identified 3D magnitude: v = (1,2,2) ⇒ |v| = √(1+4+4) = 3"
+      "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\\par\\vspace{0.5em}\\noindent For any 3D vector $\\vec{v} = (x, y, z)$:\\par\\vspace{0.4em}\\noindent $\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
+      "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\\par\\noindent $x = 1, y = 2, z = 2$\\n\\nStep 2: Recall the 3D magnitude formula:\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$\\n\\nStep 3: Substitute component values into the formula:\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$\\n\\nStep 4: Solve the arithmetic sum and root:\\par\\noindent $\\|\\vec{v}\\| = \\sqrt{9}$\\par\\noindent $\\|\\vec{v}\\| = 3$.",
+      "poll_hint": "v = (1,2,2) ⇒ |v| = √(1+4+4) = 3"
     },
     "options_analysis": [
-      {"why": "Too small.", "example": "Ignored terms."},
-      {"why": "Correct.", "example": "3."},
-      {"why": "Forgot square root.", "example": "9→3."},
-      {"why": "Too large.", "example": "Incorrect sum."}
+      {"why": "Incorrect. Too small.", "example": "N/A"},
+      {"why": "Correct. Coordinate expansion evaluates to exactly 3.", "example": "Magnitude = 3"},
+      {"why": "Incorrect. Forgot square root subtraction step.", "example": "N/A"},
+      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-24T18:00:00+03:00"
   },
@@ -396,22 +396,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["fractions", "arithmetic", "2026-07-25"],
-    "question": "Compute $\\frac{1}{2}+\\frac{1}{4}$.",
+    "question": "Compute the fraction sum:\\par\\vspace{0.5em}\\noindent $\\frac{1}{2}+\\frac{1}{4}$.",
     "native_question": "Compute 1/2 + 1/4.",
     "latex": null,
     "options": ["1/2", "2/4", "3/4", "1"],
     "native_options": ["A) 1/2", "B) 2/4", "C) 3/4", "D) 1"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Use common denominators.",
-      "why": "Step 1: Find a common denominator for the two fractions. The least common multiple for 2 and 4 is 4.\\n\\nStep 2: Convert the first fraction $\\frac{1}{2}$ into an equivalent fraction with denominator 4:\\n$\\frac{1}{2} = \\frac{1 \\times 2}{2 \\times 2} = \\frac{2}{4}$.\\n\\nStep 3: Add the two fractions together:\\n$\\frac{2}{4} + \\frac{1}{4} = \\frac{2+1}{4} = \\frac{3}{4}$.",
+      "rule": "Fraction Addition Rule:\\par\\vspace{0.5em}\\noindent Find the Least Common Multiple (LCM) of denominators to convert to identical fractions.",
+      "why": "Step 1: Find a common denominator for the two fractions. The least common multiple for 2 and 4 is 4.\\n\\nStep 2: Convert the first fraction $\\frac{1}{2}$ into an equivalent fraction with denominator 4:\\par\\noindent $\\frac{1}{2} = \\frac{1 \\times 2}{2 \\times 2} = \\frac{2}{4}$\\n\\nStep 3: Add the two fractions together:\\par\\noindent $\\frac{2}{4} + \\frac{1}{4} = \\frac{2+1}{4} = \\frac{3}{4}$.",
       "poll_hint": "2/4 + 1/4 = 3/4"
     },
     "options_analysis": [
-      {"why": "Ignored addition.", "example": "1/2."},
-      {"why": "Equivalent to 1/2.", "example": "Not sum."},
-      {"why": "Correct.", "example": "3/4."},
-      {"why": "Too large.", "example": "Not whole."}
+      {"why": "Incorrect. Ignored the second fractional term.", "example": "N/A"},
+      {"why": "Incorrect. Equivalent to 1/2.", "example": "N/A"},
+      {"why": "Correct. Fraction addition evaluates cleanly to 3/4.", "example": "Sum = 3/4"},
+      {"why": "Incorrect. Exceeds standard fractional addition rules.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-25T08:00:00+03:00"
   },
@@ -422,22 +422,22 @@
     "difficulty": "medium",
     "force_image": true,
     "tags": ["trigonometry", "angles", "2026-07-25"],
-    "question": "Find $\\sin 30^\\circ$.",
+    "question": "Find the exact trigonometric value of:\\par\\vspace{0.5em}\\noindent $\\sin 30^\\circ$.",
     "native_question": "Find sin 30°.",
-    "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[-{Stealth}] (-1.2,0) -- (1.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,1.2) node[above] {$y$}; \\draw (0,0) circle (1); \\draw[draw=blue, line width=1.5pt] (0,0) -- (0.866,0.5); \\filldraw[red] (0.866,0.5) circle (1.5pt) node[above right] {$(\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$}; \\draw[draw=violet, -{Stealth}] (0.2,0) arc (0:30:0.2) node[midway, right=1pt] {$30^\\circ$}; \\end{tikzpicture}",
-    "options": ["0", "1/2", "$\\sqrt2/2$", "1"],
+    "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[-{Stealth}] (-1.2,0) -- (1.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,1.2) node[above] {$y$}; \\draw (0,0) circle (1); \\draw[draw=blue, line width=1.5pt] (0,0) -- (0.866,0.5); \\filldraw[red] (0.866,0.5) circle (1.5pt) node[above right] {$(\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$}; \\draw[draw=violet, -{Stealth}] (0.2,0) arc (0:30:0.2) node[midway, right=1pt] {$30^\\circ$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
+    "options": ["0", "1/2", "\\sqrt{2}/2", "1"],
     "native_options": ["A) 0", "B) 1/2", "C) √2/2", "D) 1"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Special-angle values.",
-      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is $P(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$.\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n$\\sin 30^\\circ = \\frac{1}{2}$.",
+      "rule": "Unit Circle Trigonometric Projections:\\par\\vspace{0.5em}\\noindent On a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\\par\\vspace{0.4em}\\noindent $P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
+      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\par\\noindent $P(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\par\\noindent $\\sin 30^\\circ = \\frac{1}{2}$.",
       "poll_hint": "sin30° = 1/2"
     },
     "options_analysis": [
-      {"why": "Incorrect.", "example": "Not zero."},
-      {"why": "Correct.", "example": "1/2."},
-      {"why": "This is 45°.", "example": "√2/2."},
-      {"why": "This is 90°.", "example": "1."}
+      {"why": "Incorrect. This represents sin(0°).", "example": "N/A"},
+      {"why": "Correct. Projection coordinates yield exactly 1/2.", "example": "sin(30) = 1/2"},
+      {"why": "Incorrect. This is sin(45°).", "example": "N/A"},
+      {"why": "Incorrect. This is sin(90°).", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-25T12:00:00+03:00"
   },
@@ -448,22 +448,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["limits","calculus","2026-07-25"],
-    "question": "Evaluate $\\max_{x\\to2}\\frac{x^2-4}{x-2}$.",
+    "question": "Evaluate the limit as $x$ approaches 2 of:\\par\\vspace{0.5em}\\noindent $\\lim_{x\\to2}\\frac{x^2-4}{x-2}$.",
     "native_question": "Evaluate the limit of (x²-4)/(x-2) as x approaches 2.",
     "latex": null,
     "options": ["2", "3", "4", "Undefined"],
     "native_options": ["A) 2", "B) 3", "C) 4", "D) Undefined"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Factor before substitution.",
-      "why": "Step 1: Write down the limit equation:\\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$.\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\n$x^2 - 4 = (x-2)(x+2)$.\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\n$\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)$.\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\n$\\text{Limit} = 2 + 2 = 4$.",
+      "rule": "Indeterminate Limits by Factoring:\\par\\vspace{0.5em}\\noindent If direct substitution yields $\\frac{0}{0}$ (indeterminate), simplify the algebraic quotient before taking limits.",
+      "why": "Step 1: Write down the limit equation:\\par\\noindent $\\lim_{x\\to2}\\frac{x^2-4}{x-2}$\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\par\\noindent $x^2 - 4 = (x-2)(x+2)$\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\par\\noindent $\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)$\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\par\\noindent $\\text{Limit} = 2 + 2 = 4$.",
       "poll_hint": "Cancel (x−2), then x+2 → 4"
     },
     "options_analysis": [
-      {"why": "Wrong substitution.", "example": "Too small."},
-      {"why": "Arithmetic error.", "example": "2+1."},
-      {"why": "Correct.", "example": "4."},
-      {"why": "Removable discontinuity.", "example": "Limit exists."}
+      {"why": "Incorrect. General computational mistake.", "example": "N/A"},
+      {"why": "Incorrect. Minor arithmetic slip.", "example": "N/A"},
+      {"why": "Correct. Difference of squares factoring and canceling yields 4.", "example": "Limit = 4"},
+      {"why": "Incorrect. Discontinuity is removable, meaning the limit exists.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-25T18:00:00+03:00"
   },
@@ -474,22 +474,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["statistics", "mean", "2026-07-26"],
-    "question": "Find the mean of 2, 4, 6, 8.",
+    "question": "Find the arithmetic mean of the set:\\par\\vspace{0.5em}\\noindent $2, 4, 6, 8$.",
     "native_question": "Find the arithmetic mean of the set: 2, 4, 6, 8.",
     "latex": null,
     "options": ["4", "5", "6", "7"],
     "native_options": ["A) 4", "B) 5", "C) 6", "D) 7"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Mean = sum/count.",
-      "why": "Step 1: Add all the numbers in the given set together:\\n$\\text{Sum} = 2 + 4 + 6 + 8 = 20$.\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n$\\text{Mean} = \\frac{20}{4} = 5$.",
+      "rule": "The Arithmetic Mean Formula:\\par\\vspace{0.5em}\\noindent For any set of $n$ numbers:\\par\\vspace{0.4em}\\noindent $\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
+      "why": "Step 1: Add all the numbers in the given set together:\\par\\noindent $\\text{Sum} = 2 + 4 + 6 + 8 = 20$\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\par\\noindent $\\text{Mean} = \\frac{20}{4} = 5$.",
       "poll_hint": "(2+4+6+8)÷4 = 5"
     },
     "options_analysis": [
-      {"why": "Not average.", "example": "Too low."},
-      {"why": "Correct.", "example": "5."},
-      {"why": "Not average.", "example": "Too high."},
-      {"why": "Incorrect mean.", "example": "Too high."}
+      {"why": "Incorrect. Too small.", "example": "N/A"},
+      {"why": "Correct. Quotient balances to exactly 5.", "example": "Mean = 5"},
+      {"why": "Incorrect. Value exceeds standard arithmetic mean bounds.", "example": "N/A"},
+      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-26T08:00:00+03:00"
   },
@@ -500,22 +500,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["exponential","growth","2026-07-26"],
-    "question": "Solve $3^{x}=81$.",
+    "question": "Solve the exponential equation:\\par\\vspace{0.5em}\\noindent $3^{x}=81$.",
     "native_question": "Solve the exponential equation 3^x = 81.",
     "latex": null,
     "options": ["3", "4", "5", "6"],
     "native_options": ["A) x = 3", "B) x = 4", "C) x = 5", "D) x = 6"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Express both sides with same base.",
-      "why": "Step 1: Write down the exponential equation:\\n$3^x = 81$.\\n\\nStep 2: Express the right side (81) as a power with base 3:\\n$81 = 3 \\times 3 \\times 3 \\times 3 = 3^4$.\\n\\nStep 3: Equate exponents since the bases are identical:\\n$3^x = 3^4 \\implies x = 4$.",
+      "rule": "Identical Base Exponential Equivalence:\\par\\vspace{0.5em}\\noindent For any base $a > 0$, if $a^x = a^y$, then $x = y$.",
+      "why": "Step 1: Write down the exponential equation:\\par\\noindent $3^x = 81$\\n\\nStep 2: Express the right side (81) as a power with base 3:\\par\\noindent $81 = 3 \\times 3 \\times 3 \\times 3 = 3^4$\\n\\nStep 3: Equate exponents since the bases are identical:\\par\\noindent $3^x = 3^4 \\implies x = 4$.",
       "poll_hint": "81 = 3⁴"
     },
     "options_analysis": [
-      {"why": "Too low.", "example": "3³=27."},
-      {"why": "Correct.", "example": "x=4."},
-      {"why": "Too high.", "example": "3⁵=243."},
-      {"why": "Far too high.", "example": "3⁶=729."}
+      {"why": "Incorrect. Too low.", "example": "3^3 = 27"},
+      {"why": "Correct. Power exponent matches 4.", "example": "3^4 = 81"},
+      {"why": "Incorrect. Too high.", "example": "3^5 = 243"},
+      {"why": "Incorrect. Computational mistake.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-26T12:00:00+03:00"
   },
@@ -526,22 +526,22 @@
     "difficulty": "hard",
     "force_image": false,
     "tags": ["circles","geometry","2026-07-26"],
-    "question": "For the circle $x^2+y^2-6x+8y=0$, find the radius.",
+    "question": "For the circle equation $x^2+y^2-6x+8y=0$, find the exact radius $r$:\\par\\vspace{0.5em}\\noindent $r = \\sqrt{h^2+k^2-F}$.",
     "native_question": "For the circle x² + y² - 6x + 8y = 0, find the radius r.",
     "latex": null,
     "options": ["3", "4", "5", "6"],
     "native_options": ["A) r = 3", "B) r = 4", "C) r = 5", "D) r = 6"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Complete the square.",
-      "why": "Step 1: Group x-terms and y-terms together:\\n$(x^2 - 6x) + (y^2 + 8y) = 0$.\\n\\nStep 2: Complete the square for the x-terms by adding $(\\frac{-6}{2})^2 = 9$ to both sides:\\n$x^2 - 6x + 9 = (x-3)^2$.\\n\\nStep 3: Complete the square for the y-terms by adding $(\\frac{8}{2})^2 = 16$ to both sides:\\n$y^2 + 8y + 16 = (y+4)^2$.\\n\\nStep 4: Balance the right side of the equation by adding both values:\\n$(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25$.\\n\\nStep 5: Identify the radius squared ($r^2 = 25$) to solve for the radius:\\n$r = \\sqrt{25} = 5$.",
+      "rule": "Standard Circle Equation Formulation:\\par\\vspace{0.5em}\\noindent Complete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\\par\\vspace{0.4em}\\noindent $(x - h)^2 + (y - k)^2 = r^2$",
+      "why": "Step 1: Group x-terms and y-terms together:\\par\\noindent $(x^2 - 6x) + (y^2 + 8y) = 0$\\n\\nStep 2: Complete the square for the x-terms by adding $(\\frac{-6}{2})^2 = 9$ to both sides of the equation:\\par\\noindent $x^2 - 6x + 9 = (x-3)^2$\\n\\nStep 3: Complete the square for the y-terms by adding $(\\frac{8}{2})^2 = 16$ to both sides of the equation:\\par\\noindent $y^2 + 8y + 16 = (y+4)^2$\\n\\nStep 4: Balance the right side of the equation by adding both values:\\par\\noindent $(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25$\\n\\nStep 5: Identify the radius squared ($r^2 = 25$) to solve for the radius:\\par\\noindent $r = \\sqrt{25} = 5$.",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
     "options_analysis": [
-      {"why": "Used x-shift only.", "example": "3."},
-      {"why": "Used y-shift only.", "example": "4."},
-      {"why": "Correct.", "example": "√25=5."},
-      {"why": "Diameter confusion.", "example": "Too large."}
+      {"why": "Incorrect. This represents the x-coordinate offset center value h.", "example": "N/A"},
+      {"why": "Incorrect. This represents the y-coordinate offset center value k.", "example": "N/A"},
+      {"why": "Correct. Completing the square evaluates radius to exactly 5.", "example": "r = √25 = 5"},
+      {"why": "Incorrect. Diameter confusion or computational mistake.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-26T18:00:00+03:00"
   }
