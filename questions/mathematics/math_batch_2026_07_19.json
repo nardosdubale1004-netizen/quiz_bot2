@@ -61,7 +61,7 @@
     "question": "Calculate the exact spatial angle $\\theta$ between the vectors:\n\n$\\vec{a} = \\vec{i} + \\sqrt{3}\\vec{j}$ and $\\vec{b} = \\sqrt{3}\\vec{i} + \\vec{j}$.",
     "native_question": "Calculate the exact angle θ between vectors a = i + √3 j and b = √3 i + j.",
     "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,2.5); \\draw[-{Stealth}] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-0.5) -- (0,2.5) node[above] {$y$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (1, 1.732) node[above right] {$\\vec{a}$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red] (0,0) -- (1.732, 1) node[above right] {$\\vec{b}$}; \\draw[draw=violet, line width=1pt, -{Stealth}] (0.6,0.346) arc (30:60:0.7) node[midway, above right=1pt] {$\\theta$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["\\pi/6", "\\pi/4", "\\pi/3", "\\pi/2"],
+    "options": ["$\\pi/6$", "$\\pi/4$", "$\\pi/3$", "$\\pi/2$"],
     "native_options": ["A) π/6", "B) π/4", "C) π/3", "D) π/2"],
     "correct_option": 0,
     "poll_explanation": {
@@ -222,7 +222,7 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "Complex Algebra Rules:\n\nExpand using binomial expansion, then apply $i^2 = -1$:\n\n$(a + bi)^2 = a^2 + 2abi - b^2$",
-      "why": "Step 1: Write down the expression:\n$(1 + i)^2$\n\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\n$(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\n$(1 + i)^2 = 1 + 2i + i^2$\n\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\n$(1 + i)^2 = 1 + 2i - 1$\n\nStep 4: Cancel real parts to find the final result:\n$(1 + i)^2 = 2i$.",
+      "why": "Step 1: Write down the expression:\n$(1 + i)^2$\n\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\n$(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\n$(1 + i)^2 = 1 + 2i + i^2$\n\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\n$(1 + i)^2 = 1 + 2i - 1$\n\nStep 4: Cancel real parts to find the final result:\\n$(1 + i)^2 = 2i$.",
       "poll_hint": "(1+i)²=1+2i−1=2i"
     },
     "options_analysis": [
@@ -351,7 +351,7 @@
     "native_options": ["A) 35", "B) 39", "C) 43", "D) 47"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Arithmetic Sequence General Term:\n\nFor a first term $a_1$ and common difference $d$:\n\n$a_n = a_1 + (n - 1)d$",
+      "rule": "Arithmetic Sequence General Term:\n\nFor a first term $a_1$ and common difference $d$:\\par\\vspace{0.4em}\\noindent $a_n = a_1 + (n - 1)d$",
       "why": "Step 1: Identify the key parameters of the sequence:\nFirst term $a_1 = 3$\nCommon difference $d = 7 - 3 = 4$\nTarget term index $n = 10$\n\nStep 2: Write down the arithmetic sequence formula:\n$a_n = a_1 + (n - 1)d$\n\nStep 3: Substitute parameters into the formula:\n$a_{10} = 3 + (10 - 1)(4)$\n$a_{10} = 3 + (9)(4)$\n\nStep 4: Compute the final arithmetic result:\na_{10} = 3 + 36\na_{10} = 39.",
       "poll_hint": "a₁₀=3+9×4=39"
     },
@@ -377,7 +377,7 @@
     "native_options": ["A) |v| = 2", "B) |v| = 3", "C) |v| = 4", "D) |v| = 5"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\n\nFor any 3D vector $\\vec{v} = (x, y, z)$:\n\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
+      "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\n\nFor any 3D vector $\\vec{v} = (x, y, z)$:\\par\\vspace{0.4em}\\noindent $\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
       "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\n$x = 1, y = 2, z = 2$\n\nStep 2: Recall the 3D magnitude formula:\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$\n\nStep 3: Substitute component values into the formula:\n$\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\n$\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$\n\nStep 4: Solve the arithmetic sum and root:\n$\\|\\vec{v}\\| = \\sqrt{9}$\n$\\|\\vec{v}\\| = 3$.",
       "poll_hint": "v = (1,2,2) ⇒ |v| = √(1+4+4) = 3"
     },
@@ -425,11 +425,11 @@
     "question": "Find the exact trigonometric value of:\n\n$\\sin 30^\\circ$.",
     "native_question": "Find sin 30°.",
     "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[-{Stealth}] (-1.2,0) -- (1.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,1.2) node[above] {$y$}; \\draw (0,0) circle (1); \\draw[draw=blue, line width=1.5pt] (0,0) -- (0.866,0.5); \\filldraw[red] (0.866,0.5) circle (1.5pt) node[above right] {$(\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$}; \\draw[draw=violet, -{Stealth}] (0.2,0) arc (0:30:0.2) node[midway, right=1pt] {$30^\\circ$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["0", "1/2", "\\sqrt{2}/2", "1"],
+    "options": ["0", "1/2", "$\\sqrt{2}/2$", "1"],
     "native_options": ["A) 0", "B) 1/2", "C) √2/2", "D) 1"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Unit Circle Trigonometric Projections:\n\nOn a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\n\n$P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
+      "rule": "Unit Circle Trigonometric Projections:\n\nOn a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\\par\\vspace{0.4em}\\noindent $P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
       "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\nP(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n\\sin 30^\\circ = \\frac{1}{2}.",
       "poll_hint": "sin30° = 1/2"
     },
@@ -474,14 +474,14 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["statistics", "mean", "2026-07-26"],
-    "question": "Find the arithmetic mean of the set:\\n\\n$2, 4, 6, 8$.",
+    "question": "Find the arithmetic mean of the set:\n\n$2, 4, 6, 8$.",
     "native_question": "Find the arithmetic mean of the set: 2, 4, 6, 8.",
     "latex": null,
     "options": ["4", "5", "6", "7"],
     "native_options": ["A) 4", "B) 5", "C) 6", "D) 7"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "The Arithmetic Mean Formula:\n\nFor any set of $n$ numbers:\n\n$\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
+      "rule": "The Arithmetic Mean Formula:\n\nFor any set of $n$ numbers:\\par\\vspace{0.4em}\\noindent $\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
       "why": "Step 1: Add all the numbers in the given set together:\\n\\text{Sum} = 2 + 4 + 6 + 8 = 20\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n\\text{Mean} = \\frac{20}{4} = 5.",
       "poll_hint": "(2+4+6+8)÷4 = 5"
     },
@@ -533,7 +533,7 @@
     "native_options": ["A) r = 3", "B) r = 4", "C) r = 5", "D) r = 6"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\n\n$(x - h)^2 + (y - k)^2 = r^2$",
+      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\\par\\vspace{0.4em}\\noindent $(x - h)^2 + (y - k)^2 = r^2$",
       "why": "Step 1: Group x-terms and y-terms together:\n(x^2 - 6x) + (y^2 + 8y) = 0\n\nStep 2: Complete the square for the x-terms by adding (\\frac{-6}{2})^2 = 9 to both sides of the equation:\n(x-3)^2 = x^2-6x+9\n\nStep 3: Complete the square for the y-terms by adding (\\frac{8}{2})^2 = 16 to both sides of the equation:\n(y+4)^2 = y^2+8y+16\n\nStep 4: Balance the right side of the equation by adding both values:\n(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25\n\nStep 5: Identify the radius squared (r^2 = 25) to solve for the radius:\nr = \\sqrt{25} = 5.",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
