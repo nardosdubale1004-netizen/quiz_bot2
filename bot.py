@@ -295,32 +295,6 @@ async def leaderboard_command(update: Update, context):
 
     await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
 
-async def run_cloud_server(app, port):
-    """Asynchronous runner to configure the webhook target and start the custom HTTP webserver."""
-    PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
-    
-    # Set the webhook URL with Telegram manually (pointing to /webhook)
-    await app.bot.set_webhook(
-        url=f"{PUBLIC_URL}/webhook",
-        drop_pending_updates=True
-    )
-    print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
-
-    # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
-    asyncio.create_task(check_and_publish_scheduled(app))
-
-    # Spawn our completely custom, lightweight async web server on port
-    server = await asyncio.start_server(
-        lambda r, w: handle_http_request(r, w, app),
-        "0.0.0.0",
-        int(port)
-    )
-    print(f"Custom light webserver is listening on port {port}.", flush=True)
-    
-    async with server:
-        while True:
-            await asyncio.sleep(3600)
-
 def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
@@ -346,6 +320,7 @@ def main():
     if RENDER_PORT:
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -354,20 +329,34 @@ def main():
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
         
-        # Dynamically register the active bot username so build_keyboard can construct deep links automatically
-        bot_info = loop.run_until_complete(app.bot.get_me())
-        CONFIG["bot_username"] = bot_info.username
-        print(f"Registered Bot Username: @{bot_info.username}", flush=True)
+        # Set the webhook URL with Telegram manually (pointing to /webhook)
+        loop.run_until_complete(app.bot.set_webhook(
+            url=f"{PUBLIC_URL}/webhook",
+            drop_pending_updates=True
+        ))
+        print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
-        # Execute the async server loop within the event loop
-        try:
-            loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            loop.run_until_complete(app.stop())
-            loop.run_until_complete(app.shutdown())
-            print(f"System successfully shut down.", flush=True)
+        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
+        loop.create_task(check_and_publish_scheduled(app))
+
+        # Spawn our completely custom, lightweight async web server on port RENDER_PORT
+        server = loop.run_until_complete(asyncio.start_server(
+            lambda r, w: handle_http_request(r, w, app),
+            "0.0.0.0",
+            int(RENDER_PORT)
+        ))
+        print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
+        
+        # Keep both the webserver and the bot running indefinitely
+        async with server:
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                loop.run_until_complete(app.stop())
+                loop.run_until_complete(app.shutdown())
+                print(f"System successfully shut down.", flush=True)
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
