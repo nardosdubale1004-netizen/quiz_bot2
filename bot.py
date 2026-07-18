@@ -10,6 +10,7 @@ from src.config import CONFIG, Style
 from src.database import (
     QuizEngine,
     db_get_user_profile,
+    db_get_user_response,
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
@@ -182,9 +183,37 @@ async def start_command(update: Update, context):
                 await update.message.reply_text("Error: Question data not found.")
                 return
 
-            # Evaluate the score privately inside Neon database
+            # anti-cheat: check if the student has already answered this question post
+            existing_response = db_get_user_response(user_id, mid_key)
+            
+            if existing_response:
+                # Retrieve original choice and prevent duplicate score submissions
+                original_selection = existing_response['selected_option']
+                perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
+                
+                # Prepend the anti-cheat warning notification to the solution sheet
+                warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n\n"
+                explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
+                
+                has_tikz = UIFactory.has_real_diagram(question_data)
+                if has_tikz:
+                    explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
+                    latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
+                    if latex_code:
+                        img_url = UIFactory.get_latex_url(latex_code)
+                        async with httpx.AsyncClient() as client:
+                            resp = await fetch_kroki_image(client, img_url, latex_code)
+                            if resp and resp.status_code == 200:
+                                m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
+                                full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
+                                await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
+                                return
+                await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+                return
+
+            # Evaluate the score privately inside Neon database for first-time submissions
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct)
+            perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct, user_selection)
 
             # Generate the comprehensive, context-retaining Answered View
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
@@ -346,6 +375,7 @@ def main():
     if RENDER_PORT:
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

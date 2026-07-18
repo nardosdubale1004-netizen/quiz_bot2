@@ -86,8 +86,8 @@ class QuizEngine:
                 options_analysis = json.dumps(q.get("options_analysis", []))
                 
                 cur.execute("""
-                    INSERT INTO questions (id, subject, topic, difficulty, tags, question, latex, options, correct_option, poll_explanation, options_analysis, force_image)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO questions (id, subject, topic, difficulty, tags, question, latex, options, correct_option, poll_explanation, options_analysis)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         subject = EXCLUDED.subject,
                         topic = EXCLUDED.topic,
@@ -98,12 +98,11 @@ class QuizEngine:
                         options = EXCLUDED.options,
                         correct_option = EXCLUDED.correct_option,
                         poll_explanation = EXCLUDED.poll_explanation,
-                        options_analysis = EXCLUDED.options_analysis,
-                        force_image = EXCLUDED.force_image;
+                        options_analysis = EXCLUDED.options_analysis;
                 """, (
                     q["id"], q["subject"], q["topic"], q.get("difficulty", "medium"),
                     tags, q["question"], q.get("latex"), options, int(q["correct_option"]),
-                    poll_explanation, options_analysis, q.get("force_image", False)
+                    poll_explanation, options_analysis
                 ))
                 imported_count += 1
                 
@@ -203,6 +202,24 @@ def db_get_user_profile(user_id):
     conn.close()
     return row
 
+def db_get_user_response(user_id, message_id):
+    """Retrieves a user's previous response to a specific question post."""
+    engine_db = QuizEngine()
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM user_responses 
+            WHERE user_id = %s AND message_id = %s;
+        """, (str(user_id), str(message_id)))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user response: {e}")
+        return None
+
 def db_get_weekly_leaderboard(grade: int):
     engine_db = QuizEngine()
     conn = engine_db.get_db_connection()
@@ -257,7 +274,7 @@ def db_mark_question_as_sent(q_id):
     except Exception as e:
         print(f"[DB ERROR] Failed to mark question as sent: {e}")
 
-def process_user_score(user_id, message_id, q_id, is_correct, bonus_limit=3):
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, bonus_limit=3):
     engine_db = QuizEngine()
     conn = engine_db.get_db_connection()
     cur = conn.cursor()
@@ -290,9 +307,9 @@ def process_user_score(user_id, message_id, q_id, is_correct, bonus_limit=3):
             marks_to_award = 0
 
         cur.execute("""
-            INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded)
-            VALUES (%s, %s, %s, %s, %s);
-        """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award))
+            INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option)
+            VALUES (%s, %s, %s, %s, %s, %s);
+        """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option)))
         
         correct_inc = 1 if is_correct else 0
         cur.execute("""
