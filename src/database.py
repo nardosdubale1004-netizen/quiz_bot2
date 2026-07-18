@@ -220,6 +220,23 @@ def db_get_user_response(user_id, message_id):
         print(f"[DB ERROR] Failed to fetch user response: {e}")
         return None
 
+def db_update_private_message_id(user_id, message_id, private_message_id):
+    """Updates the private message ID of an existing response."""
+    engine_db = QuizEngine()
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE user_responses 
+            SET private_message_id = %s 
+            WHERE user_id = %s AND message_id = %s;
+        """, (int(private_message_id), str(user_id), str(message_id)))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to update private message ID: {e}")
+
 def db_get_weekly_leaderboard(grade: int):
     engine_db = QuizEngine()
     conn = engine_db.get_db_connection()
@@ -274,7 +291,7 @@ def db_mark_question_as_sent(q_id):
     except Exception as e:
         print(f"[DB ERROR] Failed to mark question as sent: {e}")
 
-def process_user_score(user_id, message_id, q_id, is_correct, selected_option, bonus_limit=3):
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, bonus_limit=3):
     engine_db = QuizEngine()
     conn = engine_db.get_db_connection()
     cur = conn.cursor()
@@ -307,9 +324,9 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, b
             marks_to_award = 0
 
         cur.execute("""
-            INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option)
-            VALUES (%s, %s, %s, %s, %s, %s);
-        """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option)))
+            INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
+        """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id))
         
         correct_inc = 1 if is_correct else 0
         cur.execute("""

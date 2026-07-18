@@ -11,6 +11,7 @@ from src.database import (
     QuizEngine,
     db_get_user_profile,
     db_get_user_response,
+    db_update_private_message_id,
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
@@ -189,27 +190,27 @@ async def start_command(update: Update, context):
             if existing_response:
                 # Retrieve original choice and prevent duplicate score submissions
                 original_selection = existing_response['selected_option']
-                perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 
-                # Prepend the anti-cheat warning notification to the solution sheet
-                warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n\n"
-                explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
+                # Fetch bot information to compile direct navigation link
+                bot_info = await context.bot.get_me()
+                private_mid = existing_response.get('private_message_id')
                 
-                has_tikz = UIFactory.has_real_diagram(question_data)
-                if has_tikz:
-                    explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
-                    latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
-                    if latex_code:
-                        img_url = UIFactory.get_latex_url(latex_code)
-                        async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, img_url, latex_code)
-                            if resp and resp.status_code == 200:
-                                m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
-                                full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
-                                await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
-                                return
-                await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
-                return
+                if private_mid:
+                    # Construct native deep link to scroll their Telegram screen back to their original scorecard card
+                    jump_url = f"tg://privatepost?channel={bot_info.id}&post={private_mid}"
+                    await update.message.reply_text(
+                        text=f"⚠️ <b>Lockout active: You have already answered this question!</b>\n\n"
+                             f"🔗 <a href='{jump_url}'>Click here to navigate directly to your original scorecard and step-by-step solutions</a>.",
+                        parse_mode="HTML"
+                    )
+                    return
+                else:
+                    # Fallback scorecard if private message ID was untracked (older records)
+                    perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
+                    warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n\n"
+                    explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
+                    await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+                    return
 
             # Evaluate the score privately inside Neon database for first-time submissions
             is_correct = (user_selection == question_data['correct_option'])
@@ -233,11 +234,15 @@ async def start_command(update: Update, context):
 
                             # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
-                            await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
+                            f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
+                            
+                            # Log the final explanation message ID to support direct jump navigation on double-clicks
+                            db_update_private_message_id(user_id, mid_key, f_m.message_id)
                             return
 
-            # Fallback to pure text message
-            await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+            # Fallback to pure text message for standard algebraic questions
+            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+            db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
             print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
@@ -324,32 +329,6 @@ async def leaderboard_command(update: Update, context):
 
     await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
 
-async def run_cloud_server(app, port):
-    """Asynchronous runner to configure the webhook target and start the custom HTTP webserver."""
-    PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
-    
-    # Set the webhook URL with Telegram manually (pointing to /webhook)
-    await app.bot.set_webhook(
-        url=f"{PUBLIC_URL}/webhook",
-        drop_pending_updates=True
-    )
-    print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
-
-    # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
-    asyncio.create_task(check_and_publish_scheduled(app))
-
-    # Spawn our completely custom, lightweight async web server on port
-    server = await asyncio.start_server(
-        lambda r, w: handle_http_request(r, w, app),
-        "0.0.0.0",
-        int(port)
-    )
-    print(f"Custom light webserver is listening on port {port}.", flush=True)
-    
-    async with server:
-        while True:
-            await asyncio.sleep(3600)
-
 def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
@@ -384,20 +363,34 @@ def main():
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
         
-        # Dynamically register the active bot username so build_keyboard can construct deep links automatically
-        bot_info = loop.run_until_complete(app.bot.get_me())
-        CONFIG["bot_username"] = bot_info.username
-        print(f"Registered Bot Username: @{bot_info.username}", flush=True)
+        # Set the webhook URL with Telegram manually (pointing to /webhook)
+        loop.run_until_complete(app.bot.set_webhook(
+            url=f"{PUBLIC_URL}/webhook",
+            drop_pending_updates=True
+        ))
+        print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
-        # Execute the async server loop within the event loop
-        try:
-            loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            loop.run_until_complete(app.stop())
-            loop.run_until_complete(app.shutdown())
-            print(f"System successfully shut down.", flush=True)
+        # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
+        loop.create_task(check_and_publish_scheduled(app))
+
+        # Spawn our completely custom, lightweight async web server on port RENDER_PORT
+        server = loop.run_until_complete(asyncio.start_server(
+            lambda r, w: handle_http_request(r, w, app),
+            "0.0.0.0",
+            int(RENDER_PORT)
+        ))
+        print(f"Custom light webserver is listening on port {RENDER_PORT}.", flush=True)
+        
+        # Keep both the webserver and the bot running indefinitely
+        async with server:
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                loop.run_until_complete(app.stop())
+                loop.run_until_complete(app.shutdown())
+                print(f"System successfully shut down.", flush=True)
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
