@@ -55,7 +55,7 @@ def convert_subscripts(text):
 def clean_latex_to_unicode(text):
     if not text:
         return ""
-    # Standard spacing normalizations (no destructive double backslash replacements)
+    # Convert standard LaTeX breaks into raw newline characters
     text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
@@ -96,7 +96,26 @@ def beautify_markdown_math(text):
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
     
-    parts = text.split('$')
+    # Sanitize and strip any leaked LaTeX formatting structures (preventing text mangling)
+    text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
+    text = re.sub(r'\\hspace\{[^}]*\}', ' ', text)
+    text = text.replace(r"\par", "\n")
+    text = text.replace(r"\noindent", "")
+    text = text.replace(r"\leavevmode", "")
+    text = text.replace("oindent", "")  # Prunes previously mangled \noindent leftovers
+    text = text.replace(r"\,", " ")
+    text = text.replace(r"\quad", "   ")
+    
+    # Convert step labels into beautiful emoji markers on their own lines AFTER escaping is complete
+    def step_repl(match):
+        step_num = match.group(1)
+        emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
+        emoji = emojis.get(step_num, "▪️")
+        return f"\n{emoji} <b>Step {step_num}:</b> "
+        
+    result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
+    
+    parts = result.split('$')
     for i in range(len(parts)):
         if i % 2 == 1:
             # Mathematical block inside $ ... $ - escape inner segments, then wrap in raw <code> tags
@@ -119,15 +138,6 @@ def beautify_markdown_math(text):
             
     # Assemble the segments cleanly
     result = "".join(parts)
-    
-    # Convert step labels into beautiful emoji markers on their own lines AFTER escaping is complete
-    def step_repl(match):
-        step_num = match.group(1)
-        emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
-        emoji = emojis.get(step_num, "▪️")
-        return f"\n{emoji} <b>Step {step_num}:</b> "
-        
-    result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, result)
     result = re.sub(r'\n{3,}', '\n\n', result)
     
     # Align subsequent lines with 6 spaces to match the parent block indentation of html_views

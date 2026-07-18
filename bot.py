@@ -189,13 +189,20 @@ async def start_command(update: Update, context):
             existing_response = db_get_user_response(user_id, mid_key)
             
             if existing_response:
-                # 1. Instantly delete the incoming /start command message to avoid any duplicate scoring cards
-                try:
-                    await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
-                except Exception:
-                    pass
+                # 1. Retrieve original chosen option and private message tracking ID
+                original_selection = existing_response['selected_option']
+                old_private_mid = existing_response.get('private_message_id')
                 
-                # 2. Fetch student statistics to compile a consolidated, beautiful profile greeter
+                # 2. Prune their old scorecard from higher up in history (preventing duplicates)
+                if old_private_mid:
+                    try:
+                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
+                        # If a text continuation reply existed, attempt to delete it too
+                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid + 1)
+                    except Exception:
+                        pass
+                
+                # 3. Fetch student statistics to compile a consolidated, beautiful profile greeter
                 profile = db_get_user_profile(user_id)
                 if profile:
                     grade = profile['grade']
@@ -204,7 +211,8 @@ async def start_command(update: Update, context):
                     accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
                     next_rank = get_next_rank_info(user_marks)
                     
-                    await update.message.reply_text(
+                    # 4. Re-post a clean lockout notification at the bottom of their chat
+                    m = await update.message.reply_text(
                         f"👋 <b>Welcome Back, Scholar!</b>\n\n"
                         f"⚠️ <b>Lockout active: You have already answered this question!</b>\n"
                         f"<i>Your original selection and score have been securely locked.</i>\n\n"
@@ -219,6 +227,9 @@ async def start_command(update: Update, context):
                         f"• Use the /leaderboard command here to view your rank standings!",
                         parse_mode="HTML"
                     )
+                    
+                    # Log the newly generated sliding message ID
+                    db_update_private_message_id(user_id, mid_key, m.message_id)
                 return
 
             # Evaluate the score privately inside Neon database for first-time submissions

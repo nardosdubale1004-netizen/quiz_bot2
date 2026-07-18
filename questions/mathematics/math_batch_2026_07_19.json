@@ -34,7 +34,7 @@
     "tags": ["calculus", "integrals", "2026-07-20"],
     "question": "Find the exact area under the parabola $f(x) = x^2$ over the interval $[0, 2]$, corresponding to:\\par\\vspace{0.5em}\\noindent $\\int_{0}^{2} x^2\\,dx$.",
     "native_question": "Find the definite integral of x² from x = 0 to x = 2.",
-    "latex": "\\begin{tikzpicture}[scale=1.2] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,4.5); \\draw[-{Stealth}, line width=1pt] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}, line width=1pt] (0,-0.5) -- (0,4.5) node[above] {$y$}; \\fill[fill=blue!15, opacity=0.6, domain=0:2, samples=100] (0,0) -- plot (\\x, {\\x*\\x}) -- (2,0) -- cycle; \\draw[domain=0:2.1, samples=100, color=blue, line width=1.5pt] plot (\\x, {\\x*\\x}) node[right] {$f(x)=x^2$}; \\draw[dashed, draw=gray] (2,0) -- (2,4); \\node[below] at (2,0) {$2$}; \\node[below left] at (0,0) {$0$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
+    "latex": "\\begin{tikzpicture}[scale=1.2] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,4.5); \\draw[-{Stealth}] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-0.5) -- (0,4.5) node[above] {$y$}; \\fill[fill=blue!15, opacity=0.6, domain=0:2, samples=100] (0,0) -- plot (\\x, {\\x*\\x}) -- (2,0) -- cycle; \\draw[domain=0:2.1, samples=100, color=blue, line width=1.5pt] plot (\\x, {\\x*\\x}) node[right] {$f(x)=x^2$}; \\draw[dashed, draw=gray] (2,0) -- (2,4); \\node[below] at (2,0) {$2$}; \\node[below left] at (0,0) {$0$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
     "options": ["4/3", "8/3", "2", "3"],
     "native_options": ["A) 4/3", "B) 8/3", "C) 2", "D) 3"],
     "correct_option": 1,
@@ -196,7 +196,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Classical Probability Formula:\\par\\vspace{0.5em}\\noindent $P(E) = \\frac{n(E)}{n(S)}$\\par\\vspace{0.4em}\\noindent where $n(E)$ is the count of favorable events, and $n(S)$ is the total sample space.",
-      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\\n$S = \\\\{1, 2, 3, 4, 5, 6\\\\} \\implies n(S) = 6$\\n\\nStep 2: List the favorable outcomes (even numbers):\\n$E = \\\\{2, 4, 6\\\\} \\implies n(E) = 3$\\n\\nStep 3: Apply the probability formula:\\nP = \\frac{3}{6}\\n\\nStep 4: Simplify the fraction:\\nP = \\frac{1}{2}$.",
+      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\\n$S = \\{1, 2, 3, 4, 5, 6\\} \\implies n(S) = 6$\\n\\nStep 2: List the favorable outcomes (even numbers):\\n$E = \\{2, 4, 6\\} \\implies n(E) = 3$\\n\\nStep 3: Apply the probability formula:\\nP = \\frac{3}{6}\\n\\nStep 4: Simplify the fraction:\\nP = \\frac{1}{2}$.",
       "poll_hint": "3 favorable ÷ 6 total = 1/2"
     },
     "options_analysis": [
@@ -430,7 +430,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Unit Circle Trigonometric Projections:\\par\\vspace{0.5em}\\noindent On a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\\par\\vspace{0.4em}\\noindent $P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
-      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\n$P(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n$\\sin 30^\\circ = \\frac{1}{2}$.",
+      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\nP(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n\\sin 30^\\circ = \\frac{1}{2}.",
       "poll_hint": "sin30° = 1/2"
     },
     "options_analysis": [
@@ -456,7 +456,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Indeterminate Limits by Factoring:\\par\\vspace{0.5em}\\noindent If direct substitution yields $\\frac{0}{0}$ (indeterminate), simplify the algebraic quotient before taking limits.",
-      "why": "Step 1: Write down the limit equation:\\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\n$x^2 - 4 = (x-2)(x+2)$\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\n$\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)$\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\n$\\text{Limit} = 2 + 2 = 4$.",
+      "why": "Step 1: Write down the limit equation:\\n\\lim_{x\\to2}\\frac{x^2-4}{x-2}\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\nx^2 - 4 = (x-2)(x+2)\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\n\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\n\\text{Limit} = 2 + 2 = 4.",
       "poll_hint": "Cancel (x−2), then x+2 → 4"
     },
     "options_analysis": [
@@ -482,7 +482,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "The Arithmetic Mean Formula:\\par\\vspace{0.5em}\\noindent For any set of $n$ numbers:\\par\\vspace{0.4em}\\noindent $\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
-      "why": "Step 1: Add all the numbers in the given set together:\\n$\\text{Sum} = 2 + 4 + 6 + 8 = 20$\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n$\\text{Mean} = \\frac{20}{4} = 5$.",
+      "why": "Step 1: Add all the numbers in the given set together:\\n\\text{Sum} = 2 + 4 + 6 + 8 = 20\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n\\text{Mean} = \\frac{20}{4} = 5.",
       "poll_hint": "(2+4+6+8)÷4 = 5"
     },
     "options_analysis": [
@@ -508,7 +508,7 @@
     "correct_option": 1,
     "poll_explanation": {
       "rule": "Identical Base Exponential Equivalence:\\par\\vspace{0.5em}\\noindent For any base $a > 0$, if $a^x = a^y$, then $x = y$.",
-      "why": "Step 1: Write down the exponential equation:\\n$3^x = 81$\\n\\nStep 2: Express the right side (81) as a power with base 3:\\n$81 = 3 \\times 3 \\times 3 \\times 3 = 3^4$\\n\\nStep 3: Equate exponents since the bases are identical:\\n$3^x = 3^4 \\implies x = 4$.",
+      "why": "Step 1: Write down the exponential equation:\\n3^x = 81\\n\\nStep 2: Express the right side (81) as a power with base 3:\\n81 = 3 \\times 3 \\times 3 \\times 3 = 3^4\\n\\nStep 3: Equate exponents since the bases are identical:\\n3^x = 3^4 \\implies x = 4.",
       "poll_hint": "81 = 3⁴"
     },
     "options_analysis": [
@@ -534,7 +534,7 @@
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Standard Circle Equation Formulation:\\par\\vspace{0.5em}\\noindent Complete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\\par\\vspace{0.4em}\\noindent $(x - h)^2 + (y - k)^2 = r^2$",
-      "why": "Step 1: Group x-terms and y-terms together:\\n$(x^2 - 6x) + (y^2 + 8y) = 0$\\n\\nStep 2: Complete the square for the x-terms by adding $(\\frac{-6}{2})^2 = 9$ to both sides of the equation:\\n$x^2 - 6x + 9 = (x-3)^2$\\n\\nStep 3: Complete the square for the y-terms by adding $(\\frac{8}{2})^2 = 16$ to both sides of the equation:\\ny^2 + 8y + 16 = (y+4)^2\\n\\nStep 4: Balance the right side of the equation by adding both values:\\n$(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25$\\n\\nStep 5: Identify the radius squared ($r^2 = 25$) to solve for the radius:\\nr = \\sqrt{25} = 5$.",
+      "why": "Step 1: Group x-terms and y-terms together:\\n(x^2 - 6x) + (y^2 + 8y) = 0\\n\\nStep 2: Complete the square for the x-terms by adding (\\frac{-6}{2})^2 = 9 to both sides of the equation:\\n(x-3)^2 = x^2-6x+9\\n\\nStep 3: Complete the square for the y-terms by adding (\\frac{8}{2})^2 = 16 to both sides of the equation:\\n(y+4)^2 = y^2+8y+16\\n\\nStep 4: Balance the right side of the equation by adding both values:\\n(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25\\n\\nStep 5: Identify the radius squared (r^2 = 25) to solve for the radius:\\nr = \\sqrt{25} = 5.",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
     "options_analysis": [
