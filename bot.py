@@ -346,6 +346,7 @@ def main():
     if RENDER_PORT:
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

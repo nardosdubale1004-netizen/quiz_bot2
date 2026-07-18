@@ -98,36 +98,49 @@ def beautify_markdown_math(text):
     text = text.replace("<br>", "\n").replace("<br/>", "\n")
     text = text.replace("\r", "")
     
-    # Convert step labels into beautiful emoji markers on their own lines
+    parts = text.split('$')
+    for i in range(len(parts)):
+        if i % 2 == 1:
+            # Mathematical block inside $ ... $ - escape inner segments, then wrap in raw <code> tags
+            seg = clean_latex_to_unicode(parts[i])
+            parts[i] = f"<code>{html.escape(seg)}</code>"
+        else:
+            # Plain text part - split by newline to analyze line-by-line
+            lines = parts[i].split('\n')
+            for j in range(len(lines)):
+                line_clean = lines[j].strip()
+                
+                # Auto-detect unbracketed equations, escape content first, then wrap in raw <code> tags
+                operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "/"]
+                if len(line_clean) > 3 and any(op in line_clean for op in operators) and not line_clean.startswith("<"):
+                    escaped_eq = html.escape(clean_latex_to_unicode(line_clean))
+                    lines[j] = f"<code>{escaped_eq}</code>"
+                else:
+                    lines[j] = html.escape(lines[j])
+            parts[i] = "\n".join(lines)
+            
+    # Assemble the segments cleanly
+    result = "".join(parts)
+    
+    # Convert step labels into beautiful emoji markers on their own lines AFTER escaping is complete
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
         emoji = emojis.get(step_num, "▪️")
         return f"\n{emoji} <b>Step {step_num}:</b> "
         
-    text = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
-    
-    parts = text.split('$')
-    for i in range(len(parts)):
-        if i % 2 == 1:
-            # Mathematical block inside $ ... $ - simple wrapping, no leading/trailing newlines
-            seg = clean_latex_to_unicode(parts[i])
-            parts[i] = f"<code>{html.escape(seg)}</code>"
-        else:
-            # Plain text part - verify if there are any unbracketed equations
-            lines = parts[i].split('\n')
-            for j in range(len(lines)):
-                line_clean = lines[j].strip()
-                
-                # Auto-detect unbracketed equations and wrap them inline
-                operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "/"]
-                if len(line_clean) > 3 and any(op in line_clean for op in operators) and not line_clean.startswith("<"):
-                    lines[j] = f"<code>{html.escape(clean_latex_to_unicode(line_clean))}</code>"
-                else:
-                    lines[j] = html.escape(lines[j])
-            parts[i] = "\n".join(lines)
-            
-    # Assemble and remove double empty lines caused by block breaks
-    result = "".join(parts)
+    result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, result)
     result = re.sub(r'\n{3,}', '\n\n', result)
-    return result.strip()
+    
+    # Align subsequent lines with 6 spaces to match the parent block indentation of html_views
+    indented_lines = []
+    for line in result.split('\n'):
+        if line.strip():
+            # If already indented, keep it, otherwise align under the explanation block
+            if line.startswith("   ") or line.startswith("  "):
+                indented_lines.append(line)
+            else:
+                indented_lines.append(f"   {line}")
+        else:
+            indented_lines.append("")
+    return "\n".join(indented_lines).strip()
