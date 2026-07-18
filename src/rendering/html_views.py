@@ -109,7 +109,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
             f"📝 <b>SOLUTION SUMMARY:</b>\n"
             f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(truncated_why))}"
+            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(truncated_why))}\n"
         )
         footer_note = (
             "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -277,7 +277,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             f"├─ Level: <b>Grade {perf_card.get('grade', 12)}</b>\n"
             f"├─ Cumulative Score: <b>{perf_card['total_marks']} Marks</b>\n"
             f"├─ Mastery Rank: <b>{mastery}</b>\n"
-            f"├─ Accuracy: <b>{perf_card['accuracy']}%</b> ({perf_card['correct']}/{perf_card['total']} correct)\n"
+            f"├─ Accuracy: <b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']} questions solved correctly)\n"
             f"└─ Target: {next_rank_info}\n"
         )
 

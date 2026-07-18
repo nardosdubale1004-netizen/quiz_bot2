@@ -10,7 +10,8 @@ MATH_MAP = {
     r"\vec": "vec", r"\,": " ", r"\quad": "   ", r"\text": "",
     r"\bar": "bar", r"\hat": "hat", r"\nabla": "∇", r"\angle": "∠",
     r"\cos^{-1}": "cos⁻¹", r"\sin^{-1}": "sin⁻¹", r"\tan^{-1}": "tan⁻¹",
-    r"\parallel": "∥", r"\perp": "⊥", r"\sum": "∑", r"\overline": "bar"
+    r"\parallel": "∥", r"\perp": "⊥", r"\sum": "∑", r"\overline": "bar",
+    r"\implies": "⇒", r"\iff": "⇔", r"\to": "→"
 }
 
 UNICODE_TO_LATEX = {
@@ -54,8 +55,8 @@ def convert_subscripts(text):
 def clean_latex_to_unicode(text):
     if not text:
         return ""
-    # Convert standard LaTeX breaks into raw newline characters
-    text = text.replace(r"\par", "\n").replace(r"\\", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
+    # Standard spacing normalizations (no destructive double backslash replacements)
+    text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
 
@@ -78,7 +79,7 @@ def clean_latex_to_unicode(text):
     for latex_sym, unicode_sym in MATH_MAP.items():
         text = text.replace(latex_sym, unicode_sym)
 
-    text = text.replace("\\", "").replace("{", "(").replace("}", ")")
+    text = text.replace("\\", "")
     return re.sub(r'[ \t]+', ' ', text).strip()
 
 def lite_math(text):
@@ -92,11 +93,8 @@ def beautify_markdown_math(text):
         
     text = str(text)
     # Aggressively translate all variations of literal escaped \n strings to real newlines
-    text = text.replace("\\\\n", "\n")
-    text = text.replace("\\n", "\n")
-    text = text.replace(r"\n", "\n")
-    text = text.replace("<br>", "\n").replace("<br/>", "\n")
-    text = text.replace("\r", "")
+    text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
+    text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
     
     parts = text.split('$')
     for i in range(len(parts)):

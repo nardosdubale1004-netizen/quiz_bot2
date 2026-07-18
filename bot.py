@@ -18,6 +18,7 @@ from src.database import (
     process_user_score
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
+from src.rendering.html_views import get_next_rank_info
 from src.callbacks import handle_callback
 from src.cli import admin_panel
 import httpx
@@ -188,13 +189,36 @@ async def start_command(update: Update, context):
             existing_response = db_get_user_response(user_id, mid_key)
             
             if existing_response:
-                # Instantly delete the incoming /start command message to avoid any duplicate scoring cards
+                # 1. Instantly delete the incoming /start command message to avoid any duplicate scoring cards
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
                 except Exception:
                     pass
                 
-                # Halt execution completely. Chat focus remains directly aligned on their original answer card
+                # 2. Fetch student statistics to compile a consolidated, beautiful profile greeter
+                profile = db_get_user_profile(user_id)
+                if profile:
+                    grade = profile['grade']
+                    user_marks = profile['total_marks']
+                    mastery = get_grade_mastery_title(user_marks)
+                    accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
+                    next_rank = get_next_rank_info(user_marks)
+                    
+                    await update.message.reply_text(
+                        f"👋 <b>Welcome Back, Scholar!</b>\n\n"
+                        f"⚠️ <b>Lockout active: You have already answered this question!</b>\n"
+                        f"<i>Your original selection and score have been securely locked.</i>\n\n"
+                        f"📊 <b>YOUR STUDY METRICS:</b>\n"
+                        f"├─ Registered Level: <b>Grade {grade}</b>\n"
+                        f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
+                        f"├─ Mastery Level:   <b>{mastery}</b>\n"
+                        f"├─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n"
+                        f"└─ Target:           {next_rank}\n\n"
+                        f"💬 <b>STUDY CHANNELS:</b>\n"
+                        f"• Check the main channel for active scheduled questions!\n"
+                        f"• Use the /leaderboard command here to view your rank standings!",
+                        parse_mode="HTML"
+                    )
                 return
 
             # Evaluate the score privately inside Neon database for first-time submissions
@@ -241,7 +265,6 @@ async def start_command(update: Update, context):
         user_marks = profile['total_marks']
         mastery = get_grade_mastery_title(user_marks)
         accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
-        accuracy_bar = "🟩" * (accuracy // 10) + "⬜" * (10 - (accuracy // 10))
 
         await update.message.reply_text(
             f"👋 <b>Welcome Back, Scholar!</b>\n\n"
@@ -250,8 +273,7 @@ async def start_command(update: Update, context):
             f"├─ Registered Level: <b>Grade {grade}</b>\n"
             f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
             f"├─ Mastery Level:   <b>{mastery}</b>\n"
-            f"├─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']}/{profile['total']})\n"
-            f"└─ Progress:         <code>{accuracy_bar}</code>\n\n"
+            f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
             f"💬 <b>STUDY CHANNELS:</b>\n"
             f"• Check the main channel for active scheduled questions!\n"
             f"• Use the /leaderboard command here to view your rank standings!",
