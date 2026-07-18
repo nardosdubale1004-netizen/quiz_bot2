@@ -56,10 +56,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
         
         explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n"
-                            f"   ▪️ <b>Principle:</b>\n   <code>{beautify_markdown_math(rule_text)}</code>\n\n"
-                            f"   ▪️ <b>Explanation:</b>\n   {beautify_markdown_math(why)}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n   {beautify_markdown_math(exp['analogy'])}\n\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n   {beautify_markdown_math(exp['memory_tip'])}\n"
+                            f"   ▪️ <b>Principle:</b>\n      <code>{beautify_markdown_math(rule_text)}</code>\n\n"
+                            f"   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(why)}\n")
+        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n      {beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n      {beautify_markdown_math(exp['memory_tip'])}\n"
         
         analysis_list = []
         options_analysis = q.get('options_analysis', [])
@@ -101,8 +101,8 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         spoiler_content = (
             f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
             f"📝 <b>SOLUTION SUMMARY:</b>\n"
-            f"   ▪️ <b>Principle:</b>\n   <code>{beautify_markdown_math(rule_text)}</code>\n\n"
-            f"   ▪️ <b>Explanation:</b>\n   {beautify_markdown_math(truncated_why)}"
+            f"   ▪️ <b>Principle:</b>\n      <code>{beautify_markdown_math(rule_text)}</code>\n\n"
+            f"   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(truncated_why)}"
         )
         footer_note = (
             "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -110,10 +110,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         )
     else:
         explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n"
-                            f"   ▪️ <b>Principle:</b>\n   <code>{beautify_markdown_math(rule_text)}</code>\n\n"
-                            f"   ▪️ <b>Explanation:</b>\n   {beautify_markdown_math(why)}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n   {beautify_markdown_math(exp['analogy'])}\n\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n   {beautify_markdown_math(exp['memory_tip'])}\n"
+                            f"   ▪️ <b>Principle:</b>\n      <code>{beautify_markdown_math(rule_text)}</code>\n\n"
+                            f"   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(why)}\n")
+        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n      {beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n      {beautify_markdown_math(exp['memory_tip'])}\n"
         analysis_list = []
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
@@ -132,7 +132,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     if compact and len(full_text) > 1022:
         final_why = smart_truncate_html(truncated_why, max(50, len(truncated_why) - (len(full_text) - 1010)))
-        spoiler_content = replace_code_with_italic(f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n📝 <b>SOLUTION SUMMARY:</b>\n   ▪️ <b>Explanation:</b>\n   {beautify_markdown_math(final_why)}")
+        spoiler_content = replace_code_with_italic(f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n📝 <b>SOLUTION SUMMARY:</b>\n   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(final_why)}")
         full_text = f"{header}{body}{opts_block}━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer_note}"
     return full_text
 
@@ -150,10 +150,10 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         why = exp.get('why', 'N/A')
         rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
         explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n"
-                            f"   ▪️ <b>Principle:</b>\n   <code>{beautify_markdown_math(rule_text)}</code>\n\n"
-                            f"   ▪️ <b>Explanation:</b>\n   {beautify_markdown_math(why)}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n   {beautify_markdown_math(exp['analogy'])}\n\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n   {beautify_markdown_math(exp['memory_tip'])}\n"
+                            f"   ▪️ <b>Principle:</b>\n      <code>{beautify_markdown_math(rule_text)}</code>\n\n"
+                            f"   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(why)}\n")
+        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n      {beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n      {beautify_markdown_math(exp['memory_tip'])}\n"
         explanation_part += "\n"
 
         analysis_list = []
@@ -204,16 +204,24 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 
     if compact:
         truncated_why = smart_truncate_html(why, 300)
-        explanation_block = f"📝 <b>SOLUTION SUMMARY:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n   ▪️ <b>Explanation:</b> {beautify_markdown_math(truncated_why)}\n"
+        explanation_block = (
+            f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"   ▪️ <b>Principle:</b>\n      <code>{beautify_markdown_math(rule_text)}</code>\n\n"
+            f"   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(truncated_why)}\n"
+        )
         analysis_block = ""
         footer_note = (
             "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "📖 <i>The complete step-by-step derivation has been posted in the message below.</i>"
         )
     else:
-        explanation_block = f"📝 <b>DETAILED SOLUTION:</b>\n   ▪️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n   ▪️ <b>Explanation:</b> {beautify_markdown_math(why)}\n"
-        if exp.get('analogy'): explanation_block += f"   ▪️ <b>Analogy:</b> {beautify_markdown_math(exp['analogy'])}\n"
-        if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
+        explanation_block = (
+            f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"   ▪️ <b>Principle:</b>\n      <code>{beautify_markdown_math(rule_text)}</code>\n\n"
+            f"   ▪️ <b>Explanation:</b>\n      {beautify_markdown_math(why)}\n"
+        )
+        if exp.get('analogy'): explanation_block += f"   ▪️ <b>Analogy:</b>\n      {beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b>\n      {beautify_markdown_math(exp['memory_tip'])}\n"
         explanation_block += "\n"
         analysis_list = []
         options_analysis = q.get('options_analysis', [])

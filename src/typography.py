@@ -103,7 +103,8 @@ def beautify_markdown_math(text):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
         emoji = emojis.get(step_num, "▪️")
-        return f"\n\n{emoji} <b>Step {step_num}:</b>"
+        # Generates a single-space boundary after bold block on a clean indented line
+        return f"\n      {emoji} <b>Step {step_num}:</b> "
         
     text = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
     
@@ -116,7 +117,7 @@ def beautify_markdown_math(text):
             # If the math segment contains operations, break it onto an isolated indented line
             operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "∥", "⊥", "dx", "/"]
             if any(op in seg for op in operators):
-                parts[i] = f"\n   <code> {html.escape(seg)} </code>\n"
+                parts[i] = f"\n         <code> {html.escape(seg)} </code>\n"
             else:
                 parts[i] = f"<code>{html.escape(seg)}</code>"
         else:
@@ -124,10 +125,14 @@ def beautify_markdown_math(text):
             lines = parts[i].split('\n')
             for j in range(len(lines)):
                 line_clean = lines[j].strip()
+                
                 # Auto-detect unbracketed equations (containing =, /, or other operators) and isolate them
                 operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "/"]
                 if len(line_clean) > 3 and any(op in line_clean for op in operators) and not line_clean.startswith("<"):
-                    lines[j] = f"\n   <code> {html.escape(clean_latex_to_unicode(line_clean))} </code>\n"
+                    # Isolate trailing punctuation from code block structure
+                    stripped = line_clean.rstrip(".:,;")
+                    punc = line_clean[len(stripped):]
+                    lines[j] = f"\n         <code> {html.escape(clean_latex_to_unicode(stripped))} </code>{punc}\n"
                 else:
                     lines[j] = html.escape(lines[j])
             parts[i] = "\n".join(lines)
@@ -135,4 +140,16 @@ def beautify_markdown_math(text):
     # Assemble and remove double empty lines caused by block breaks
     result = "".join(parts)
     result = re.sub(r'\n{3,}', '\n\n', result)
-    return result.strip()
+    
+    # Align subsequent lines with 6 spaces to match the parent block indentation of html_views
+    indented_lines = []
+    for line in result.split('\n'):
+        if line.strip():
+            # If the line is already padded, keep it, otherwise add indentation
+            if line.startswith("   ") or line.startswith("  "):
+                indented_lines.append(line)
+            else:
+                indented_lines.append(f"      {line}")
+        else:
+            indented_lines.append("")
+    return "\n".join(indented_lines).strip()
