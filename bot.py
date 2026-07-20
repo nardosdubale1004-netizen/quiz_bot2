@@ -221,7 +221,8 @@ async def start_command(update: Update, context):
                         f"├─ Registered Level: <b>Grade {grade}</b>\n"
                         f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
                         f"├─ Mastery Level:   <b>{mastery}</b>\n"
-                        f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
+                        f"├─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n"
+                        f"└─ Target:           {next_rank}\n\n"
                         f"💬 <b>STUDY CHANNELS:</b>\n"
                         f"• Check the main channel for active scheduled questions!\n"
                         f"• Use the /leaderboard command here to view your rank standings!",
@@ -355,7 +356,7 @@ async def run_cloud_server(app, port):
     # Set the webhook URL with Telegram manually (pointing to /webhook)
     await app.bot.set_webhook(
         url=f"{PUBLIC_URL}/webhook",
-        drop_updates=True
+        drop_pending_updates=True
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
