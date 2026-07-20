@@ -3,6 +3,7 @@ import sys
 import json
 import asyncio
 import threading
+import traceback
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -220,8 +221,7 @@ async def start_command(update: Update, context):
                         f"├─ Registered Level: <b>Grade {grade}</b>\n"
                         f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
                         f"├─ Mastery Level:   <b>{mastery}</b>\n"
-                        f"├─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n"
-                        f"└─ Target:           {next_rank}\n\n"
+                        f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
                         f"💬 <b>STUDY CHANNELS:</b>\n"
                         f"• Check the main channel for active scheduled questions!\n"
                         f"• Use the /leaderboard command here to view your rank standings!",
@@ -265,6 +265,7 @@ async def start_command(update: Update, context):
             db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
+            traceback.print_exc()
             print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
             await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.")
             return
@@ -354,7 +355,7 @@ async def run_cloud_server(app, port):
     # Set the webhook URL with Telegram manually (pointing to /webhook)
     await app.bot.set_webhook(
         url=f"{PUBLIC_URL}/webhook",
-        drop_pending_updates=True
+        drop_updates=True
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
