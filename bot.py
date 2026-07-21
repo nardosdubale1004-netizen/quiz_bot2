@@ -161,6 +161,10 @@ async def start_command(update: Update, context):
     """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz answers."""
     user_id = update.effective_user.id
     args = context.args
+    
+    channel_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+    ]])
 
     # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
     if args and args[0].startswith("ans_"):
@@ -175,7 +179,7 @@ async def start_command(update: Update, context):
             mid_key = next((k for k, v in tracks.items() if k.isdigit() and v.get('display_id') == display_id), None)
 
             if not mid_key:
-                await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.")
+                await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
             engine.refresh_database()
@@ -183,7 +187,7 @@ async def start_command(update: Update, context):
             question_data = all_qs.get(tracks[mid_key]['q_id'])
 
             if not question_data:
-                await update.message.reply_text("Error: Question data not found.")
+                await update.message.reply_text("Error: Question data not found.", reply_markup=channel_kb)
                 return
 
             # anti-cheat: check if the student has already answered this question post
@@ -194,7 +198,13 @@ async def start_command(update: Update, context):
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
                 
-                # 2. Prune their old scorecard from higher up in history (preventing duplicates)
+                # 2. Instantly delete the incoming /start text command to avoid chat clutter
+                try:
+                    await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
+                except Exception:
+                    pass
+                
+                # 3. Prune their old scorecard from higher up in history (preventing duplicates)
                 if old_private_mid:
                     try:
                         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
@@ -203,40 +213,30 @@ async def start_command(update: Update, context):
                     except Exception:
                         pass
                 
-                # 3. Fetch student statistics to compile a consolidated, beautiful profile greeter
-                profile = db_get_user_profile(user_id)
-                if profile:
-                    grade = profile['grade']
-                    user_marks = profile['total_marks']
-                    mastery = get_grade_mastery_title(user_marks)
-                    accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
-                    next_rank = get_next_rank_info(user_marks)
-                    
-                    # 4. Create return-to-channel redirect button
-                    channel_kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
-                    ]])
-                    
-                    # 5. Re-post a clean lockout notification at the bottom of their chat (No duplication of 2000-char derivations)
-                    m = await update.message.reply_text(
-                        f"👋 <b>Welcome Back, Scholar!</b>\n\n"
-                        f"⚠️ <b>Lockout active: You have already answered this question!</b>\n"
-                        f"<i>Your original selection and score have been securely locked.</i>\n\n"
-                        f"📊 <b>YOUR STUDY METRICS:</b>\n"
-                        f"├─ Registered Level: <b>Grade {grade}</b>\n"
-                        f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
-                        f"├─ Mastery Level:   <b>{mastery}</b>\n"
-                        f"├─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n"
-                        f"└─ Target:           {next_rank}\n\n"
-                        f"💬 <b>STUDY CHANNELS:</b>\n"
-                        f"• Check the main channel for active scheduled questions!\n"
-                        f"• Use the /leaderboard command here to view your rank standings!",
-                        reply_markup=channel_kb,
-                        parse_mode="HTML"
-                    )
-                    
-                    # Log the newly generated sliding message ID
-                    db_update_private_message_id(user_id, mid_key, m.message_id)
+                # 4. Compile their original answered view with a clear lockout header
+                perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
+                warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
+                                 "<i>Your original selection and score have been securely locked.</i>\n\n"
+                explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
+                
+                # 5. Re-post the original scorecard card at the bottom of the chat with channel return button (No stats card spam)
+                has_tikz = UIFactory.has_real_diagram(question_data)
+                if has_tikz:
+                    explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
+                    latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
+                    if latex_code:
+                        img_url = UIFactory.get_latex_url(latex_code)
+                        async with httpx.AsyncClient() as client:
+                            resp = await fetch_kroki_image(client, img_url, latex_code)
+                            if resp and resp.status_code == 200:
+                                m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
+                                full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
+                                f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, reply_markup=channel_kb, disable_web_page_preview=True)
+                                db_update_private_message_id(user_id, mid_key, f_m.message_id)
+                                return
+                
+                f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", reply_markup=channel_kb, disable_web_page_preview=True)
+                db_update_private_message_id(user_id, mid_key, f_m.message_id)
                 return
 
             # Evaluate the score privately inside Neon database for first-time submissions
@@ -261,9 +261,6 @@ async def start_command(update: Update, context):
 
                             # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply with channel return button
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
-                            channel_kb = InlineKeyboardMarkup([[
-                                InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
-                            ]])
                             f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, reply_markup=channel_kb, disable_web_page_preview=True)
                             
                             # Log the final explanation message ID to support direct jump navigation on double-clicks
@@ -271,16 +268,13 @@ async def start_command(update: Update, context):
                             return
 
             # Fallback to pure text message for standard algebraic questions with channel return button
-            channel_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
-            ]])
-            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", reply_markup=channel_kb, disable_web_page_preview=True)
             db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
             traceback.print_exc()
             print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
-            await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.")
+            await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
     # --- PERSISTENT PROFILE METRICS GREETER ---
@@ -302,6 +296,7 @@ async def start_command(update: Update, context):
             f"💬 <b>STUDY CHANNELS:</b>\n"
             f"• Check the main channel for active scheduled questions!\n"
             f"• Use the /leaderboard command here to view your rank standings!",
+            reply_markup=channel_kb,
             parse_mode="HTML"
         )
         return
@@ -311,7 +306,8 @@ async def start_command(update: Update, context):
         [InlineKeyboardButton("🎒 Grade 6", callback_data="set_grade|6"),
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
-         InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")]
+         InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
+        [InlineKeyboardButton("📢 VISIT CHANNEL", url="https://t.me/grade12EntranceExam")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -337,6 +333,10 @@ async def leaderboard_command(update: Update, context):
 
     # Compile the top 10 weekly responders for this specific grade
     weekly_top = db_get_weekly_leaderboard(grade)
+    
+    channel_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+    ]])
 
     leaderboard_text = [
         f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
@@ -359,7 +359,7 @@ async def leaderboard_command(update: Update, context):
         "Habitual study builds Mastery.</i>"
     )
 
-    await update.message.reply_text("\n".join(leaderboard_text), parse_mode="HTML")
+    await update.message.reply_text("\n".join(leaderboard_text), reply_markup=channel_kb, parse_mode="HTML")
 
 async def run_cloud_server(app, port):
     """Asynchronous runner to configure the webhook target and start the custom HTTP webserver."""
