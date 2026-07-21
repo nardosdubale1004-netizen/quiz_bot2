@@ -3,6 +3,7 @@ import re
 from src.config import CONFIG
 from src.typography import clean_latex_to_unicode, lite_math, beautify_markdown_math
 from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag, is_complex
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def replace_code_with_italic(text: str) -> str:
     return text.replace("<code>", "<i>").replace("</code>", "</i>") if text else ""
@@ -301,7 +302,7 @@ def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
     is_o_complex = any(is_complex(o) for o in q['options'])
-    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
+    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|display_id|{i}")] for i, opt in enumerate(q['options'])]
     return InlineKeyboardMarkup(buttons)
 
 def generate_poll_hint(q):
