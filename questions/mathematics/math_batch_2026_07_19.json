@@ -66,7 +66,7 @@
     "correct_option": 0,
     "poll_explanation": {
       "rule": "Vector Dot Product Definition:\n\n$\\cos\\theta = \\frac{\\vec{a} \\cdot \\vec{b}}{\\|\\vec{a}\\| \\|\\vec{b}\\|}$",
-      "why": "Step 1: Write down the components of the vectors:\n$\\vec{a} = (1, \\sqrt{3})$\n$\\vec{b} = (\\sqrt{3}, 1)$\n\nStep 2: Calculate the coordinate dot product:\n$\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\n$\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$\n\nStep 3: Calculate the vector magnitudes:\n$\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$\n$\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$\n\nStep 4: Substitute values into the formulation to solve for $\\cos\\theta$:\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$\n\nStep 5: Determine the reference angle:\n$\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
+      "why": "Step 1: Write down the components of the vectors:\n$\\vec{a} = (1, \\sqrt{3})$\n$\\vec{b} = (\\sqrt{3}, 1)$\n\nStep 2: Calculate the coordinate dot product:\n$\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\n$\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$\n\nStep 3: Calculate the vector magnitudes:\n$\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$\n$\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$\\n\nStep 4: Substitute values into the formulation to solve for $\\cos\\theta$:\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$\n\nStep 5: Determine the reference angle:\n$\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
       "poll_hint": "cos(θ) = (a·b)/(||a||·||b||) = √3/2 ⇒ θ = 30° = π/6 rad"
     },
     "options_analysis": [
