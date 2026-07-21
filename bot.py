@@ -217,7 +217,7 @@ async def start_command(update: Update, context):
                         InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
                     ]])
                     
-                    # 5. Re-post a clean lockout notification at the bottom of their chat with channel redirect keyboard
+                    # 5. Re-post a clean lockout notification at the bottom of their chat (No duplication of 2000-char derivations)
                     m = await update.message.reply_text(
                         f"👋 <b>Welcome Back, Scholar!</b>\n\n"
                         f"⚠️ <b>Lockout active: You have already answered this question!</b>\n"
@@ -274,7 +274,7 @@ async def start_command(update: Update, context):
             channel_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
             ]])
-            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", reply_markup=channel_kb, disable_web_page_preview=True)
+            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
             db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
@@ -298,7 +298,7 @@ async def start_command(update: Update, context):
             f"├─ Registered Level: <b>Grade {grade}</b>\n"
             f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
             f"├─ Mastery Level:   <b>{mastery}</b>\n"
-            └─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
+            f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
             f"💬 <b>STUDY CHANNELS:</b>\n"
             f"• Check the main channel for active scheduled questions!\n"
             f"• Use the /leaderboard command here to view your rank standings!",
