@@ -138,6 +138,10 @@ def beautify_markdown_math(text):
             
     # Assemble the segments cleanly
     result = "".join(parts)
+    
+    # Ensure strict, unified single-space boundaries around math code block tags (resolves characters merging)
+    result = re.sub(r'(\w)<code>', r'\1 <code>', result)
+    result = re.sub(r'</code>(\w)', r'</code> \1', result)
     result = re.sub(r'\n{3,}', '\n\n', result)
     
     # Align subsequent lines with 6 spaces to match the parent block indentation of html_views

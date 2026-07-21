@@ -212,7 +212,12 @@ async def start_command(update: Update, context):
                     accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
                     next_rank = get_next_rank_info(user_marks)
                     
-                    # 4. Re-post a clean lockout notification at the bottom of their chat (No duplication of 2000-char derivations)
+                    # 4. Create return-to-channel redirect button
+                    channel_kb = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+                    ]])
+                    
+                    # 5. Re-post a clean lockout notification at the bottom of their chat with channel redirect keyboard
                     m = await update.message.reply_text(
                         f"👋 <b>Welcome Back, Scholar!</b>\n\n"
                         f"⚠️ <b>Lockout active: You have already answered this question!</b>\n"
@@ -226,6 +231,7 @@ async def start_command(update: Update, context):
                         f"💬 <b>STUDY CHANNELS:</b>\n"
                         f"• Check the main channel for active scheduled questions!\n"
                         f"• Use the /leaderboard command here to view your rank standings!",
+                        reply_markup=channel_kb,
                         parse_mode="HTML"
                     )
                     
@@ -253,16 +259,22 @@ async def start_command(update: Update, context):
                         if resp and resp.status_code == 200:
                             m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
 
-                            # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply
+                            # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply with channel return button
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
-                            f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, disable_web_page_preview=True)
+                            channel_kb = InlineKeyboardMarkup([[
+                                InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+                            ]])
+                            f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, reply_markup=channel_kb, disable_web_page_preview=True)
                             
                             # Log the final explanation message ID to support direct jump navigation on double-clicks
                             db_update_private_message_id(user_id, mid_key, f_m.message_id)
                             return
 
-            # Fallback to pure text message for standard algebraic questions
-            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", disable_web_page_preview=True)
+            # Fallback to pure text message for standard algebraic questions with channel return button
+            channel_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+            ]])
+            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", reply_markup=channel_kb, disable_web_page_preview=True)
             db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
@@ -286,7 +298,7 @@ async def start_command(update: Update, context):
             f"├─ Registered Level: <b>Grade {grade}</b>\n"
             f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
             f"├─ Mastery Level:   <b>{mastery}</b>\n"
-            f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
+            └─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
             f"💬 <b>STUDY CHANNELS:</b>\n"
             f"• Check the main channel for active scheduled questions!\n"
             f"• Use the /leaderboard command here to view your rank standings!",
