@@ -192,7 +192,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"   {status_icon} {let}: {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
@@ -260,7 +260,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"   {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"   {status_icon} {let}: {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)

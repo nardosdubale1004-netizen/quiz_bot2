@@ -114,7 +114,8 @@ def beautify_markdown_math(text):
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # Split text to parse Display Math ($$ ... $$) and Inline Math ($ ... $) into rich blocks
+    # Convert Markdown LaTeX blocks $$ ... $$ to native Telegram <tg-math-block> tags
+    # and inline LaTeX $ ... $ to native Telegram <tg-math> tags
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
