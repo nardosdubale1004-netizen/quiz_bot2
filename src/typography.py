@@ -37,6 +37,29 @@ SUBSCRIPTS = {
     'v': 'ᵥ', 'x': 'ₓ'
 }
 
+def escape_plain_text(text: str) -> str:
+    """Escapes raw XML special characters that are not part of supported formatting tags."""
+    allowed_tags = [
+        "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
+        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
+        "tg-math", "/tg-math", "tg-math-block", "/tg-math-block",
+        "h1", "/h1", "h2", "/h2", "h3", "/h3", "h4", "/h4", "h5", "/h5", "h6", "/h6",
+        "ul", "/ul", "ol", "/ol", "li", "/li", "table", "/table", "tr", "/tr", "td", "/td",
+        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/superscript"
+    ]
+    parts = re.split(r'(</?[a-zA-Z1-6-]+(?:\s+[^>]*)?/?>)', text)
+    for i in range(len(parts)):
+        if i % 2 == 1:
+            tag_match = re.match(r'</?([a-zA-Z1-6-]+)', parts[i])
+            if tag_match:
+                tag_name = tag_match.group(1).lower()
+                if tag_name in allowed_tags or parts[i].startswith("<blockquote expandable"):
+                    continue
+            parts[i] = html.escape(parts[i])
+        else:
+            parts[i] = html.escape(parts[i])
+    return "".join(parts)
+
 def convert_superscripts(text):
     def repl(match):
         val = match.group(1) or match.group(2)
@@ -105,17 +128,16 @@ def beautify_markdown_math(text):
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
 
-    # Convert step labels into beautiful emoji markers on their own lines
+    # Step Highlight tags mapped to H4 elements
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
         emoji = emojis.get(step_num, "▪️")
-        return f"\n{emoji} <b>Step {step_num}:</b> "
+        return f"\n\n<h4>{emoji} Step {step_num}:</h4> "
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # Convert Markdown display equations $$ ... $$ to native <tg-math-block>
-    # and inline equations $ ... $ to native <tg-math>
+    # Convert display and inline mathematical formulas to native tags
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
@@ -128,11 +150,11 @@ def beautify_markdown_math(text):
                     # Inline mathematical expression tag
                     parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
                 else:
-                    parts_inline[j] = html.escape(parts_inline[j])
+                    parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)
 
     result = "".join(parts_block)
 
-    # Clean up multiple duplicate line breaks
+    # Clean up double line breaks and return pure text layout
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()

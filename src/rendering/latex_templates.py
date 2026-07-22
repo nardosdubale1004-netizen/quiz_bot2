@@ -284,11 +284,14 @@ def create_explanation_assets(q, user_idx, display_id):
     if has_tikz:
         latex_code = build_widescreen_solution_latex(q, display_id, "@grade12EntranceExam", get_day_from_tags(q.get('tags', [])))
 
+    # Advanced compact heading structure
     text_parts = [
-        f"📚 <b>SOLUTION SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {escape(q.get('topic', 'General'))}\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        f"<h2>📚 SOLUTION SHEET</h2>"
+        f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {escape(q.get('topic', 'General'))}</p>"
+        f"<hr/>\n",
         f"🎯 <b>Your Selection:</b> {user_letter} ({user_status})",
         f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>",
-        f"\n🔍 <b>OPTION-BY-OPTION ANALYSIS:</b>"
+        f"\n🔍 <b>OPTION-BY-OPTION ANALYSIS:</b>\n<ul>"
     ]
 
     options_analysis = q.get('options_analysis', [])
@@ -303,8 +306,8 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # UPGRADED: Isolating inline tags from mathematical blocks to avoid rendering conflicts
-        label_segment = f"  {color_lbl} <b>{let})</b> {beautify_markdown_math(o_text)}"
+        # Standard-compliant tag boundaries used natively
+        label_segment = f"  <li>{color_lbl} <b>{let})</b> {beautify_markdown_math(o_text)}"
         details = []
         if why_text:
             details.append(beautify_markdown_math(why_text))
@@ -312,9 +315,10 @@ def create_explanation_assets(q, user_idx, display_id):
             details.append(f"<i>(e.g., {beautify_markdown_math(example_text)})</i>")
 
         desc_segment = " — " + " ".join(details) if details else ""
-        text_parts.append(f"{label_segment}{desc_segment}")
+        label_segment += f"{desc_segment}</li>"
+        text_parts.append(label_segment)
 
-    text_parts.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
+    text_parts.append("</ul>\n<hr/>")
     text_parts.append("📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>")
 
     caption_html = "\n".join(text_parts)
