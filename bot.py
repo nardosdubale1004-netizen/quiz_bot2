@@ -1,3 +1,4 @@
+# bot.py
 import os
 import sys
 import json
@@ -20,6 +21,7 @@ from src.database import (
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info
+from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
 from src.callbacks import handle_callback
 from src.cli import admin_panel
 import httpx
@@ -58,7 +60,7 @@ async def handle_http_request(reader, writer, app):
             response = (
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: application/json\r\n"
-                f"Content-Length: {response_body}\r\n"
+                f"Content-Length: {len(response_body)}\r\n"
                 "Connection: close\r\n\r\n"
                 f"{response_body}"
             )
@@ -146,7 +148,7 @@ async def check_and_publish_scheduled(app):
                     else:
                         raise Exception("Kroki failed to compile scheduled asset.")
             else:
-                m = await app.bot.send_message(chat_id=channel, text=caption, reply_markup=kb, parse_mode="HTML")
+                m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb)
                 msg_type = "text"
                 type_str = "premium"
 
@@ -161,7 +163,7 @@ async def start_command(update: Update, context):
     """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz answers."""
     user_id = update.effective_user.id
     args = context.args
-    
+
     channel_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
     ]])
@@ -179,7 +181,7 @@ async def start_command(update: Update, context):
             mid_key = next((k for k, v in tracks.items() if k.isdigit() and v.get('display_id') == display_id), None)
 
             if not mid_key:
-                await update.message.reply_text("⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
+                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
             engine.refresh_database()
@@ -187,24 +189,24 @@ async def start_command(update: Update, context):
             question_data = all_qs.get(tracks[mid_key]['q_id'])
 
             if not question_data:
-                await update.message.reply_text("Error: Question data not found.", reply_markup=channel_kb)
+                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
                 return
 
             # anti-cheat: check if the student has already answered this question post
             existing_response = db_get_user_response(user_id, mid_key)
-            
+
             if existing_response:
                 # 1. Retrieve original chosen option and private message tracking ID
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
-                
+
                 # 2. Instantly delete the incoming /start text command to avoid chat clutter
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
                 except Exception:
                     pass
-                
-                # 3. Prune their old scorecard from higher up in history (preventing duplicates)
+
+                # 3. Prune their old scorecard from history (preventing duplicates)
                 if old_private_mid:
                     try:
                         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
@@ -212,14 +214,14 @@ async def start_command(update: Update, context):
                         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid + 1)
                     except Exception:
                         pass
-                
+
                 # 4. Compile their original answered view with a clear lockout header
                 perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
                 explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
-                
-                # 5. Re-post the original scorecard card at the bottom of the chat with channel return button (No stats card spam)
+
+                # 5. Re-post the original scorecard card at the bottom of the chat with channel return button
                 has_tikz = UIFactory.has_real_diagram(question_data)
                 if has_tikz:
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
@@ -231,11 +233,11 @@ async def start_command(update: Update, context):
                             if resp and resp.status_code == 200:
                                 m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
                                 full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
-                                f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, reply_markup=channel_kb, disable_web_page_preview=True)
+                                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
                                 db_update_private_message_id(user_id, mid_key, f_m.message_id)
                                 return
-                
-                f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", reply_markup=channel_kb, disable_web_page_preview=True)
+
+                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
                 db_update_private_message_id(user_id, mid_key, f_m.message_id)
                 return
 
@@ -259,22 +261,21 @@ async def start_command(update: Update, context):
                         if resp and resp.status_code == 200:
                             m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
 
-                            # Deliver the detailed, un-truncated derivation steps as a separate threaded text reply with channel return button
+                            # Deliver the detailed, un-truncated derivation steps
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
-                            f_m = await update.message.reply_text(text=full_text, parse_mode="HTML", reply_to_message_id=m.message_id, reply_markup=channel_kb, disable_web_page_preview=True)
-                            
-                            # Log the final explanation message ID to support direct jump navigation on double-clicks
+                            f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
+
                             db_update_private_message_id(user_id, mid_key, f_m.message_id)
                             return
 
             # Fallback to pure text message for standard algebraic questions with channel return button
-            f_m = await update.message.reply_text(text=explanation_html, parse_mode="HTML", reply_markup=channel_kb, disable_web_page_preview=True)
+            f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
             db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
             traceback.print_exc()
             print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
-            await update.message.reply_text("⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
     # --- PERSISTENT PROFILE METRICS GREETER ---
@@ -285,19 +286,22 @@ async def start_command(update: Update, context):
         mastery = get_grade_mastery_title(user_marks)
         accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
 
-        await update.message.reply_text(
-            f"👋 <b>Welcome Back, Scholar!</b>\n\n"
-            f"Your academic profile is active and fully synchronized.\n\n"
-            f"📊 <b>YOUR STUDY METRICS:</b>\n"
-            f"├─ Registered Level: <b>Grade {grade}</b>\n"
-            f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
-            f"├─ Mastery Level:   <b>{mastery}</b>\n"
-            f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
-            f"💬 <b>STUDY CHANNELS:</b>\n"
-            f"• Check the main channel for active scheduled questions!\n"
-            f"• Use the /leaderboard command here to view your rank standings!",
-            reply_markup=channel_kb,
-            parse_mode="HTML"
+        await send_rich_message_safe(
+            context.bot,
+            chat_id=update.message.chat_id,
+            html_content=(
+                f"👋 <b>Welcome Back, Scholar!</b>\n\n"
+                f"Your academic profile is active and fully synchronized.\n\n"
+                f"📊 <b>YOUR STUDY METRICS:</b>\n"
+                f"├─ Registered Level: <b>Grade {grade}</b>\n"
+                f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
+                f"├─ Mastery Level:   <b>{mastery}</b>\n"
+                f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
+                f"💬 <b>STUDY CHANNELS:</b>\n"
+                f"• Check the main channel for active scheduled questions!\n"
+                f"• Use the /leaderboard command here to view your rank standings!"
+            ),
+            reply_markup=channel_kb
         )
         return
 
@@ -310,12 +314,15 @@ async def start_command(update: Update, context):
         [InlineKeyboardButton("📢 VISIT CHANNEL", url="https://t.me/grade12EntranceExam")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
-        "To customize your study experience, unlock early bird rewards, and compare "
-        "scores inside fair rank tables, select your academic grade level below:",
-        reply_markup=reply_markup,
-        parse_mode="HTML"
+    await send_rich_message_safe(
+        context.bot,
+        chat_id=update.message.chat_id,
+        html_content=(
+            "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
+            "To customize your study experience, unlock early bird rewards, and compare "
+            "scores inside fair rank tables, select your academic grade level below:"
+        ),
+        reply_markup=reply_markup
     )
 
 async def leaderboard_command(update: Update, context):
@@ -324,7 +331,7 @@ async def leaderboard_command(update: Update, context):
     profile = db_get_user_profile(user_id)
 
     if not profile:
-        await update.message.reply_text("⚠️ Please register your grade first by typing /start.")
+        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Please register your grade first by typing /start.")
         return
 
     grade = profile['grade']
@@ -333,7 +340,7 @@ async def leaderboard_command(update: Update, context):
 
     # Compile the top 10 weekly responders for this specific grade
     weekly_top = db_get_weekly_leaderboard(grade)
-    
+
     channel_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
     ]])
@@ -359,12 +366,12 @@ async def leaderboard_command(update: Update, context):
         "Habitual study builds Mastery.</i>"
     )
 
-    await update.message.reply_text("\n".join(leaderboard_text), reply_markup=channel_kb, parse_mode="HTML")
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
 
 async def run_cloud_server(app, port):
     """Asynchronous runner to configure the webhook target and start the custom HTTP webserver."""
     PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
-    
+
     # Set the webhook URL with Telegram manually (pointing to /webhook)
     await app.bot.set_webhook(
         url=f"{PUBLIC_URL}/webhook",
@@ -382,7 +389,7 @@ async def run_cloud_server(app, port):
         int(port)
     )
     print(f"Custom light webserver is listening on port {port}.", flush=True)
-    
+
     async with server:
         while True:
             await asyncio.sleep(3600)
@@ -400,7 +407,7 @@ def main():
 
     # Initialize complete async python-telegram-bot application wrapper
     app = Application.builder().token(token).build()
-    
+
     # Register core command and callback handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
@@ -412,15 +419,15 @@ def main():
     if RENDER_PORT:
         # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
-        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") 
-        
+        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         # Initialize and start the application so we can make outbound API calls
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-        
+
         # Dynamically register the active bot username so build_keyboard can construct deep links automatically
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
@@ -438,15 +445,15 @@ def main():
     else:
         # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
-        
+
         # We initialize and start the application so we can make outbound API calls
         # But we DO NOT start any polling listener! This prevents all webhook/polling conflicts!
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-        
+
         # Dynamically register the active bot username for local deep-link simulation
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username

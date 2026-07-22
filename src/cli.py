@@ -1,3 +1,4 @@
+# src/cli.py
 import math
 import os
 import json
@@ -6,6 +7,7 @@ from pathlib import Path
 from src.config import CONFIG, Style
 from src.database import QuizEngine
 from src.rendering import UIFactory, fetch_kroki_image
+from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
 from src.typography import lite_math
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -48,40 +50,40 @@ async def admin_panel(app, engine: QuizEngine):
         # --- 4: AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
         if choice == "4":
             print(f"\n{Style.CYAN}--- DYNAMIC DATABASE QUESTIONS IMPORTER ---{Style.RESET}")
-            
+
             # 1. Automatically scan the questions/ directory recursively for any .json files
             questions_dir = Path("questions")
             json_files = []
             if questions_dir.exists():
                 json_files = sorted(list(questions_dir.rglob("*.json")))
-                
+
             if not json_files:
                 print(f"{Style.RED}No JSON question files found inside questions/ directory.{Style.RESET}")
                 continue
-                
+
             print(f"📁 {Style.YELLOW}Detected Question Files:{Style.RESET}")
             for i, file_path in enumerate(json_files):
                 # Cleanly display relative paths, e.g. "1. questions/mathematics/math_batch_2026_07_19.json"
                 print(f"  {i+1}. {Style.WHITE}{file_path.as_posix()}{Style.RESET}")
-                
+
             file_select = await cli.ask("<b>Select File # to Import (or Enter path manually): </b>")
             if not file_select:
                 continue
-                
+
             selected_file = None
             if file_select.isdigit() and 1 <= int(file_select) <= len(json_files):
                 selected_file = str(json_files[int(file_select)-1])
             else:
                 selected_file = file_select
-                
+
             if not os.path.exists(selected_file):
                 print(f"{Style.RED}Error: File path not found.{Style.RESET}")
                 continue
-                
+
             try:
                 with open(selected_file, "r", encoding="utf-8") as f:
                     raw_data = json.load(f)
-                
+
                 print(f"{Style.YELLOW}Importing questions to cloud Neon PostgreSQL database...{Style.RESET}")
                 count = engine.db_import_questions(raw_data)
                 if count > 0:
@@ -115,7 +117,7 @@ async def admin_panel(app, engine: QuizEngine):
 
             range_in = await cli.ask("<b>Selection (e.g. 1, 3-5 or easy:3): </b>")
             to_send = []
-            
+
             if ":" in range_in:
                 query_parts = [p.strip().split(":") for p in range_in.split(",")]
                 requested = {part[0].lower().strip(): int(part[1].strip()) for part in query_parts if len(part) == 2 and part[1].strip().isdigit()}
@@ -151,7 +153,7 @@ async def admin_panel(app, engine: QuizEngine):
                     if choice == "1":
                         # Check for dedicated native question and options overrides, falling back to lite_math
                         question_text = q.get("native_question") or lite_math(q['question'])
-                        
+
                         options_list = q.get("native_options")
                         if not options_list:
                             options_list = [lite_math(o) for o in q['options']]
@@ -179,7 +181,7 @@ async def admin_panel(app, engine: QuizEngine):
                                 else:
                                     raise Exception("Kroki rendering failure.")
                         else:
-                            m = await app.bot.send_message(chat_id=engine.config['channel'], text=caption, reply_markup=kb, parse_mode="HTML")
+                            m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb)
                             msg_type = "text"
 
                     # Save state dynamically to PostgreSQL Neon table
@@ -198,7 +200,7 @@ async def admin_panel(app, engine: QuizEngine):
                 engine.refresh_database()
                 all_qs = {q['id']: q for sub_list in engine.db.values() for q in sub_list}
                 tracks = engine.db_get_all_tracks()
-                
+
                 filtered_mids = [mid for mid, data in tracks.items() if mid.isdigit() and data.get("status") == curr_stat and (curr_type == "bop" or (curr_type == "nap" and data.get("type") == "native") or (curr_type == "prp" and data.get("type") == "premium"))]
                 items = sorted(filtered_mids, key=int, reverse=True)
                 total_pages = math.ceil(len(items) / 10)
@@ -240,7 +242,7 @@ async def admin_panel(app, engine: QuizEngine):
                     continue
 
                 targets = [items[int(part)-1] for part in cmd.split(',') if part.strip().isdigit() and 0 <= int(part)-1 < len(items)] if cmd.lower() != 'all' else [m for m in items[page*10 : (page+1)*10] if tracks[m].get('type') != 'native']
-                
+
                 for mid in set(targets):
                     v = tracks[mid]
                     q = all_qs.get(v['q_id'])
@@ -274,7 +276,7 @@ async def admin_panel(app, engine: QuizEngine):
                                             await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=UIFactory.build_closed_static_view(q, ref, compact=True), parse_mode="HTML", reply_markup=None)
                                             engine.db_update_track_status(mid, "closed", followup_mid=None)
                                 else:
-                                    await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(mid), text=UIFactory.build_closed_static_view(q, ref, compact=False), parse_mode="HTML", reply_markup=None)
+                                    await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=UIFactory.build_closed_static_view(q, ref, compact=False), reply_markup=None)
                                     engine.db_update_track_status(mid, "closed", followup_mid=None)
                             engine.db_update_track_status(mid, "closed")
                         else:
@@ -288,7 +290,7 @@ async def admin_panel(app, engine: QuizEngine):
                                         media = InputMediaPhoto(media=resp.content, caption=cap, parse_mode="HTML")
                                         await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
                             else:
-                                await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(mid), text=cap, reply_markup=kb, parse_mode="HTML")
+                                await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=cap, reply_markup=kb)
                             engine.db_update_track_status(mid, "active")
                     except Exception as e:
                         print(f"Error processing REF:{ref} | {e}")

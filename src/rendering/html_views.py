@@ -1,3 +1,4 @@
+# src/rendering/html_views.py
 import html
 import re
 from src.config import CONFIG
@@ -55,19 +56,23 @@ def indent_text(text: str, spaces: int = 6) -> str:
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
     """Generates the final plain-text static fallback view for closed quizzes."""
     correct_letter = chr(65 + q['correct_option'])
-    
+
     # 1. Threaded Continuation Layout
     if continuation:
         exp = q.get("poll_explanation", {})
         why = exp.get('why', 'N/A')
         rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
-        
-        explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n"
-                            f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-                            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(why))}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n{indent_text(beautify_markdown_math(exp['analogy']))}\n\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n{indent_text(beautify_markdown_math(exp['memory_tip']))}\n"
-        
+
+        explanation_part = (
+            f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<blockquote expandable>"
+            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+        )
+        if exp.get('analogy'): explanation_part += f"\n\n<b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}"
+        if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
+        explanation_part += "</blockquote>\n"
+
         analysis_list = []
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
@@ -76,13 +81,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             if i < len(options_analysis) and options_analysis[i].get('example'):
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
             analysis_list.append(analysis_line)
-        
+
         analysis_str = "\n".join(analysis_list)
         analysis_block = "\n🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str
-        
+
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}{analysis_block}"
         spoiler_content = replace_code_with_italic(spoiler_content)
-        
+
         connection_header = (
             f"📖 <b>DETAILED SOLUTION (CONTINUATION)</b> | REF: <code>{display_id}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -108,19 +113,26 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         spoiler_content = (
             f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
             f"📝 <b>SOLUTION SUMMARY:</b>\n"
-            f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(truncated_why))}\n"
+            f"<blockquote expandable>"
+            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b>\n{beautify_markdown_math(truncated_why)}"
+            f"</blockquote>\n"
         )
         footer_note = (
             "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "📖 <i>The complete step-by-step derivation has been posted in the message below.</i>"
         )
     else:
-        explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n"
-                            f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-                            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(why))}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n{indent_text(beautify_markdown_math(exp['analogy']))}\n\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n{indent_text(beautify_markdown_math(exp['memory_tip']))}\n"
+        explanation_part = (
+            f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<blockquote expandable>"
+            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+        )
+        if exp.get('analogy'): explanation_part += f"\n\n<b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}"
+        if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
+        explanation_part += "</blockquote>\n"
+
         analysis_list = []
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
@@ -129,7 +141,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             if i < len(options_analysis) and options_analysis[i].get('example'):
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(options_analysis[i]['example'])}</i>)"
             analysis_list.append(analysis_line)
-        
+
         analysis_str = "\n".join(analysis_list)
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}🔍 <b>OPTION BREAKDOWN:</b>\n{analysis_str}"
         footer_note = ""
@@ -139,7 +151,11 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     if compact and len(full_text) > 1022:
         final_why = smart_truncate_html(truncated_why, max(50, len(truncated_why) - (len(full_text) - 1010)))
-        spoiler_content = replace_code_with_italic(f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n📝 <b>SOLUTION SUMMARY:</b>\n{indent_text(beautify_markdown_math(final_why))}")
+        spoiler_content = replace_code_with_italic(
+            f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
+            f"📝 <b>SOLUTION SUMMARY:</b>\n"
+            f"<blockquote expandable>{beautify_markdown_math(final_why)}</blockquote>"
+        )
         full_text = f"{header}{body}{opts_block}━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer_note}"
     return full_text
 
@@ -156,12 +172,15 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         exp = q.get("poll_explanation", {})
         why = exp.get('why', 'N/A')
         rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
-        explanation_part = (f"📝 <b>DETAILED SOLUTION:</b>\n"
-                            f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-                            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(why))}\n")
-        if exp.get('analogy'): explanation_part += f"   ▪️ <b>Analogy:</b>\n{indent_text(beautify_markdown_math(exp['analogy']))}\n\n"
-        if exp.get('memory_tip'): explanation_part += f"   ▪️ <b>Memory Tip:</b>\n{indent_text(beautify_markdown_math(exp['memory_tip']))}\n"
-        explanation_part += "\n"
+        explanation_part = (
+            f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<blockquote expandable>"
+            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+        )
+        if exp.get('analogy'): explanation_part += f"\n\n<b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}"
+        if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
+        explanation_part += "</blockquote>\n"
 
         analysis_list = []
         options_analysis = q.get('options_analysis', [])
@@ -180,7 +199,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
-        
+
         analysis_str = "\n".join(analysis_list)
         analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str + "\n"
 
@@ -213,8 +232,10 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         truncated_why = smart_truncate_html(why, 300)
         explanation_block = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
-            f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(truncated_why))}\n"
+            f"<blockquote expandable>"
+            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b>\n{beautify_markdown_math(truncated_why)}"
+            f"</blockquote>\n"
         )
         analysis_block = ""
         footer_note = (
@@ -224,11 +245,13 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     else:
         explanation_block = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
-            f"   ▪️ <b>Principle:</b>\n{indent_text(beautify_markdown_math(rule_text))}\n\n"
-            f"   ▪️ <b>Explanation:</b>\n{indent_text(beautify_markdown_math(why))}\n"
+            f"<blockquote expandable>"
+            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
         )
-        if exp.get('analogy'): explanation_block += f"   ▪️ <b>Analogy:</b>\n{indent_text(beautify_markdown_math(exp['analogy']))}\n\n"
-        if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b>\n{indent_text(beautify_markdown_math(exp['memory_tip']))}\n"
+        if exp.get('analogy'): explanation_block += f"   ▪️ <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n"
+        explanation_block += "</blockquote>\n"
         explanation_block += "\n"
         analysis_list = []
         options_analysis = q.get('options_analysis', [])
@@ -247,7 +270,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
             analysis_list.append(analysis_line)
-        
+
         analysis_str = "\n".join(analysis_list)
         analysis_block = "🔍 <b>OPTION BREAKDOWN:</b>\n" + analysis_str + "\n"
         footer_note = ""
@@ -269,7 +292,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 
         mastery = get_grade_mastery_title(perf_card['total_marks'])
         next_rank_info = get_next_rank_info(perf_card['total_marks'])
-        
+
         score_segment = (
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 <b>STUDY PERFORMANCE CARD:</b>\n"
@@ -287,14 +310,14 @@ def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
     is_o_complex = any(is_complex(o) for o in q['options'])
-    
+
     bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
     buttons = []
     for i, opt in enumerate(q['options']):
         label = letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}"
         url = f"https://t.me/{bot_user}?start=ans_{display_id}_{i}"
         buttons.append([InlineKeyboardButton(label, url=url)])
-        
+
     return InlineKeyboardMarkup(buttons)
 
 def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
@@ -302,7 +325,7 @@ def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     from src.rendering import UIFactory
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
     is_o_complex = any(is_complex(o) for o in q['options'])
-    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|display_id|{i}")] for i, opt in enumerate(q['options'])]
+    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
     return InlineKeyboardMarkup(buttons)
 
 def generate_poll_hint(q):
