@@ -169,7 +169,7 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
 \\usepackage[active, tightpage]{preview}
 \\setlength{\\PreviewBorder}{25pt}
-\\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
+\\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\small}, label style={font=\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
 \\relpenalty=10000

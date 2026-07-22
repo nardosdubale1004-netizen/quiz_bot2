@@ -119,13 +119,13 @@ def beautify_markdown_math(text):
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
-            # Native Math Block
+            # Displays block math in centered LaTeX formula block style
             parts_block[i] = f"<tg-math-block>{parts_block[i].strip()}</tg-math-block>"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
-                    # Native Inline Math
+                    # Inline mathematical expression tag
                     parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
                 else:
                     parts_inline[j] = html.escape(parts_inline[j])
