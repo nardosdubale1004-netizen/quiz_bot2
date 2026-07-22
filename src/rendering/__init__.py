@@ -60,7 +60,7 @@ class UIFactory:
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
         day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
-        header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+        header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
