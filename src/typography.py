@@ -1,3 +1,4 @@
+# src/typography.py
 import re
 import html
 
@@ -55,7 +56,6 @@ def convert_subscripts(text):
 def clean_latex_to_unicode(text):
     if not text:
         return ""
-    # Convert standard LaTeX breaks into raw newline characters
     text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
@@ -90,66 +90,58 @@ def lite_math(text):
 def beautify_markdown_math(text):
     if not text:
         return ""
-        
+
     text = str(text)
-    # Aggressively translate all variations of literal escaped \n strings to real newlines
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
-    
-    # Sanitize and strip any leaked LaTeX formatting structures (preventing text mangling)
+
+    # Sanitize and strip leaked LaTeX formatting structures
     text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
     text = re.sub(r'\\hspace\{[^}]*\}', ' ', text)
     text = text.replace(r"\par", "\n")
     text = text.replace(r"\noindent", "")
     text = text.replace(r"\leavevmode", "")
-    text = text.replace("oindent", "")  # Prunes previously mangled \noindent leftovers
+    text = text.replace("oindent", "")
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
-    
-    # Convert step labels into beautiful emoji markers on their own lines AFTER escaping is complete
+
+    # Convert step labels into beautiful emoji markers on their own lines
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
         emoji = emojis.get(step_num, "▪️")
         return f"\n{emoji} <b>Step {step_num}:</b> "
-        
+
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
-    
-    parts = result.split('$')
-    for i in range(len(parts)):
+
+    # Split text to parse Display Math ($$ ... $$) and Inline Math ($ ... $) into rich blocks
+    parts_block = result.split('$$')
+    for i in range(len(parts_block)):
         if i % 2 == 1:
-            # Mathematical block inside $ ... $ - escape inner segments, then wrap in raw <code> tags
-            seg = clean_latex_to_unicode(parts[i])
-            parts[i] = f"<code>{html.escape(seg)}</code>"
+            # Displays block math in centered LaTeX formula block style
+            parts_block[i] = f"<tg-math-block>{parts_block[i].strip()}</tg-math-block>"
         else:
-            # Plain text part - split by newline to analyze line-by-line
-            lines = parts[i].split('\n')
-            for j in range(len(lines)):
-                line_clean = lines[j].strip()
-                
-                # Auto-detect unbracketed equations, escape content first, then wrap in raw <code> tags
-                operators = ["=", "→", "⇒", "∫", "√", "±", "≡", "/"]
-                if len(line_clean) > 3 and any(op in line_clean for op in operators) and not line_clean.startswith("<"):
-                    escaped_eq = html.escape(clean_latex_to_unicode(line_clean))
-                    lines[j] = f"<code>{escaped_eq}</code>"
+            parts_inline = parts_block[i].split('$')
+            for j in range(len(parts_inline)):
+                if j % 2 == 1:
+                    # Inline mathematical expression tag
+                    parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
                 else:
-                    lines[j] = html.escape(lines[j])
-            parts[i] = "\n".join(lines)
-            
-    # Assemble the segments cleanly
-    result = "".join(parts)
-    
-    # Ensure strict, unified single-space boundaries around math code block tags (resolves characters merging)
-    result = re.sub(r'(\w)<code>', r'\1 <code>', result)
-    result = re.sub(r'</code>(\w)', r'</code> \1', result)
+                    parts_inline[j] = html.escape(parts_inline[j])
+            parts_block[i] = "".join(parts_inline)
+
+    result = "".join(parts_block)
+
+    # Ensure strict, unified single-space boundaries around math tags
+    result = re.sub(r'(\w)<tg-math>', r'\1 <tg-math>', result)
+    result = re.sub(r'</tg-math>(\w)', r'</tg-math> \1', result)
     result = re.sub(r'\n{3,}', '\n\n', result)
-    
-    # Align subsequent lines with 6 spaces to match the parent block indentation of html_views
+
+    # Align subsequent lines with 3 spaces to preserve nested indentation
     indented_lines = []
     for line in result.split('\n'):
         if line.strip():
-            # If already indented, keep it, otherwise align under the explanation block
-            if line.startswith("   ") or line.startswith("  "):
+            if line.startswith("   ") or line.startswith("  ") or line.startswith("<blockquote") or line.startswith("</blockquote") or line.startswith("<tg-math-block") or line.startswith("</tg-math-block"):
                 indented_lines.append(line)
             else:
                 indented_lines.append(f"   {line}")

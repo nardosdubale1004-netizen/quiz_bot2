@@ -1,3 +1,4 @@
+# src/rendering/latex_templates.py
 import re
 from datetime import datetime
 from src.typography import UNICODE_TO_LATEX
@@ -10,18 +11,16 @@ def is_complex(text):
 
 def has_real_diagram(q) -> bool:
     """Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram or explicitly forces image generation."""
-    # 1. Primary Strategy: Check if the question explicitly forces image compiling
     if q.get("force_image") or q.get("force_latex", False):
         return True
 
     tikz = q.get("latex")
-    if not tikz:  # Corrected typo from "text" to "tikz"
+    if not tikz:
         return False
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
         return False
 
-    # Must contain actual structural drawing instructions to be classified as a valid diagram
     drawing_triggers = [r"\draw", r"\fill", r"\node", r"\addplot", r"\path", r"\grid", r"\axis"]
     return any(trigger in tikz for trigger in drawing_triggers)
 
@@ -101,7 +100,7 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
     )
     latex_blocks.append(footer_latex)
     body_content = "\n\\par\\vspace{1.5em}\n".join(latex_blocks)
-    
+
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     watermark_tikz = (
         f"\\begin{{tikzpicture}}[overlay]\n"
@@ -152,7 +151,7 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
     exp_figure_block = build_figure_block(q, add_strut=True)
     diagram_block = f"\\par\\noindent\\centering\\leavevmode\\par\n{exp_figure_block}\n\\par\\vspace{{2.0em}}\n" if exp_figure_block else ""
     question_escaped = escape_latex(q.get('question', ''))
-    
+
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     watermark_tikz = (
         f"\\begin{{tikzpicture}}[overlay]\n"
@@ -271,7 +270,7 @@ def sanitize_tag_to_hashtag(tag):
 
 def create_explanation_assets(q, user_idx, display_id):
     from html import escape
-    from src.typography import lite_math
+    from src.typography import beautify_markdown_math
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
 
@@ -279,19 +278,14 @@ def create_explanation_assets(q, user_idx, display_id):
     user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
-    # Evaluates image assets using the robust model (TikZ diagrams or forced images)
     has_tikz = has_real_diagram(q)
 
-    # Widescreen Solution Graphic is compiled if the question originally had an active diagram or forced image
     latex_code = None
     if has_tikz:
-        # Passes watermark string directly without any circular imports of UIFactory
         latex_code = build_widescreen_solution_latex(q, display_id, "@grade12EntranceExam", get_day_from_tags(q.get('tags', [])))
 
     text_parts = [
-        f"📚 <b>SOLUTION SHEET</b> | REF: <code>{display_id}</code>",
-        f"🔖 <b>Topic:</b> {escape(q.get('topic', 'General'))}",
-        f"━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"📚 <b>SOLUTION SHEET</b> | REF: <code>{display_id}</code> 🔖 <b>Topic:</b> {escape(q.get('topic', 'General'))}\n━━━━━━━━━━━━━━━━━━━━━━━━",
         f"🎯 <b>Your Selection:</b> {user_letter} ({user_status})",
         f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>",
         f"\n🔍 <b>OPTION-BY-OPTION ANALYSIS:</b>"
@@ -309,12 +303,12 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        label_segment = f"  {color_lbl} <b>{let}) {escape(lite_math(o_text))}</b>"
+        label_segment = f"  {color_lbl} <b>{let}) {beautify_markdown_math(o_text)}</b>"
         details = []
         if why_text:
-            details.append(escape(lite_math(why_text)))
+            details.append(beautify_markdown_math(why_text))
         if example_text:
-            details.append(f"<i>(e.g., {escape(lite_math(example_text))})</i>")
+            details.append(f"<i>(e.g., {beautify_markdown_math(example_text)})</i>")
 
         desc_segment = " — " + " ".join(details) if details else ""
         text_parts.append(f"{label_segment}{desc_segment}")

@@ -1,3 +1,4 @@
+# src/rendering/__init__.py
 from src.rendering.kroki_client import fetch_kroki_image, get_latex_url
 from src.rendering.latex_templates import (
     escape_latex,
@@ -43,7 +44,7 @@ class UIFactory:
     def create_question_assets(cls, q, display_id):
         # Image layouts are ONLY compiled if the question contains an active diagram in its latex field
         has_tikz = cls.has_real_diagram(q)
-        
+
         if has_tikz:
             question_block = cls.build_question_text_block(q, display_id)
             figure_block = cls.build_figure_block(q, add_strut=True)
@@ -52,17 +53,13 @@ class UIFactory:
         else:
             img_url = None
 
-        from src.typography import lite_math
-        import html
-        caption_q = f"<b>{html.escape(lite_math(q['question']))}</b>"
+        from src.typography import beautify_markdown_math
+        caption_q = f"<b>{beautify_markdown_math(q['question'])}</b>"
 
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
         day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
-        header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code>\n"
-                  f"🔖 <b>Topic:</b> {q.get('topic','General')}{day_part}\n"
-                  f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
-                  f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+        header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
