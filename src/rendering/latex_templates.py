@@ -303,7 +303,8 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        label_segment = f"  {color_lbl} <b>{let}) {beautify_markdown_math(o_text)}</b>"
+        # UPGRADED: Isolating inline tags from mathematical blocks to avoid rendering conflicts
+        label_segment = f"  {color_lbl} <b>{let})</b> {beautify_markdown_math(o_text)}"
         details = []
         if why_text:
             details.append(beautify_markdown_math(why_text))

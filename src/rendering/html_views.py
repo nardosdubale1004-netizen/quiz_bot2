@@ -94,10 +94,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         )
         return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
 
-    # 2. Base layouts (Single-paragraph metadata headers)
+    # 2. Base layouts (Single-paragraph metadata headers separated with dual-newlines)
     day_str = get_day_from_tags(q.get('tags', []))
     day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
-    header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
     body = f"{beautify_markdown_math(q['question'])}\n\n"
     opts_list = [f"   <b>{chr(65+i)})</b> {beautify_markdown_math(o)}" for i, o in enumerate(q['options'])]
     opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list) + "\n\n"
@@ -209,10 +209,10 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         )
         return f"{connection_header}{explanation_part}{analysis_block}"
 
-    # 2. Base layouts (Single-paragraph metadata headers)
+    # 2. Base layouts (Single-paragraph metadata headers separated with dual-newlines)
     day_str = get_day_from_tags(q.get('tags', []))
     day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
-    header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    header = (f"📚 <b>{q.get('subject','').upper()} SHEET</b> | REF: <code>{display_id}</code> | 🔖 <b>Topic:</b> {q.get('topic','General')}{day_part} | 📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
     body = f"{beautify_markdown_math(q['question'])}\n\n"
     opts_list = [f"   <b>{chr(65+i)})</b> {beautify_markdown_math(o)}" for i, o in enumerate(q['options'])]
     opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list) + "\n\n"

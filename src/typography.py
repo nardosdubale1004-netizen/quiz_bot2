@@ -114,18 +114,18 @@ def beautify_markdown_math(text):
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # Convert Markdown LaTeX blocks $$ ... $$ to native Telegram <tg-math-block> tags
-    # and inline LaTeX $ ... $ to native Telegram <tg-math> tags
+    # Convert Markdown display equations $$ ... $$ to native <tg-math-block>
+    # and inline equations $ ... $ to native <tg-math>
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
-            # Displays block math in centered LaTeX formula block style
+            # Native Math Block
             parts_block[i] = f"<tg-math-block>{parts_block[i].strip()}</tg-math-block>"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
-                    # Inline mathematical expression tag
+                    # Native Inline Math
                     parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
                 else:
                     parts_inline[j] = html.escape(parts_inline[j])
@@ -133,19 +133,6 @@ def beautify_markdown_math(text):
 
     result = "".join(parts_block)
 
-    # Ensure strict, unified single-space boundaries around math tags
-    result = re.sub(r'(\w)<tg-math>', r'\1 <tg-math>', result)
-    result = re.sub(r'</tg-math>(\w)', r'</tg-math> \1', result)
+    # Clean up multiple duplicate line breaks
     result = re.sub(r'\n{3,}', '\n\n', result)
-
-    # Align subsequent lines with 3 spaces to preserve nested indentation
-    indented_lines = []
-    for line in result.split('\n'):
-        if line.strip():
-            if line.startswith("   ") or line.startswith("  ") or line.startswith("<blockquote") or line.startswith("</blockquote") or line.startswith("<tg-math-block") or line.startswith("</tg-math-block"):
-                indented_lines.append(line)
-            else:
-                indented_lines.append(f"   {line}")
-        else:
-            indented_lines.append("")
-    return "\n".join(indented_lines).strip()
+    return result.strip()
