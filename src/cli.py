@@ -3,6 +3,7 @@ import math
 import os
 import json
 import asyncio
+import traceback
 from pathlib import Path
 from src.config import CONFIG, Style
 from src.database import QuizEngine
@@ -186,9 +187,10 @@ async def admin_panel(app, engine: QuizEngine):
                         msg_type = "photo" if img_url else "text"
 
                     # Save state dynamically to PostgreSQL Neon table
-                    engine.db_save_track(m.message_id, q['id'], "active", last_seq, "native" if choice == "1" else "premium", msg_type)
+                    engine.db_save_track(m.message_id, q['id'], "active", last_seq, "premium", msg_type)
                     print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
                 except Exception as e:
+                    traceback.print_exc()
                     print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
 
             # Save fallback sequence
@@ -305,5 +307,6 @@ async def admin_panel(app, engine: QuizEngine):
                                 await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=cap, reply_markup=kb)
                             engine.db_update_track_status(mid, "active")
                     except Exception as e:
+                        traceback.print_exc()
                         print(f"Error processing REF:{ref} | {e}")
                 await asyncio.sleep(0.5)
