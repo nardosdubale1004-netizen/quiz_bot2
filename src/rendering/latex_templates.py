@@ -66,12 +66,27 @@ def escape_latex(text: str) -> str:
             parts[i] = parts[i].replace('\\%', '%').replace('%', '\\%')
     return '$'.join(parts)
 
+def scale_tikz_block(tikz_code: str, scale_factor: float = 0.75) -> str:
+    """
+    Safely wraps a TikZ environment block in a LaTeX \scalebox to scale the 
+    drawing dynamically without modifying the environment optional arguments.
+    """
+    if not tikz_code:
+        return ""
+    return f"\\scalebox{{{scale_factor}}}{{\n{tikz_code.strip()}\n}}"
+
 def build_figure_block(q, add_strut=False):
     """Parses, isolates, and sanitizes the TikZ diagram code to eliminate database-embedded struts."""
     if not q.get("latex"):
         return None
     tikz = q["latex"].strip()
     tikz = re.sub(r'\n\s*\n', '\n', tikz)
+    
+    # Strip outer horizontal boxes (like \makebox, \mbox, \hbox) that conflict with the preview package.
+    tikz = re.sub(r'\\makebox\s*(?:\[[^\]]*\])*\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
+    tikz = re.sub(r'\\mbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
+    tikz = re.sub(r'\\hbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
+
     pattern = re.compile(r"(?:\\begin\{center\}\s*)?(?:\\vspace\{[^{}]+\}\s*)?(\\begin\{(?:tikzpicture|axis)\}.*?\\end\{(?:tikzpicture|axis)\})(?:\s*\\vspace\{[^{}]+\})?(?:\s*\\end{{center}})?", re.DOTALL)
     match = pattern.search(tikz)
     if match:
@@ -107,19 +122,19 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
 
+    # Format the footer strictly inside a centered tabular row to force inline presentation
     if display_id:
          print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
-         footer_text = f"Q.REF: {display_id} \\quad $\\bullet$ \\quad \\telegramicon \\quad {escaped_watermark}"
+         footer_text = f"\\begin{{tabular}}{{@{{}}c@{{}}}} Q.REF: {display_id} \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip {escaped_watermark} \\end{{tabular}}"
     else:
-         footer_text = f"\\telegramicon \\quad {escaped_watermark}"
+         footer_text = f"\\begin{{tabular}}{{@{{}}c@{{}}}} \\telegramicon \\enskip {escaped_watermark} \\end{{tabular}}"
 
     footer_latex = (
         f"\\begin{{minipage}}{{{content_width_cm}cm}}\n"
         f"\\vspace{{0.5em}}\n"
         f"\\noindent\\hrulefill \\par\n"
         f"\\vspace{{0.8em}}\n"
-        f"{{\\centering\\color{{gray}} \\sffamily\\bfseries\\scriptsize {footer_text}\\par}}\n"
-        f"\\par\\prevdepth=0pt\n"
+        f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
@@ -135,7 +150,6 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
-\\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
@@ -146,7 +160,7 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\binoppenalty=10000
 \\relpenalty=10000
 \\sloppy
-\\newcommand{\\telegramicon}{\\mbox{{\\let\\newpage\\relax\\begin{tikzpicture}[x=0.5ex,y=0.5ex,baseline=-0.1ex]\\fill[blue!70!cyan](0,0)circle(1.0);\\fill[white](-0.5,-0.1)--(0.6,0.5)--(0.1,-0.5)--(-0.1,-0.15)--cycle;\\fill[black!15](-0.1,-0.15)--(0.1,-0.5)--(0.0,-0.1)--cycle;\\end{tikzpicture}}}}
+\\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
 \\begin{preview}
 \\begin{minipage}{16.5cm}
@@ -156,22 +170,17 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 __WATERMARK_TIKZ__
 __BODY_CONTENT__
 \\par\\prevdepth=0pt
-\\end{minipage}\\par\\prevdepth=0pt
+\\end{minipage}
 \\end{preview}
 \\end{document}"""
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
-    """
-    Assembles a high-contrast layout bound by a robust 11.0cm minipage with a
-    metadata footer running inline centered on a single line.
-    """
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
-\\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
@@ -182,18 +191,21 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\binoppenalty=10000
 \\relpenalty=10000
 \\sloppy
-\\newcommand{\\telegramicon}{\\mbox{{\\let\\newpage\\relax\\begin{tikzpicture}[x=0.5ex,y=0.5ex,baseline=-0.1ex]\\fill[blue!70!cyan](0,0)circle(1.0);\\fill[white](-0.5,-0.1)--(0.6,0.5)--(0.1,-0.5)--(-0.1,-0.15)--cycle;\\fill[black!15](-0.1,-0.15)--(0.1,-0.5)--(0.0,-0.1)--cycle;\\end{tikzpicture}}}}
+\\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
 \\begin{preview}
 \\pagecolor{white}
 \\centering
-\\begin{minipage}{11.0cm}
+\\begin{minipage}{13.0cm}
   \\centering
   __FIGURE_BLOCK__\\par
-  \\vspace{1.2em}
-  {\\centering\\color{black!70}\\sffamily\\bfseries\\scriptsize Q.REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad \\telegramicon \\quad __WATERMARK__\\par}%
-  \\par\\prevdepth=0pt
-\\end{minipage}\\par\\prevdepth=0pt
+  \\vspace{1.4em}
+  {\\color{black!70}\\bfseries\\scriptsize
+    \\begin{tabular}{@{}c@{}}
+      Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
+    \\end{tabular}
+  }
+\\end{minipage}
 \\end{preview}
 \\end{document}"""
     return (template.replace("__FIGURE_BLOCK__", figure_block)
@@ -227,7 +239,6 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
-\\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
@@ -238,7 +249,7 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\binoppenalty=10000
 \\relpenalty=10000
 \\openup 1em
-\\newcommand{\\telegramicon}{\\mbox{{\\let\\newpage\\relax\\begin{tikzpicture}[x=0.5ex,y=0.5ex,baseline=-0.1ex]\\fill[blue!70!cyan](0,0)circle(1.0);\\fill[white](-0.5,-0.1)--(0.6,0.5)--(0.1,-0.5)--(-0.1,-0.15)--cycle;\\fill[black!15](-0.1,-0.15)--(0.1,-0.5)--(0.0,-0.1)--cycle;\\end{tikzpicture}}}}
+\\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
 \\begin{preview}
 \\begin{minipage}{16.5cm}
@@ -283,8 +294,11 @@ __DIAGRAM_BLOCK__
 \\begin{minipage}{15.0cm}
     \\noindent\\hrulefill \\par
     \\vspace{0.8em}
-    {\\centering\\color{gray}\\sffamily\\bfseries\\scriptsize Q.REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad \\telegramicon \\quad __WATERMARK__\\par}%
-    \\par\\prevdepth=0pt
+    \\centering {\\color{gray}\\bfseries\\scriptsize
+        \\begin{tabular}{@{}c@{}}
+            Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
+        \\end{tabular}
+    }
 \\end{minipage}
 \\par\\prevdepth=0pt
 \\end{minipage}

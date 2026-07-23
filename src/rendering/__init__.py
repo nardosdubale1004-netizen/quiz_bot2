@@ -3,6 +3,7 @@ from src.rendering.kroki_client import fetch_kroki_image, get_latex_url
 from src.rendering.latex_templates import (
     escape_latex,
     build_figure_block,
+    scale_tikz_block,
     assemble_layout,
     assemble_diagram_only_layout,
     build_widescreen_solution_latex,
@@ -26,6 +27,7 @@ class UIFactory:
     WATERMARK = "@grade12EntranceExam"
     escape_latex = staticmethod(escape_latex)
     build_figure_block = staticmethod(build_figure_block)
+    scale_tikz_block = staticmethod(scale_tikz_block)
     assemble_layout = staticmethod(assemble_layout)
     assemble_diagram_only_layout = staticmethod(assemble_diagram_only_layout)
     build_widescreen_solution_latex = staticmethod(build_widescreen_solution_latex)
@@ -66,7 +68,7 @@ class UIFactory:
 
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
-        
+
         # Minimalist modern study header
         subject = q.get('subject','').upper()
         topic = q.get('topic','General')
