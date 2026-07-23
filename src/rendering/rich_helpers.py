@@ -40,18 +40,22 @@ def convert_to_legacy_html(rich_html: str) -> str:
     text = re.sub(r'</?u[lo](?:\s+[^>]*)?>', "", text)
     
     # 6. Convert tables to clean plain-text key-value blocks
+    # We can match rows and cells, separating columns by |
     def table_sub(match):
         table_content = match.group(1)
+        # Parse rows
         rows = re.findall(r'<tr>(.*?)</tr>', table_content, re.DOTALL)
         formatted_rows = []
         for row in rows:
             cells = re.findall(r'<td>(.*?)</td>', row, re.DOTALL)
+            # Remove HTML tags from cell headers
             clean_cells = [re.sub(r'<[^>]*>', '', c).strip() for c in cells]
             if clean_cells:
                 if len(clean_cells) == 2:
                     formatted_rows.append(f"  ├─ {clean_cells[0]}: <b>{clean_cells[1]}</b>")
                 else:
                     formatted_rows.append("  " + " | ".join(clean_cells))
+        # Style the last row nicely
         if formatted_rows:
             formatted_rows[-1] = formatted_rows[-1].replace("├─", "└─")
         return "\n".join(formatted_rows)

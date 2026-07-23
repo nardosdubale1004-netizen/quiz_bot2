@@ -72,7 +72,7 @@ class UIFactory:
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
         
-        # Return 2-tuple (img_url, final_caption)
+        # Return standard 2-tuple (img_url, final_caption)
         return img_url, final_caption
 
     @classmethod
