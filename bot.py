@@ -21,7 +21,7 @@ from src.database import (
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info
-from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
+from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
 import httpx
@@ -135,22 +135,28 @@ async def check_and_publish_scheduled(app):
             type_str = "native"
         else:
             # Premium Photo UI
-            img_url, caption, _ = UIFactory.create_question_assets(q, last_seq)
+            has_tikz, caption = UIFactory.create_question_assets(q, last_seq)
             kb = UIFactory.build_keyboard(q, last_seq)
-            if img_url:
+            
+            media_bytes = None
+            if has_tikz:
+                # Compile standard LaTeX document layout
+                question_block = UIFactory.build_question_text_block(q, last_seq)
+                figure_block = UIFactory.build_figure_block(q, add_strut=True)
+                options_block = UIFactory.build_options_block(q)
+                compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
+                img_url = UIFactory.get_latex_url(compiled_latex)
                 async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url)
+                    resp = await fetch_kroki_image(client, img_url, compiled_latex)
                     if resp and resp.status_code == 200:
-                        print(f" {Style.GREEN}[SCHEDULER] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}", flush=True)
-                        m = await app.bot.send_photo(chat_id=channel, photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
-                        msg_type = "photo"
-                        type_str = "premium"
+                        media_bytes = resp.content
                     else:
                         raise Exception("Kroki failed to compile scheduled asset.")
-            else:
-                m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb)
-                msg_type = "text"
-                type_str = "premium"
+
+            # Publish securely
+            m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
+            msg_type = "photo" if has_tikz else "text"
+            type_str = "premium"
 
         # Register in sent_tracks and mark as sent in questions table
         engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)
@@ -231,7 +237,8 @@ async def start_command(update: Update, context):
                         async with httpx.AsyncClient() as client:
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
-                                m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
+                                legacy_caption = convert_to_legacy_html(explanation_html_compact)
+                                m = await update.message.reply_photo(photo=resp.content, caption=legacy_caption, parse_mode="HTML")
                                 full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
                                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
                                 db_update_private_message_id(user_id, mid_key, f_m.message_id)
@@ -259,7 +266,8 @@ async def start_command(update: Update, context):
                     async with httpx.AsyncClient() as client:
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
-                            m = await update.message.reply_photo(photo=resp.content, caption=explanation_html_compact, parse_mode="HTML")
+                            legacy_caption = convert_to_legacy_html(explanation_html_compact)
+                            m = await update.message.reply_photo(photo=resp.content, caption=legacy_caption, parse_mode="HTML")
 
                             # Deliver the detailed, un-truncated derivation steps
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)

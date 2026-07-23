@@ -55,7 +55,11 @@ class UIFactory:
 
         from src.typography import beautify_markdown_math
         # UPGRADED: Standard HTML Heading 3 tag used natively for question canvas title
+        # Embed the image inline inside the text block for Rich HTML 10.2
         caption_q = f"<h3>📝 Question:</h3>\n{beautify_markdown_math(q['question'])}"
+        
+        if has_tikz:
+            caption_q += '\n\n<p><img src="attach://quiz_diagram"/></p>'
 
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
@@ -63,12 +67,12 @@ class UIFactory:
         header = (
             f"<h2>📚 {q.get('subject','').upper()} STUDY SHEET</h2>"
             f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {q.get('topic','General')}{day_part} | <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a></p>"
-            f"<hr/>\n"
+            f"\n\n<hr/>\n\n"
         )
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
-        return img_url, final_caption, None
+        return has_tikz, final_caption
 
     @classmethod
     def build_question_text_block(cls, q, display_id):
