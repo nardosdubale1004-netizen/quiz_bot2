@@ -153,7 +153,7 @@ __BODY_CONTENT__
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
-    """Assembles a high-contrast layout bound by varwidth to dynamically eliminate blank margins."""
+    """Assembles a high-contrast layout bound by varwidth with unbreakable mbox to prevent username truncation."""
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     
     template = """\\documentclass[12pt]{article}
@@ -163,7 +163,7 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{20pt}
+\\setlength{\\PreviewBorder}{25pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -175,7 +175,7 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\centering
 \\begin{varwidth}{16.0cm}
   \\centering
-  {\\color{black!75}\\sffamily\\bfseries\\small REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad __WATERMARK__}\\par
+  \\mbox{\\color{black!75}\\sffamily\\bfseries\\small REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad __WATERMARK__}\\par
   \\vspace{1.2em}
   __FIGURE_BLOCK__
 \\end{varwidth}

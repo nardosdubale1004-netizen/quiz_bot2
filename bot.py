@@ -206,7 +206,7 @@ async def start_command(update: Update, context):
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                                # Wrap resp.content in io.BytesIO to prevent client-side byte crashes
+                                # Fixed: Wrap bytes in io.BytesIO stream to prevent visual crashes
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                                 full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
                                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
@@ -233,7 +233,7 @@ async def start_command(update: Update, context):
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                            # Wrap bytes in io.BytesIO and do not call update.message.reply_photo since we cleared chat history
+                            # Fixed: Wrap bytes in io.BytesIO stream to prevent visual crashes
                             m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
 
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
