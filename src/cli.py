@@ -7,7 +7,7 @@ from pathlib import Path
 from src.config import CONFIG, Style
 from src.database import QuizEngine
 from src.rendering import UIFactory, fetch_kroki_image
-from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
+from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.typography import lite_math
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -170,19 +170,25 @@ async def admin_panel(app, engine: QuizEngine):
                         )
                         msg_type = "poll"
                     else:
-                        img_url, caption, _ = UIFactory.create_question_assets(q, last_seq)
+                        has_tikz, caption = UIFactory.create_question_assets(q, last_seq)
                         kb = UIFactory.build_keyboard(q, last_seq)
-                        if img_url:
+                        
+                        media_bytes = None
+                        if has_tikz:
+                            question_block = UIFactory.build_question_text_block(q, last_seq)
+                            figure_block = UIFactory.build_figure_block(q, add_strut=True)
+                            options_block = UIFactory.build_options_block(q)
+                            compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
+                            img_url = UIFactory.get_latex_url(compiled_latex)
                             async with httpx.AsyncClient() as client:
-                                resp = await fetch_kroki_image(client, img_url)
+                                resp = await fetch_kroki_image(client, img_url, compiled_latex)
                                 if resp and resp.status_code == 200:
-                                    m = await app.bot.send_photo(chat_id=engine.config['channel'], photo=resp.content, caption=caption, reply_markup=kb, parse_mode="HTML")
-                                    msg_type = "photo"
+                                    media_bytes = resp.content
                                 else:
                                     raise Exception("Kroki rendering failure.")
-                        else:
-                            m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb)
-                            msg_type = "text"
+                        
+                        m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb, media_bytes=media_bytes)
+                        msg_type = "photo" if has_tikz else "text"
 
                     # Save state dynamically to PostgreSQL Neon table
                     engine.db_save_track(m.message_id, q['id'], "active", last_seq, "native" if choice == "1" else "premium", msg_type)
@@ -262,18 +268,18 @@ async def admin_panel(app, engine: QuizEngine):
                                     sol_latex = UIFactory.build_widescreen_solution_latex(q, ref)
                                     sol_img_url = UIFactory.get_latex_url(sol_latex)
                                     async with httpx.AsyncClient() as client:
-                                        resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
+                                        resp = await fetch_kroki_image(client, img_url, sol_latex)
                                         if resp and resp.status_code == 200:
                                             # Passes the continuation parameter to generate a completely distinct, un-duplicated derivation sheet
                                             closed_view = UIFactory.build_closed_static_view(q, ref, compact=True)
-                                            media = InputMediaPhoto(media=resp.content, caption=closed_view, parse_mode="HTML")
+                                            media = InputMediaPhoto(media=resp.content, caption=convert_to_legacy_html(closed_view), parse_mode="HTML")
                                             await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=None)
                                             full_text = UIFactory.build_closed_static_view(q, ref, compact=False, continuation=True)
                                             if len(full_text) > len(media.caption):
                                                 follow_up = await app.bot.send_message(chat_id=engine.config['channel'], text=full_text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=int(mid))
                                                 engine.db_save_track(mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
                                         else:
-                                            await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=UIFactory.build_closed_static_view(q, ref, compact=True), parse_mode="HTML", reply_markup=None)
+                                            await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
                                             engine.db_update_track_status(mid, "closed", followup_mid=None)
                                 else:
                                     await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=UIFactory.build_closed_static_view(q, ref, compact=False), reply_markup=None)
@@ -281,13 +287,24 @@ async def admin_panel(app, engine: QuizEngine):
                             engine.db_update_track_status(mid, "closed")
                         else:
                             if v.get('type') == 'native': continue
-                            img_url, cap, _ = UIFactory.create_question_assets(q, ref)
+                            has_tikz, cap = UIFactory.create_question_assets(q, ref)
                             kb = UIFactory.build_keyboard(q, ref)
                             if v.get('msg_type') == "photo":
                                 async with httpx.AsyncClient() as client:
-                                    resp = await fetch_kroki_image(client, img_url)
-                                    if resp and resp.status_code == 200:
-                                        media = InputMediaPhoto(media=resp.content, caption=cap, parse_mode="HTML")
+                                    # If has diagram, compile the vector TikZ image cleanly
+                                    media_bytes = None
+                                    if has_tikz:
+                                        question_block = UIFactory.build_question_text_block(q, ref)
+                                        figure_block = UIFactory.build_figure_block(q, add_strut=True)
+                                        options_block = UIFactory.build_options_block(q)
+                                        compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
+                                        img_url = UIFactory.get_latex_url(compiled_latex)
+                                        resp = await fetch_kroki_image(client, img_url, compiled_latex)
+                                        if resp and resp.status_code == 200:
+                                            media_bytes = resp.content
+                                    
+                                    if media_bytes:
+                                        media = InputMediaPhoto(media=media_bytes, caption=convert_to_legacy_html(cap), parse_mode="HTML")
                                         await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
                             else:
                                 await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=cap, reply_markup=kb)

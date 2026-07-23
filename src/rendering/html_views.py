@@ -328,8 +328,6 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             f"  <tr><td> PRACTICE SCORE</td><td><b>{perf_card['total_marks']} Marks</b></td></tr>"
             f"  <tr><td>🏆 MASTERY RANK</td><td><b>{mastery}</b></td></tr>"
             f"  <tr><td>🎯 ACCURACY</td><td><b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']} questions solved correctly)</td></tr>"
-            f"</table>\n"
-            f"<p><i>Target: {next_rank_info}</i></p>\n"
         )
 
     return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer_note}"
