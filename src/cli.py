@@ -273,7 +273,7 @@ async def admin_panel(app, engine: QuizEngine):
                                             await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=None)
                                             full_text = UIFactory.build_closed_static_view(q, ref, compact=False, continuation=True)
                                             if len(full_text) > len(media.caption):
-                                                follow_up = await app.bot.send_message(chat_id=engine.config['channel'], text=full_text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=int(mid))
+                                                follow_up = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=full_text, reply_to_message_id=int(mid))
                                                 engine.db_save_track(mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
                                         else:
                                             await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)

@@ -118,7 +118,6 @@ def beautify_markdown_math(text):
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
-    # Sanitize and strip leaked LaTeX formatting structures
     text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
     text = re.sub(r'\\hspace\{[^}]*\}', ' ', text)
     text = text.replace(r"\par", "\n")
@@ -128,7 +127,6 @@ def beautify_markdown_math(text):
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
 
-    # Step Highlight tags mapped to H4 elements
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
@@ -137,24 +135,22 @@ def beautify_markdown_math(text):
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # Convert display and inline mathematical formulas to native tags
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
             # Displays block math in centered LaTeX formula block style
-            parts_block[i] = f"<tg-math-block>{parts_block[i].strip()}</tg-math-block>"
+            parts_block[i] = f"<tg-math-block>{html.escape(parts_block[i].strip())}</tg-math-block>"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
                     # Inline mathematical expression tag
-                    parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
+                    parts_inline[j] = f"<tg-math>{html.escape(parts_inline[j].strip())}</tg-math>"
                 else:
                     parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)
 
     result = "".join(parts_block)
 
-    # Clean up double line breaks and return pure text layout
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
