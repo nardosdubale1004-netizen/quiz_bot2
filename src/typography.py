@@ -79,58 +79,30 @@ def convert_subscripts(text):
 def clean_latex_to_unicode(text):
     if not text:
         return ""
-    text = str(text)
-
-    # 1. Clean spacing and paragraph noise
     text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
-    text = text.replace(r"\noindent", "").replace(r"\leavevmode", "").replace("oindent", "")
-    text = text.replace(r"\allowbreak", "").replace(r"\displaystyle", "")
-
-    # 2. Degrees
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
 
-    # 3. Integrals
-    text = re.sub(r'\\int_\{([^}]+)\}\^\{([^}]+)\}', r'∫_{\1}^{\2} ', text)
-    text = re.sub(r'\\int_([a-zA-Z0-9+-])\^([a-zA-Z0-9+-])', r'∫_{\1}^{\2} ', text)
+    text = re.sub(r'\\int_\{([^}]+)\}\^\{([^}]+)\}', r'∫(limits \1 to \2) ', text)
+    text = re.sub(r'\\int_([a-zA-Z0-9+-])\^([a-zA-Z0-9+-])', r'∫(limits \1 to \2) ', text)
     text = text.replace(r"\int", "∫")
 
-    # 4. Fractions (\frac{a}{b})
-    for _ in range(3):
-        new_text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', lambda m: f"({m.group(1)})/({m.group(2)})" if (len(m.group(1)) > 1 or len(m.group(2)) > 1) and not m.group(1).isdigit() else f"{m.group(1)}/{m.group(2)}", text)
-        if new_text == text:
-            break
-        text = new_text
+    def frac_repl(match):
+        num, denom = match.group(1), match.group(2)
+        if len(num) == 1 and len(denom) == 1:
+            return f"{num}/{denom}"
+        return f"({num})/({denom})"
 
-    # 5. Square roots (\sqrt{a})
-    for _ in range(3):
-        new_text = re.sub(r'\\sqrt\[([^\]]+)\]\{([^{}]+)\}', r'\1√(\2)', text)
-        new_text = re.sub(r'\\sqrt\{([^{}]+)\}', lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 2 else f"√({m.group(1)})", new_text)
-        if new_text == text:
-            break
-        text = new_text
+    text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', frac_repl, text)
+    text = re.sub(r'\\sqrt\{([^{}]+)\}', r'√(\1)', text)
 
-    # 6. Vector / Accents
-    text = re.sub(r'\\vec\{([^{}]+)\}', r'\1⃗', text)
-    text = re.sub(r'\\bar\{([^{}]+)\}', r'\1̄', text)
-    text = re.sub(r'\\hat\{([^{}]+)\}', r'\1̂', text)
-    text = re.sub(r'\\overline\{([^{}]+)\}', r'\1̄', text)
-    text = re.sub(r'\\mathbf\{([^{}]+)\}', r'\1', text)
-    text = re.sub(r'\\mathrm\{([^{}]+)\}', r'\1', text)
-    text = re.sub(r'\\text\{([^{}]+)\}', r'\1', text)
-
-    # 7. Superscripts & Subscripts
     text = convert_superscripts(text)
     text = convert_subscripts(text)
 
-    # 8. Symbol replacements
     for latex_sym, unicode_sym in MATH_MAP.items():
         text = text.replace(latex_sym, unicode_sym)
 
-    # 9. Clean remaining unparsed backslashes
-    text = re.sub(r'\\([a-zA-Z]+)', r'\1', text)
     text = text.replace("\\", "")
-
     return re.sub(r'[ \t]+', ' ', text).strip()
 
 def lite_math(text):
@@ -138,73 +110,69 @@ def lite_math(text):
         return ""
     return clean_latex_to_unicode(text.replace("$", ""))
 
+def auto_wrap_math_expressions(text: str) -> str:
+    """Detects and isolates mathematical expressions or standalone variables in plain text."""
+    if not text:
+        return ""
+    # Tokenize to avoid wrapping inside existing math blocks ($...$, $$...$$) and HTML tags
+    tokens = re.split(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text)
+    for i in range(len(tokens)):
+        if tokens[i] and not (tokens[i].startswith('$') or tokens[i].startswith('<')):
+            # 1. Match equations: e.g. x^2 - 5x + 6 = 0, x - 2 = 0, x = 2
+            tokens[i] = re.sub(
+                r'\b((?:[a-zA-Z\d\(\)\±×\-][\s\+\-\*×/()²³^]*)+[=≠≤≥><⇒→]+(?:[\s\+\-\*×/()²³^]*[a-zA-Z\d\(\)\±×\-]+)+)\b',
+                r'$\1$',
+                tokens[i]
+            )
+            # 2. Match standalone exponents and terms: e.g. x^2, x², y^2, (x^2 - 6x)
+            tokens[i] = re.sub(
+                r'\b([a-zA-Z\d]+[²³^][a-zA-Z\d]*|(?:\([a-zA-Z\d\s\+\-\*×/²³^]+\)))\b',
+                r'$\1$',
+                tokens[i]
+            )
+    return "".join(tokens)
+
 def beautify_markdown_math(text):
     if not text:
         return ""
 
     text = str(text)
-    # Normalize line breaks
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
-    # Strip LaTeX spacing
     text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
     text = re.sub(r'\\hspace\{[^}]*\}', ' ', text)
-    text = text.replace(r"\par", "\n").replace(r"\noindent", "").replace(r"\leavevmode", "").replace("oindent", "")
+    text = text.replace(r"\par", "\n")
+    text = text.replace(r"\noindent", "")
+    text = text.replace(r"\leavevmode", "")
+    text = text.replace("oindent", "")
+    text = text.replace(r"\,", " ")
+    text = text.replace(r"\quad", "   ")
 
-    # Format Step headers nicely
+    # Pass plain text segments through the mathematical auto-wrapper
+    text = auto_wrap_math_expressions(text)
+
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
         emoji = emojis.get(step_num, "▪️")
         return f"\n\n<b>{emoji} Step {step_num}:</b> "
 
-    text = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
+    result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # Process explicit math blocks $$...$$ and inline $...$
-    parts_block = text.split('$$')
+    parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
-            cleaned = clean_latex_to_unicode(parts_block[i].strip())
-            parts_block[i] = f"<tg-math-block>{cleaned}</tg-math-block>"
+            # Block LaTeX equation block
+            parts_block[i] = f"<tg-math-block>{html.escape(parts_block[i].strip())}</tg-math-block>"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
-                    cleaned = clean_latex_to_unicode(parts_inline[j].strip())
-                    parts_inline[j] = f"<tg-math>{cleaned}</tg-math>"
+                    # Inline mathematical expression tag
+                    parts_inline[j] = f"<tg-math>{html.escape(parts_inline[j].strip())}</tg-math>"
                 else:
-                    lines = parts_inline[j].split('\n')
-                    formatted_lines = []
-                    for line in lines:
-                        line_str = line.strip()
-                        # Auto-detect standalone equation/math line
-                        is_math_line = False
-                        if line_str and not line_str.startswith("<") and not any(line_str.startswith(f"{e} Step") for e in ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]):
-                            if any(cmd in line_str for cmd in ["\\frac", "\\sqrt", "\\vec", "\\int", "\\sum", "^", "_", "°"]) or (("=" in line_str or "±" in line_str or "⇒" in line_str) and any(c.isdigit() or c in "xyzabrkhuv" for c in line_str)):
-                                words = line_str.split()
-                                if len(words) <= 12 and not any(w.lower() in ["group", "complete", "identify", "substitute", "find", "solve", "calculate", "where", "the", "this", "value", "square", "terms", "both", "sides", "equation", "adding", "together", "right", "side", "squared", "radius"] for w in words):
-                                    is_math_line = True
-
-                        if is_math_line:
-                            cleaned = clean_latex_to_unicode(line_str)
-                            if cleaned:
-                                formatted_lines.append(f"<tg-math-block>{cleaned}</tg-math-block>")
-                            else:
-                                formatted_lines.append(escape_plain_text(line))
-                        else:
-                            def math_inline_repl(m):
-                                math_found = m.group(0)
-                                cleaned = clean_latex_to_unicode(math_found)
-                                return f"<tg-math>{cleaned}</tg-math>" if cleaned else math_found
-
-                            line_proc = re.sub(r'\\(?:frac|sqrt|vec)\{[^{}]+\}(?:\{[^{}]+\})?|(?:(?:\([a-zA-Z0-9\^_\+\-\*/\s]+\)|[a-zA-Z0-9\^_\+\-\*/]+)\s*=\s*[a-zA-Z0-9\(\)\{\}\[\]\+\-\*/\^=_√πθ\s]+)', math_inline_repl, line)
-                            if "\\" in line_proc or "^" in line_proc or "_" in line_proc:
-                                line_proc = clean_latex_to_unicode(line_proc)
-
-                            formatted_lines.append(escape_plain_text(line_proc))
-
-                    parts_inline[j] = "\n".join(formatted_lines)
+                    parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)
 
     result = "".join(parts_block)

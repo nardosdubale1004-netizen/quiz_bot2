@@ -6,6 +6,7 @@ from telegram import Bot, Message
 from src.config import Style
 from src.typography import lite_math
 
+# src/rendering/rich_helpers.py
 def convert_to_legacy_html(rich_html: str) -> str:
     """
     Converts advanced 2026 Rich HTML tags to standard, safe legacy Telegram HTML tags
@@ -14,16 +15,16 @@ def convert_to_legacy_html(rich_html: str) -> str:
     if not rich_html:
         return ""
 
-    # 1. Convert native math blocks to monospaced pre blocks
+    # 1. Convert native math blocks to clean border-indented blockquotes instead of code boxes
     def math_block_sub(match):
         expr = match.group(1).strip()
-        return f"<pre>{lite_math(expr)}</pre>"
+        return f"\n<blockquote><i>{lite_math(expr)}</i></blockquote>\n"
     text = re.sub(r'<tg-math-block>(.*?)</tg-math-block>', math_block_sub, rich_html, flags=re.DOTALL)
 
-    # 2. Convert native inline math to inline code blocks
+    # 2. Convert native inline math to italic tags (flows natively without blocky copy box widgets)
     def math_inline_sub(match):
         expr = match.group(1).strip()
-        return f"<code>{lite_math(expr)}</code>"
+        return f"<i>{lite_math(expr)}</i>"
     text = re.sub(r'<tg-math>(.*?)</tg-math>', math_inline_sub, text, flags=re.DOTALL)
 
     # 3. Convert headers to bold
@@ -76,7 +77,8 @@ def convert_to_legacy_html(rich_html: str) -> str:
 
 async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, **kwargs) -> Message:
     """
-    Safely delivers structured rich messages using Telegram's API or legacy fallback.
+    Safely delivers structured rich messages using Telegram's sendRichMessage API.
+    Falls back gracefully to raw HTTP requests or legacy sendMessage as a secondary layer.
     """
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     has_media = media_bytes is not None
@@ -107,9 +109,57 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                     **kwargs
                 )
             except Exception as e:
-                pass
+                print(f"{Style.YELLOW}[RICH MSG] Native client call failed: {e}. Trying HTTP raw fallback...{Style.RESET}", flush=True)
 
-    # 2. Fallback to Standard sendPhoto (if media is present) or sendMessage (if text-only)
+    # 2. Raw HTTP POST Fallback to /sendRichMessage with Multipart Form-Data
+    try:
+        url = f"https://api.telegram.org/bot{bot.token}/sendRichMessage"
+        rich_html = normalized_content.replace("\n", "<br/>")
+
+        rich_message_dict = {
+            "html": rich_html
+        }
+        if has_media:
+            rich_message_dict["media"] = [
+                {
+                    "id": "quiz_diagram",
+                    "media": {
+                        "type": "photo",
+                        "media": "attach://quiz_diagram"
+                    }
+                }
+            ]
+
+        data_payload = {
+            "chat_id": str(chat_id),
+            "rich_message": json.dumps(rich_message_dict)
+        }
+        if reply_to_message_id:
+            data_payload["reply_to_message_id"] = str(reply_to_message_id)
+
+        if reply_markup:
+            data_payload["reply_markup"] = json.dumps(reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup)
+
+        for k, v in kwargs.items():
+            data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
+
+        files_payload = {}
+        if has_media:
+            files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, data=data_payload, files=files_payload if has_media else None, timeout=30.0)
+            if resp.status_code == 200:
+                resp_json = resp.json()
+                if resp_json.get("ok"):
+                    return Message.de_json(resp_json["result"], bot)
+            else:
+                print(f"[RICH MSG] sendRichMessage raw HTTP returned status {resp.status_code}: {resp.text}", flush=True)
+    except Exception as e:
+        print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
+
+    # 3. Ultimate Fallback to Standard sendPhoto (if media is present) or sendMessage (if text-only)
+    print(f"{Style.YELLOW}[RICH MSG] Falling back to standard HTML legacy delivery.{Style.RESET}", flush=True)
     legacy_html = convert_to_legacy_html(normalized_content)
 
     if has_media:
@@ -137,8 +187,50 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
     Safely edits structured rich messages using Telegram's editMessageText parameter overrides.
     """
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
-    legacy_html = convert_to_legacy_html(normalized_content)
+    rich_html = normalized_content.replace("\n", "<br/>")
 
+    # 1. Attempt raw HTTP POST first (bypassing PTB client-side text-empty check)
+    try:
+        url = f"https://api.telegram.org/bot{bot.token}/editMessageText"
+        payload = {
+            "chat_id": str(chat_id),
+            "message_id": int(message_id),
+            "rich_message": {
+                "html": rich_html
+            }
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup
+
+        for k, v in kwargs.items():
+            payload[k] = v.to_dict() if hasattr(v, "to_dict") else v
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, timeout=30.0)
+            if resp.status_code == 200:
+                resp_json = resp.json()
+                if resp_json.get("ok"):
+                    return Message.de_json(resp_json["result"], bot)
+            else:
+                print(f"[RICH MSG] editMessageText raw endpoint returned status {resp.status_code}: {resp.text}", flush=True)
+    except Exception as e:
+        print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
+
+    # 2. Native python-telegram-bot helper fallback (using space text to satisfy client checks)
+    try:
+        return await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=" ",
+            api_kwargs={"rich_message": {"html": rich_html}},
+            reply_markup=reply_markup,
+            **kwargs
+        )
+    except Exception as e:
+        print(f"{Style.YELLOW}[RICH MSG] editMessageText with api_kwargs failed: {e}. Trying legacy HTML edit...{Style.RESET}", flush=True)
+
+    # 3. Ultimate Fallback to Standard HTML edit_message_text
+    legacy_html = convert_to_legacy_html(normalized_content)
     return await bot.edit_message_text(
         chat_id=chat_id,
         message_id=message_id,

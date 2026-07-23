@@ -61,7 +61,7 @@ class UIFactory:
             img_url = None
 
         from src.typography import beautify_markdown_math
-        
+
         # Wrapped inside a textbook callout blockquote to add margins, padding, and left vertical accent
         caption_q = (
             f"\n\n"

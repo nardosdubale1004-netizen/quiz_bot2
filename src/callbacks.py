@@ -123,7 +123,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 question_block = UIFactory.build_question_text_block(question_data, d_id)
                 figure_block = UIFactory.build_figure_block(question_data, add_strut=True)
                 options_block = UIFactory.build_options_block(question_data)
-                
+
                 # Updated: Pass the d_id parameter to enable the single-line header with reference
                 compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block, display_id=d_id)
                 img_url_kroki = UIFactory.get_latex_url(compiled_latex)

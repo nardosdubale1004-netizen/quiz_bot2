@@ -67,16 +67,22 @@ def escape_latex(text: str) -> str:
     return '$'.join(parts)
 
 def scale_tikz_block(tikz_code: str, scale_factor: float = 0.75) -> str:
+    """
+    Safely wraps a TikZ environment block in a LaTeX \scalebox to scale the
+    drawing dynamically without modifying the environment optional arguments.
+    """
     if not tikz_code:
         return ""
     return f"\\scalebox{{{scale_factor}}}{{\n{tikz_code.strip()}\n}}"
 
 def build_figure_block(q, add_strut=False):
+    """Parses, isolates, and sanitizes the TikZ diagram code to eliminate database-embedded struts."""
     if not q.get("latex"):
         return None
     tikz = q["latex"].strip()
     tikz = re.sub(r'\n\s*\n', '\n', tikz)
 
+    # Strip outer horizontal boxes (like \makebox, \mbox, \hbox) that conflict with the preview package.
     tikz = re.sub(r'\\makebox\s*(?:\[[^\]]*\])*\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\mbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\hbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
@@ -90,6 +96,7 @@ def build_figure_block(q, add_strut=False):
     elif "\\begin{axis}" in tikz and "\\begin{tikzpicture}" not in tikz:
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
 
+    # 1. Dynamically strip hardcoded horizontal page-padding struts embedded in individual JSON database questions
     tikz = re.sub(
         r'\\path\s*(?:\[.*?\])?\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\)\s*--\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\);',
         '',
@@ -97,6 +104,7 @@ def build_figure_block(q, add_strut=False):
         flags=re.IGNORECASE
     )
 
+    # 2. Dynamically realign overlapping coordinate and vector label nodes to ensure clean presentation
     tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
     tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {(1,2,2)}")
 
@@ -114,7 +122,9 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
 
+    # Format the footer strictly inside a centered tabular row to force inline presentation
     if display_id:
+         print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
          footer_text = f"\\begin{{tabular}}{{@{{}}c@{{}}}} Q.REF: {display_id} \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip {escaped_watermark} \\end{{tabular}}"
     else:
          footer_text = f"\\begin{{tabular}}{{@{{}}c@{{}}}} \\telegramicon \\enskip {escaped_watermark} \\end{{tabular}}"
@@ -167,6 +177,7 @@ __BODY_CONTENT__
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
+    print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
@@ -224,6 +235,7 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"  }}\n"
         f"\\end{{tikzpicture}}"
     )
+    print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
@@ -313,7 +325,7 @@ def get_day_from_tags(tags=None):
             common_match = common_pattern.match(tag)
             if common_match:
                 try:
-                    day, month, year = common_match.match(tag).groups()
+                    day, month, year = map(int, common_match.groups())
                     return _format_datetime_day(datetime(year, month, day))
                 except ValueError: pass
     return _format_datetime_day(now)
@@ -337,6 +349,15 @@ def sanitize_tag_to_hashtag(tag):
     return f"#{tag}"
 
 def create_explanation_assets(q, user_idx, display_id):
+    from html import escape
+    from src.typography import beautify_markdown_math
+    correct_idx = q['correct_option']
+    letters = ["A", "B", "C", "D", "E"]
+
+    user_letter = letters[user_idx] if user_idx < len(letters) else "?"
+    user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
+    correct_letter = letters[correct_idx]
+
     has_tikz = has_real_diagram(q)
 
     latex_code = None
@@ -347,6 +368,47 @@ def create_explanation_assets(q, user_idx, display_id):
         else:
             has_tikz = False
 
-    from src.rendering.html_views import build_answered_view
-    caption_html = build_answered_view(q, str(display_id), user_idx, compact=has_tikz)
+    subject = q.get('subject','').upper()
+    topic = q.get('topic','General')
+    from src.rendering.latex_templates import get_day_from_tags
+    day_str = get_day_from_tags(q.get('tags', []))
+    header = (
+        f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic}</b> • 📅 {day_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    text_parts = [
+        header,
+        f"🎯 <b>Your Selection:</b> {user_letter} ({user_status})",
+        f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>",
+        f"\n🔍 <b>OPTION BREAKDOWN:</b>"
+    ]
+
+    options_analysis = q.get('options_analysis', [])
+    for i, o_text in enumerate(q.get('options', [])):
+        let = letters[i]
+        is_correct_opt = (let == correct_letter)
+        color_lbl = "🟢" if is_correct_opt else "⚪"
+
+        why_text = ""
+        example_text = ""
+        if i < len(options_analysis):
+            why_text = options_analysis[i].get('why', '')
+            example_text = options_analysis[i].get('example', '')
+
+        analysis_line = f"• {color_lbl} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+        if example_text:
+            analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+        text_parts.append(analysis_line)
+
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"{' '.join(hashtag_list)}"
+    )
+    text_parts.append(footer)
+
+    caption_html = "\n".join(text_parts)
     return latex_code, caption_html
