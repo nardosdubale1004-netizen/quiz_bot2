@@ -261,8 +261,9 @@ async def admin_panel(app, engine: QuizEngine):
                             else:
                                 is_photo = (v.get('msg_type') == "photo")
                                 if is_photo:
-                                    print(f" {Style.CYAN}├─ [CLOSE] Rendering widescreen Solution Sheet graphic for REF: {ref}...{Style.RESET}")
-                                    sol_latex = UIFactory.build_widescreen_solution_latex(q, ref, "@grade12EntranceExam", get_day_from_tags(q.get('tags', [])))
+                                    print(f" {Style.CYAN}├─ [CLOSE] Rendering cropped diagram graphic for REF: {ref}...{Style.RESET}")
+                                    fig_block = UIFactory.build_figure_block(q, add_strut=False)
+                                    sol_latex = UIFactory.assemble_diagram_only_layout("@grade12EntranceExam", ref, fig_block)
                                     sol_img_url = UIFactory.get_latex_url(sol_latex)
                                     async with httpx.AsyncClient() as client:
                                         resp = await fetch_kroki_image(client, img_url, sol_latex)

@@ -63,7 +63,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
         explanation_part += "</blockquote>\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>\n<ul>"]
+        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             letter = chr(65 + i)
@@ -75,12 +75,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"  <li>{status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"• {status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
-            analysis_line += "</li>"
             analysis_list.append(analysis_line)
-        analysis_list.append("</ul>")
         analysis_str = "\n".join(analysis_list)
 
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n{analysis_str}"
@@ -94,19 +92,17 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     # 2. Main Layout
     day_str = get_day_from_tags(q.get('tags', []))
-    day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
     header = (
-        f"<h2>📚 {q.get('subject','').upper()} STUDY SHEET</h2>"
-        f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {q.get('topic','General')}{day_part} | <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a></p>"
-        f"\n\n<hr/>\n\n"
+        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
 
-    body = f"<h3>📝 Question:</h3>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
+    body = f"📝 <b>Question:</b>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
 
-    opts_list = ["📋 <b>OPTIONS:</b>\n<ul>"]
+    opts_list = ["📋 <b>OPTIONS:</b>"]
     for i, o in enumerate(q['options']):
-        opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
-    opts_list.append("</ul>")
+        opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
     opts_block = "\n".join(opts_list) + "\n\n"
 
     exp = q.get("poll_explanation", {})
@@ -138,7 +134,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
         explanation_part += "</blockquote>\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>\n<ul>"]
+        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             letter = chr(65 + i)
@@ -150,29 +146,25 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"  <li>{status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"• {status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
-            analysis_line += "</li>"
             analysis_list.append(analysis_line)
-        analysis_list.append("</ul>")
         analysis_str = "\n".join(analysis_list)
 
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n{analysis_str}"
         footer_note = ""
 
     spoiler_content = replace_code_with_italic(spoiler_content)
-    full_text = f"{header}{body}{opts_block}<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer_note}"
-
-    if compact and len(full_text) > 1022:
-        final_why = smart_truncate_html(truncated_why, max(50, len(truncated_why) - (len(full_text) - 1010)))
-        spoiler_content = replace_code_with_italic(
-            f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
-            f"📝 <b>SOLUTION SUMMARY:</b>\n"
-            f"<blockquote expandable>{beautify_markdown_math(final_why)}</blockquote>"
-        )
-        full_text = f"{header}{body}{opts_block}<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer_note}"
-    return full_text
+    
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"{' '.join(hashtag_list)}{footer_note}"
+    )
+    
+    return f"{header}{body}{opts_block}<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer}"
 
 def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_card=None, continuation=False) -> str:
     correct_idx = q['correct_option']
@@ -196,7 +188,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
         explanation_part += "</blockquote>\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>\n<ul>"]
+        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
@@ -208,12 +200,10 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"  <li>{status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"• {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
-            analysis_line += "</li>"
             analysis_list.append(analysis_line)
-        analysis_list.append("</ul>")
         analysis_str = "\n".join(analysis_list)
 
         explanation_part = replace_code_with_italic(explanation_part)
@@ -225,21 +215,19 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         )
         return f"{connection_header}{explanation_part}\n{analysis_block}"
 
-    # 2. Base layouts (Headers with hr dividers and clear textbook formatting)
+    # 2. Main Layout with Sleek Header
     day_str = get_day_from_tags(q.get('tags', []))
-    day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
     header = (
-        f"<h2>📚 {q.get('subject','').upper()} STUDY SHEET</h2>"
-        f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {q.get('topic','General')}{day_part} | <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a></p>"
-        f"\n\n<hr/>\n\n"
+        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
 
-    body = f"<h3>📝 Question:</h3>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
+    body = f"📝 <b>Question:</b>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
 
-    opts_list = ["📋 <b>OPTIONS:</b>\n<ul>"]
+    opts_list = ["📋 <b>OPTIONS:</b>"]
     for i, o in enumerate(q['options']):
-        opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
-    opts_list.append("</ul>")
+        opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
     opts_block = "\n".join(opts_list) + "\n\n"
 
     status_block = f"<hr/>\n🎯 <b>Your Selection:</b> {user_letter} ({user_status})\n⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
@@ -273,7 +261,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         explanation_block += "</blockquote>\n"
         explanation_block += "\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>\n<ul>"]
+        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
             let = chr(65 + i)
@@ -286,29 +274,27 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"  <li>{status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            analysis_line = f"• {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
-            analysis_line += "</li>"
             analysis_list.append(analysis_line)
-        analysis_list.append("</ul>")
         analysis_block = "\n".join(analysis_list) + "\n"
         footer_note = ""
 
     explanation_block = replace_code_with_italic(explanation_block)
     analysis_block = replace_code_with_italic(analysis_block)
 
-    # 4. Score metrics block using a native table structure
+    # 3. Textbook styled performance metrics (plain list instead of tables)
     score_segment = ""
     if perf_card:
         if not perf_card['first_try']:
-            marks_notice = "<p>⚠️ <i>Practice Mode: Answer modified. No marks awarded.</i></p>"
+            marks_notice = "⚠️ <i>Practice Mode: Answer modified. No marks awarded.</i>"
         elif perf_card['is_bonus_winner']:
-            marks_notice = "<p>⚡ <b>EARLY BIRD BONUS!</b> You solved this first! <b>(+10 Marks)</b></p>"
+            marks_notice = "⚡ <b>EARLY BIRD BONUS!</b> You solved this first! <b>(+10 Marks)</b>"
         elif perf_card['marks_awarded'] > 0:
-            marks_notice = "<p>✅ <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b></p>"
+            marks_notice = "✅ <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b>"
         else:
-            marks_notice = "<p>❌ <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b></p>"
+            marks_notice = "❌ <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
 
         mastery = get_grade_mastery_title(perf_card['total_marks'])
         next_rank_info = get_next_rank_info(perf_card['total_marks'])
@@ -316,37 +302,61 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         score_segment = (
             f"<hr/>\n"
             f"<h3>📊 STUDY PERFORMANCE CARD</h3>\n"
-            f"{marks_notice}\n"
-            f"<table>"
-            f"  <tr><td><b>Field</b></td><td><b>Status</b></td></tr>"
-            f"  <tr><td>🎒 Level</td><td><b>Grade {perf_card.get('grade', 12)}</b></td></tr>"
-            f"  <tr><td> PRACTICE SCORE</td><td><b>{perf_card['total_marks']} Marks</b></td></tr>"
-            f"  <tr><td>🏆 MASTERY RANK</td><td><b>{mastery}</b></td></tr>"
-            f"  <tr><td>🎯 ACCURACY</td><td><b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']} questions solved correctly)</td></tr>"
-            f"</table>\n"
-            f"<p><i>Target: {next_rank_info}</i></p>\n"
+            f"{marks_notice}\n\n"
+            f"• 🎒 <b>Level:</b> Grade {perf_card.get('grade', 12)}\n"
+            f"• 📝 <b>Practice Score:</b> {perf_card['total_marks']} Marks\n"
+            f"• 🏆 <b>Mastery Rank:</b> {mastery}\n"
+            f"• 🎯 <b>Accuracy:</b> {perf_card['accuracy']}% ({perf_card['correct']} of {perf_card['total']} solved correctly)\n\n"
+            f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
-    return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer_note}"
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"{' '.join(hashtag_list)}{footer_note}"
+    )
+
+    return f"{header}{body}{opts_block}{status_block}{explanation_block}{analysis_block}{score_segment}{footer}"
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
-    from src.rendering import UIFactory
+    """Creates inline keyboard button rows that always include the letter and the parsed option text."""
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    is_o_complex = any(is_complex(o) for o in q['options'])
-
     bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
     buttons = []
     for i, opt in enumerate(q['options']):
-        label = letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}"
+        clean_opt = lite_math(opt)
+        label = f"{letters[i]} │ {clean_opt}"
         url = f"https://t.me/{bot_user}?start=ans_{display_id}_{i}"
         buttons.append([InlineKeyboardButton(label, url=url)])
 
     return InlineKeyboardMarkup(buttons)
 
 def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
-    """Creates the interactive options keyboard (callback buttons) sent only inside private PM chats."""
-    from src.rendering import UIFactory
+    """Creates callback buttons that always include the letter and the parsed option text."""
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    is_o_complex = any(is_complex(o) for o in q['options'])
-    buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
+    buttons = []
+    for i, opt in enumerate(q['options']):
+        clean_opt = lite_math(opt)
+        label = f"{letters[i]} │ {clean_opt}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"ans|{display_id}|{i}")])
     return InlineKeyboardMarkup(buttons)
+
+def generate_poll_hint(q):
+    exp = q.get("poll_explanation", {})
+    custom_hint = exp.get("poll_hint") or exp.get("hint")
+    if custom_hint:
+        cleaned = clean_latex_to_unicode(custom_hint)
+        return cleaned[:195] if len(cleaned) > 195 else cleaned
+    clean_rule = lite_math(exp.get("governing_principle") or exp.get("rule") or "")
+    clean_why = lite_math(exp.get("why", ""))
+    if clean_rule:
+        combined = f"Rule: {clean_rule}"
+        equations = re.findall(r'([A-Za-z\d\-\[\]\(\)]+\s*=\s*[^.\n]+)', clean_why)
+        if equations and len(f"{combined} | {equations[-1].strip()}") <= 195:
+            return f"{combined} | {equations[-1].strip()}"
+        if len(combined) <= 195: return combined
+    for sentence in re.split(r'(?<=[.!?])\s+', clean_why):
+        if len(sentence) <= 195 and any(sym in sentence for sym in ["=", "√", "∫", "π", "θ", "°"]):
+            return sentence
+    return f"Apply {clean_rule[:100]}."[:195] if clean_rule else "Check Premium UI for derivations."[:195]

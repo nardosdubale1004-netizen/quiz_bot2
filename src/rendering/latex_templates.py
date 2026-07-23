@@ -14,6 +14,9 @@ def has_real_diagram(q) -> bool:
     Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram.
     This guarantees math formulas use Telegram's native rich text rendering unless a graph is present.
     """
+    if q.get("force_image") or q.get("force_latex", False):
+        return True
+
     tikz = q.get("latex")
     if not tikz:
         return False
@@ -21,7 +24,6 @@ def has_real_diagram(q) -> bool:
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
         return False
 
-    # Check strictly for geometric and visual plotting triggers
     drawing_triggers = [
         r"\draw", r"\fill", r"\node", r"\addplot", r"\path", 
         r"\grid", r"\axis", r"\circle", r"\ellipse", r"\rectangle",
@@ -65,6 +67,7 @@ def escape_latex(text: str) -> str:
     return '$'.join(parts)
 
 def build_figure_block(q, add_strut=False):
+    """Parses and isolates the TikZ diagram coordinate space cleanly without artificial width expansion."""
     if not q.get("latex"):
         return None
     tikz = q["latex"].strip()
@@ -77,12 +80,7 @@ def build_figure_block(q, add_strut=False):
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
     elif "\\begin{axis}" in tikz and "\\begin{tikzpicture}" not in tikz:
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
-    if add_strut:
-        canvas_strut = "\\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center);"
-        if "\\end{tikzpicture}" in tikz:
-            tikz = tikz.replace("\\end{tikzpicture}", "%\n  " + canvas_strut + "%\n\\end{tikzpicture}")
-        else:
-            tikz += "%\n  " + canvas_strut
+    
     return re.sub(r'\n\s*\n', '\n', tikz)
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str) -> str:
@@ -142,6 +140,40 @@ __BODY_CONTENT__
 \\end{document}"""
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
+def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
+    """Assembles a high-contrast, bold-header layout cropped tightly with balanced 20pt padding."""
+    escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
+    
+    template = """\\documentclass[12pt]{article}
+\\usepackage[utf8]{inputenc}
+\\usepackage[T1]{fontenc}
+\\usepackage{mathpazo}
+\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
+\\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
+\\usepackage[active, tightpage]{preview}
+\\setlength{\\PreviewBorder}{20pt}
+\\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
+\\usetikzlibrary{arrows.meta, calc, patterns}
+\\binoppenalty=10000
+\\relpenalty=10000
+\\sloppy
+\\begin{document}
+\\begin{preview}
+\\pagecolor{white}
+\\centering
+\\vbox{
+  \\centering
+  {\\color{black!75}\\sffamily\\bfseries\\small REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad __WATERMARK__}\\par
+  \\vspace{1.2em}
+  __FIGURE_BLOCK__
+}
+\\par\\prevdepth=0pt
+\\end{preview}
+\\end{document}"""
+    return (template.replace("__FIGURE_BLOCK__", figure_block)
+                    .replace("__DISPLAY_ID__", str(display_id))
+                    .replace("__WATERMARK__", escaped_watermark))
+
 def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str) -> str:
     exp = q.get("poll_explanation", {})
     subject_escaped = escape_latex(q.get('subject', 'GENERAL').upper())
@@ -153,7 +185,7 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
     raw_why = exp.get('why', 'No detailed derivation available.').replace('\r\n', '\n').strip()
     why_escaped = " \\\\ \n".join([escape_latex(line.strip()) for line in raw_why.split('\n') if line.strip()])
 
-    exp_figure_block = build_figure_block(q, add_strut=True)
+    exp_figure_block = build_figure_block(q, add_strut=False)
     diagram_block = f"\\par\\noindent\\centering\\leavevmode\\par\n{exp_figure_block}\n\\par\\vspace{{2.0em}}\n" if exp_figure_block else ""
     question_escaped = escape_latex(q.get('question', ''))
 
@@ -287,15 +319,24 @@ def create_explanation_assets(q, user_idx, display_id):
 
     latex_code = None
     if has_tikz:
-        latex_code = build_widescreen_solution_latex(q, display_id, "@grade12EntranceExam", get_day_from_tags(q.get('tags', [])))
+        figure_block = build_figure_block(q, add_strut=False)
+        latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
+
+    subject = q.get('subject','').upper()
+    topic = q.get('topic','General')
+    from src.rendering.latex_templates import get_day_from_tags
+    day_str = get_day_from_tags(q.get('tags', []))
+    header = (
+        f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic}</b> • 📅 {day_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
 
     text_parts = [
-        f"<h2>📚 SOLUTION SHEET</h2>"
-        f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {escape(q.get('topic', 'General'))}</p>"
-        f"<hr/>\n",
+        header,
         f"🎯 <b>Your Selection:</b> {user_letter} ({user_status})",
         f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>",
-        f"\n🔍 <b>OPTION-BY-OPTION ANALYSIS:</b>\n<ul>"
+        f"\n🔍 <b>OPTION BREAKDOWN:</b>"
     ]
 
     options_analysis = q.get('options_analysis', [])
@@ -310,19 +351,18 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        label_segment = f"  <li>{color_lbl} <b>{let})</b> {beautify_markdown_math(o_text)}"
-        details = []
-        if why_text:
-            details.append(beautify_markdown_math(why_text))
+        analysis_line = f"• {color_lbl} <b>{let}:</b> {beautify_markdown_math(why_text)}"
         if example_text:
-            details.append(f"<i>(e.g., {beautify_markdown_math(example_text)})</i>")
+            analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+        text_parts.append(analysis_line)
 
-        desc_segment = " — " + " ".join(details) if details else ""
-        label_segment += f"{desc_segment}</li>"
-        text_parts.append(label_segment)
-
-    text_parts.append("</ul>\n<hr/>")
-    text_parts.append("📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>")
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"{' '.join(hashtag_list)}"
+    )
+    text_parts.append(footer)
 
     caption_html = "\n".join(text_parts)
     return latex_code, caption_html
