@@ -141,14 +141,14 @@ __BODY_CONTENT__
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
-    """Assembles a high-contrast, bold-header layout cropped tightly with balanced 20pt padding."""
+    """Assembles a high-contrast layout bound by varwidth to dynamically eliminate blank margins."""
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
-\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
+\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
 \\usepackage[active, tightpage]{preview}
 \\setlength{\\PreviewBorder}{20pt}
@@ -161,13 +161,12 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\begin{preview}
 \\pagecolor{white}
 \\centering
-\\vbox{
+\\begin{varwidth}{16.0cm}
   \\centering
   {\\color{black!75}\\sffamily\\bfseries\\small REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad __WATERMARK__}\\par
   \\vspace{1.2em}
   __FIGURE_BLOCK__
-}
-\\par\\prevdepth=0pt
+\\end{varwidth}
 \\end{preview}
 \\end{document}"""
     return (template.replace("__FIGURE_BLOCK__", figure_block)
@@ -320,7 +319,10 @@ def create_explanation_assets(q, user_idx, display_id):
     latex_code = None
     if has_tikz:
         figure_block = build_figure_block(q, add_strut=False)
-        latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
+        if figure_block:
+            latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
+        else:
+            has_tikz = False
 
     subject = q.get('subject','').upper()
     topic = q.get('topic','General')
