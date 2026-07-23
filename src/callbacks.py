@@ -123,13 +123,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 question_block = UIFactory.build_question_text_block(question_data, d_id)
                 figure_block = UIFactory.build_figure_block(question_data, add_strut=True)
                 options_block = UIFactory.build_options_block(question_data)
-                compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
+                
+                # Updated: Pass the d_id parameter to enable the single-line header with reference
+                compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block, display_id=d_id)
                 img_url_kroki = UIFactory.get_latex_url(compiled_latex)
                 async with httpx.AsyncClient() as client:
                     resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
                     if resp and resp.status_code == 200:
                         legacy_caption = convert_to_legacy_html(caption)
-                        # Wrap resp.content in io.BytesIO stream here too
                         media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                         await query.edit_message_media(media=media, reply_markup=orig_kb)
                     else:

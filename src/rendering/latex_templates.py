@@ -25,7 +25,7 @@ def has_real_diagram(q) -> bool:
         return False
 
     drawing_triggers = [
-        r"\draw", r"\fill", r"\node", r"\addplot", r"\path", 
+        r"\draw", r"\fill", r"\node", r"\addplot", r"\path",
         r"\grid", r"\axis", r"\circle", r"\ellipse", r"\rectangle",
         r"tikzpicture", r"pgfplots"
     ]
@@ -80,22 +80,22 @@ def build_figure_block(q, add_strut=False):
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
     elif "\\begin{axis}" in tikz and "\\begin{tikzpicture}" not in tikz:
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
-    
+
     # 1. Dynamically strip hardcoded horizontal page-padding struts embedded in individual JSON database questions
     tikz = re.sub(
-        r'\\path\s*(?:\[.*?\])?\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\)\s*--\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\);', 
-        '', 
-        tikz, 
+        r'\\path\s*(?:\[.*?\])?\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\)\s*--\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\);',
+        '',
+        tikz,
         flags=re.IGNORECASE
     )
-    
+
     # 2. Dynamically realign overlapping coordinate and vector label nodes to ensure clean presentation
     tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
     tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {(1,2,2)}")
-    
+
     return re.sub(r'\n\s*\n', '\n', tikz)
 
-def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str) -> str:
+def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str, display_id: str = None) -> str:
     content_width_cm = 15.0
     latex_blocks = []
     if question_block:
@@ -105,18 +105,26 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
     if options_block:
         latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{options_block}\n\\end{{minipage}}")
 
+    escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
+
+    if display_id:
+         print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
+         footer_text = f"Q.REF: {display_id} \\quad $\\bullet$ \\quad \\telegramicon \\quad {escaped_watermark}"
+    else:
+         footer_text = f"\\telegramicon \\quad {escaped_watermark}"
+
     footer_latex = (
         f"\\begin{{minipage}}{{{content_width_cm}cm}}\n"
         f"\\vspace{{0.5em}}\n"
         f"\\noindent\\hrulefill \\par\n"
         f"\\vspace{{0.8em}}\n"
-        f"\\centering \\small \\color{{gray}} \\textbf{{\\textsf{{Channel: t.me/grade12EntranceExam}}}}\n"
+        f"{{\\centering\\color{{gray}} \\sffamily\\bfseries\\scriptsize {footer_text}\\par}}\n"
+        f"\\par\\prevdepth=0pt\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
     body_content = "\n\\par\\vspace{1.5em}\n".join(latex_blocks)
 
-    escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     watermark_tikz = (
         f"\\begin{{tikzpicture}}[overlay]\n"
         f"  \\foreach \\y in {{0, -10, -20, -30, -40, -50, -60, -70, -80, -90, -100}} {{\n"
@@ -138,6 +146,7 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\binoppenalty=10000
 \\relpenalty=10000
 \\sloppy
+\\newcommand{\\telegramicon}{\\mbox{{\\let\\newpage\\relax\\begin{tikzpicture}[x=0.5ex,y=0.5ex,baseline=-0.1ex]\\fill[blue!70!cyan](0,0)circle(1.0);\\fill[white](-0.5,-0.1)--(0.6,0.5)--(0.1,-0.5)--(-0.1,-0.15)--cycle;\\fill[black!15](-0.1,-0.15)--(0.1,-0.5)--(0.0,-0.1)--cycle;\\end{tikzpicture}}}}
 \\begin{document}
 \\begin{preview}
 \\begin{minipage}{16.5cm}
@@ -147,20 +156,24 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 __WATERMARK_TIKZ__
 __BODY_CONTENT__
 \\par\\prevdepth=0pt
-\\end{minipage}
+\\end{minipage}\\par\\prevdepth=0pt
 \\end{preview}
 \\end{document}"""
     return template.replace("__BODY_CONTENT__", body_content).replace("__WATERMARK_TIKZ__", watermark_tikz)
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
-    """Assembles a high-contrast layout bound by a fixed-width minipage to prevent username truncation and keep diagrams compact."""
+    """
+    Assembles a high-contrast layout bound by a robust 11.0cm minipage with a
+    metadata footer running inline centered on a single line.
+    """
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
-    
+    print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
+
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
 \\usepackage{mathpazo}
-\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
+\\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
 \\usepackage[paperwidth=18.5cm, paperheight=120cm, left=1.0cm, right=1.0cm, top=1.0cm, bottom=1.0cm]{geometry}
 \\usepackage[active, tightpage]{preview}
 \\setlength{\\PreviewBorder}{25pt}
@@ -169,16 +182,18 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\binoppenalty=10000
 \\relpenalty=10000
 \\sloppy
+\\newcommand{\\telegramicon}{\\mbox{{\\let\\newpage\\relax\\begin{tikzpicture}[x=0.5ex,y=0.5ex,baseline=-0.1ex]\\fill[blue!70!cyan](0,0)circle(1.0);\\fill[white](-0.5,-0.1)--(0.6,0.5)--(0.1,-0.5)--(-0.1,-0.15)--cycle;\\fill[black!15](-0.1,-0.15)--(0.1,-0.5)--(0.0,-0.1)--cycle;\\end{tikzpicture}}}}
 \\begin{document}
 \\begin{preview}
 \\pagecolor{white}
 \\centering
-\\begin{minipage}{12.5cm}
+\\begin{minipage}{11.0cm}
   \\centering
-  {\\color{black!75}\\sffamily\\bfseries\\small REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad __WATERMARK__}\\par
+  __FIGURE_BLOCK__\\par
   \\vspace{1.2em}
-  __FIGURE_BLOCK__
-\\end{minipage}
+  {\\centering\\color{black!70}\\sffamily\\bfseries\\scriptsize Q.REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad \\telegramicon \\quad __WATERMARK__\\par}%
+  \\par\\prevdepth=0pt
+\\end{minipage}\\par\\prevdepth=0pt
 \\end{preview}
 \\end{document}"""
     return (template.replace("__FIGURE_BLOCK__", figure_block)
@@ -208,6 +223,7 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"  }}\n"
         f"\\end{{tikzpicture}}"
     )
+    print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
@@ -221,7 +237,8 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
 \\relpenalty=10000
-\\sloppy
+\\openup 1em
+\\newcommand{\\telegramicon}{\\mbox{{\\let\\newpage\\relax\\begin{tikzpicture}[x=0.5ex,y=0.5ex,baseline=-0.1ex]\\fill[blue!70!cyan](0,0)circle(1.0);\\fill[white](-0.5,-0.1)--(0.6,0.5)--(0.1,-0.5)--(-0.1,-0.15)--cycle;\\fill[black!15](-0.1,-0.15)--(0.1,-0.5)--(0.0,-0.1)--cycle;\\end{tikzpicture}}}}
 \\begin{document}
 \\begin{preview}
 \\begin{minipage}{16.5cm}
@@ -266,7 +283,8 @@ __DIAGRAM_BLOCK__
 \\begin{minipage}{15.0cm}
     \\noindent\\hrulefill \\par
     \\vspace{0.8em}
-    \\centering \\small \\color{gray} \\textbf{\\textsf{Channel: t.me/grade12EntranceExam}}
+    {\\centering\\color{gray}\\sffamily\\bfseries\\scriptsize Q.REF: __DISPLAY_ID__ \\quad $\\bullet$ \\quad \\telegramicon \\quad __WATERMARK__\\par}%
+    \\par\\prevdepth=0pt
 \\end{minipage}
 \\par\\prevdepth=0pt
 \\end{minipage}
