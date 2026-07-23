@@ -29,7 +29,6 @@ def smart_truncate_html(text: str, max_len: int) -> str:
     return accumulated + "..."
 
 def get_grade_mastery_title(marks: int) -> str:
-    """Classifies user proficiency level into realistic study ranks."""
     if marks == 0: return "🌱 Candidate (Practice Mode)"
     if marks < 50: return "🛡️ Bronze Scholar"
     if marks < 150: return "⚔️ Silver Elite"
@@ -38,7 +37,6 @@ def get_grade_mastery_title(marks: int) -> str:
     return "🌌 Legend"
 
 def get_next_rank_info(marks: int) -> str:
-    """Calculates how many marks are needed for the next rank level."""
     if marks == 0: return "Solve 1 question to unlock <b>Bronze Scholar</b> rank!"
     if marks < 50: return f"Earn <b>{50 - marks} Marks</b> to unlock <b>Silver Elite</b>"
     if marks < 150: return f"Earn <b>{150 - marks} Marks</b> to unlock <b>Gold Master</b>"
@@ -47,10 +45,9 @@ def get_next_rank_info(marks: int) -> str:
     return "Maximum Mastery Level Reached! 🌌"
 
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
-    """Generates the final plain-text static fallback view for closed quizzes."""
     correct_letter = chr(65 + q['correct_option'])
 
-    # 1. Threaded Continuation Layout
+    # 1. Continuation Layout
     if continuation:
         exp = q.get("poll_explanation", {})
         why = exp.get('why', 'N/A')
@@ -71,13 +68,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         for i, o_text in enumerate(q['options']):
             letter = chr(65 + i)
             status_icon = "🟢" if letter == correct_letter else "⚪"
-            
+
             why_text = ""
             example_text = ""
             if i < len(options_analysis):
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
-                
+
             analysis_line = f"  <li>{status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
@@ -95,7 +92,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         )
         return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
 
-    # 2. Base layouts (Single-paragraph metadata headers with H2 elements and hr dividers with double spacing)
+    # 2. Main Layout
     day_str = get_day_from_tags(q.get('tags', []))
     day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
     header = (
@@ -103,15 +100,15 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {q.get('topic','General')}{day_part} | <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a></p>"
         f"\n\n<hr/>\n\n"
     )
-    
+
     body = f"<h3>📝 Question:</h3>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
-    
+
     opts_list = ["📋 <b>OPTIONS:</b>\n<ul>"]
     for i, o in enumerate(q['options']):
         opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
     opts_list.append("</ul>")
     opts_block = "\n".join(opts_list) + "\n\n"
-    
+
     exp = q.get("poll_explanation", {})
     why = exp.get('why', 'N/A')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
@@ -146,13 +143,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         for i, o_text in enumerate(q['options']):
             letter = chr(65 + i)
             status_icon = "🟢" if letter == correct_letter else "⚪"
-            
+
             why_text = ""
             example_text = ""
             if i < len(options_analysis):
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
-                
+
             analysis_line = f"  <li>{status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
             if example_text:
                 analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
@@ -160,7 +157,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             analysis_list.append(analysis_line)
         analysis_list.append("</ul>")
         analysis_str = "\n".join(analysis_list)
-        
+
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n{analysis_str}"
         footer_note = ""
 
@@ -178,14 +175,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     return full_text
 
 def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_card=None, continuation=False) -> str:
-    """Generates a complete unified view of the question, options, user result, and detailed solutions."""
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
     user_letter = letters[user_idx] if user_idx < len(letters) else "?"
     user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
-    # 1. Threaded Continuation Layout
+    # 1. Continuation Layout
     if continuation:
         exp = q.get("poll_explanation", {})
         why = exp.get('why', 'N/A')
@@ -229,7 +225,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         )
         return f"{connection_header}{explanation_part}\n{analysis_block}"
 
-    # 2. Base layouts (Single-paragraph metadata headers with H2 elements and hr dividers with double spacing)
+    # 2. Base layouts (Headers with hr dividers and clear textbook formatting)
     day_str = get_day_from_tags(q.get('tags', []))
     day_part = f" | 📅 <b>{day_str}</b>" if day_str else ""
     header = (
@@ -237,9 +233,9 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {q.get('topic','General')}{day_part} | <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a></p>"
         f"\n\n<hr/>\n\n"
     )
-    
+
     body = f"<h3>📝 Question:</h3>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
-    
+
     opts_list = ["📋 <b>OPTIONS:</b>\n<ul>"]
     for i, o in enumerate(q['options']):
         opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
@@ -276,7 +272,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n"
         explanation_block += "</blockquote>\n"
         explanation_block += "\n"
-        
+
         analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>\n<ul>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
@@ -302,7 +298,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     explanation_block = replace_code_with_italic(explanation_block)
     analysis_block = replace_code_with_italic(analysis_block)
 
-    # 4. Compile dynamic performance scorecard if analytics are loaded using a beautiful native table!
+    # 4. Score metrics block using a native table structure
     score_segment = ""
     if perf_card:
         if not perf_card['first_try']:
@@ -317,7 +313,6 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         mastery = get_grade_mastery_title(perf_card['total_marks'])
         next_rank_info = get_next_rank_info(perf_card['total_marks'])
 
-        # Native Advanced Table block
         score_segment = (
             f"<hr/>\n"
             f"<h3>📊 STUDY PERFORMANCE CARD</h3>\n"
@@ -355,22 +350,3 @@ def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     is_o_complex = any(is_complex(o) for o in q['options'])
     buttons = [[InlineKeyboardButton(letters[i] if is_o_complex else f"{letters[i]} │ {lite_math(opt)}", callback_data=f"ans|{display_id}|{i}")] for i, opt in enumerate(q['options'])]
     return InlineKeyboardMarkup(buttons)
-
-def generate_poll_hint(q):
-    exp = q.get("poll_explanation", {})
-    custom_hint = exp.get("poll_hint") or exp.get("hint")
-    if custom_hint:
-        cleaned = clean_latex_to_unicode(custom_hint)
-        return cleaned[:195] if len(cleaned) > 195 else cleaned
-    clean_rule = lite_math(exp.get("governing_principle") or exp.get("rule") or "")
-    clean_why = lite_math(exp.get("why", ""))
-    if clean_rule:
-        combined = f"Rule: {clean_rule}"
-        equations = re.findall(r'([A-Za-z\d\-\[\]\(\)]+\s*=\s*[^.\n]+)', clean_why)
-        if equations and len(f"{combined} | {equations[-1].strip()}") <= 195:
-            return f"{combined} | {equations[-1].strip()}"
-        if len(combined) <= 195: return combined
-    for sentence in re.split(r'(?<=[.!?])\s+', clean_why):
-        if len(sentence) <= 195 and any(sym in sentence for sym in ["=", "√", "∫", "π", "θ", "°"]):
-            return sentence
-    return f"Apply {clean_rule[:100]}."[:195] if clean_rule else "Check Premium UI for derivations."[:195]

@@ -1,6 +1,7 @@
 # src/callbacks.py
 import traceback
 import httpx
+import io
 from src.config import CONFIG, Style
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
@@ -15,7 +16,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
     print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {query.from_user.id}")
 
-    # Handle grade onboarding registration
     if action == "set_grade":
         grade = int(d_id)
         db_set_user_grade(query.from_user.id, grade)
@@ -28,7 +28,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    # Check database for active sent questions mapping
     tracks = engine.db_get_all_tracks()
     mid_key = next((k for k, v in tracks.items() if k.isdigit() and str(v.get('display_id')) == d_id), None)
 
@@ -58,7 +57,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             print(f" {Style.CYAN}├─ [DEBUG] Generating Answer Summary Sheet for REF: {d_id}{Style.RESET}")
             await query.answer("Generating Answer Sheet...")
 
-            # Process score metrics dynamically inside Neon database
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
             perf_card = process_user_score(user_id, query.message.message_id, question_data['id'], is_correct, user_selection)
@@ -77,10 +75,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         if resp and resp.status_code == 200:
                             print(f" {Style.GREEN}├─ [SUCCESS] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}")
                             legacy_caption = convert_to_legacy_html(explanation_html)
-                            media = InputMediaPhoto(media=resp.content, caption=legacy_caption, parse_mode="HTML")
+                            # Wrap resp.content in io.BytesIO stream to ensure correct type parsing
+                            media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=retry_kb)
 
-                            # Passes the continuation parameter to generate a completely distinct, un-duplicated derivation sheet
                             full_explanation_text = UIFactory.build_answered_view(
                                 question_data, d_id, user_selection, compact=False, perf_card=perf_card, continuation=True
                             )
@@ -89,21 +87,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                                     try: await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
                                     except Exception: pass
 
-                                # Threaded derivation uses safe rich message helper
                                 follow_up = await send_rich_message_safe(
                                     context.bot,
                                     chat_id=query.message.chat_id,
                                     html_content=full_explanation_text,
                                     reply_to_message_id=query.message.message_id
                                 )
-                                # Update database tracking
                                 engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
                         else:
                             await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
                 else:
                     await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
             else:
-                # Text answers edit using safe rich message helper
                 await edit_rich_message_safe(
                     context.bot,
                     chat_id=query.message.chat_id,
@@ -119,14 +114,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                     await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
                 except Exception:
                     pass
-                # Update database tracking
                 engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
 
             img_url, caption = UIFactory.create_question_assets(question_data, d_id)
             orig_kb = UIFactory.build_keyboard(question_data, d_id)
 
             if img_url:
-                # We compile standard LaTeX layout elements
                 question_block = UIFactory.build_question_text_block(question_data, d_id)
                 figure_block = UIFactory.build_figure_block(question_data, add_strut=True)
                 options_block = UIFactory.build_options_block(question_data)
@@ -136,12 +129,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                     resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
                     if resp and resp.status_code == 200:
                         legacy_caption = convert_to_legacy_html(caption)
-                        media = InputMediaPhoto(media=resp.content, caption=legacy_caption, parse_mode="HTML")
+                        # Wrap resp.content in io.BytesIO stream here too
+                        media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                         await query.edit_message_media(media=media, reply_markup=orig_kb)
                     else:
                         await query.answer("Renderer Error: Reset failed.", show_alert=True)
             else:
-                # Text resetting uses safe edit helper
                 await edit_rich_message_safe(
                     context.bot,
                     chat_id=query.message.chat_id,

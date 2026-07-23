@@ -5,6 +5,7 @@ import json
 import asyncio
 import threading
 import traceback
+import io
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -28,33 +29,22 @@ import httpx
 from telegram import Poll
 from src.typography import lite_math
 
-# Global Application Orchestrator
 engine = QuizEngine()
 
 async def handle_http_request(reader, writer, app):
-    """
-    Custom lightweight asynchronous web server handler.
-    Exposes:
-      - GET /health   --> Returns 200 OK (Clean, compliant health check)
-      - POST /webhook  --> Receives Telegram Updates and processes them directly via app.process_update()
-    """
     try:
-        # Read the incoming HTTP request headers
         header_data = await reader.readuntil(b"\r\n\r\n")
         headers = header_data.decode("utf-8")
 
-        # Parse the request line
         request_line = headers.split("\r\n")[0]
         method, path, _ = request_line.split(" ")
 
-        # Extract Content-Length for POST payloads
         content_length = 0
         for line in headers.split("\r\n"):
             if line.lower().startswith("content-length:"):
                 content_length = int(line.split(":")[1].strip())
                 break
 
-        # 1. Handle GET /health
         if method == "GET" and path == "/health":
             response_body = '{"status": "ok"}'
             response = (
@@ -67,16 +57,13 @@ async def handle_http_request(reader, writer, app):
             writer.write(response.encode("utf-8"))
             await writer.drain()
 
-        # 2. Handle POST /webhook
         elif method == "POST" and path == "/webhook":
             body_data = await reader.readexactly(content_length)
             body = body_data.decode("utf-8")
 
-            # De-serialize the Telegram Update payload
             update_dict = json.loads(body)
             update = Update.de_json(update_dict, app.bot)
 
-            # Instantly and natively process the update through python-telegram-bot's active handlers
             await app.process_update(update)
 
             response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -84,13 +71,11 @@ async def handle_http_request(reader, writer, app):
             await writer.drain()
 
         else:
-            # 3. Handle 404 Fallback
             response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
             await writer.drain()
 
     except Exception as e:
-        # 4. Handle 500 Internal Error
         try:
             response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
@@ -105,7 +90,6 @@ async def handle_http_request(reader, writer, app):
             pass
 
 async def check_and_publish_scheduled(app):
-    """Checks the Neon database for scheduled posts, compiles graphics, and publishes them automatically."""
     q = db_get_pending_scheduled_question()
     if not q:
         return
@@ -113,14 +97,12 @@ async def check_and_publish_scheduled(app):
     print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
     channel = CONFIG.get("channel")
 
-    # Track sequence number dynamically
     tracks = engine.db_get_all_tracks()
     last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
 
     try:
-        has_tikz = bool(q.get("latex"))
-        if not has_tikz and not UIFactory.is_complex(q["question"]):
-            # Native Poll
+        has_tikz = UIFactory.has_real_diagram(q)
+        if not has_tikz:
             poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
             m = await app.bot.send_poll(
                 chat_id=channel,
@@ -134,10 +116,9 @@ async def check_and_publish_scheduled(app):
             msg_type = "poll"
             type_str = "native"
         else:
-            # Premium Photo UI
             img_url, caption = UIFactory.create_question_assets(q, last_seq)
             kb = UIFactory.build_keyboard(q, last_seq)
-            
+
             media_bytes = None
             if img_url:
                 async with httpx.AsyncClient() as client:
@@ -147,12 +128,10 @@ async def check_and_publish_scheduled(app):
                     else:
                         raise Exception("Kroki failed to compile scheduled asset.")
 
-            # Publish securely
             m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
             msg_type = "photo" if img_url else "text"
             type_str = "premium"
 
-        # Register in sent_tracks and mark as sent in questions table
         engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)
         db_mark_question_as_sent(q['id'])
         print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
@@ -161,7 +140,6 @@ async def check_and_publish_scheduled(app):
         print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
 
 async def start_command(update: Update, context):
-    """Greets the student and launches inline grade selection onboarding or processes deep-linked quiz answers."""
     user_id = update.effective_user.id
     args = context.args
 
@@ -177,7 +155,6 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            # Fetch question data from the Neon database mapping
             tracks = engine.db_get_all_tracks()
             mid_key = next((k for k, v in tracks.items() if k.isdigit() and v.get('display_id') == display_id), None)
 
@@ -197,32 +174,28 @@ async def start_command(update: Update, context):
             existing_response = db_get_user_response(user_id, mid_key)
 
             if existing_response:
-                # 1. Retrieve original chosen option and private message tracking ID
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
-                # 2. Instantly delete the incoming /start text command to avoid chat clutter
+                # Delete the incoming /start text command immediately to avoid clutter
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
                 except Exception:
                     pass
 
-                # 3. Prune their old scorecard from history (preventing duplicates)
+                # Delete the previous score cards to avoid duplicates
                 if old_private_mid:
                     try:
                         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
-                        # If a text continuation reply existed, attempt to delete it too
                         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid + 1)
                     except Exception:
                         pass
 
-                # 4. Compile their original answered view with a clear lockout header
                 perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
                 explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
 
-                # 5. Re-post the original scorecard card at the bottom of the chat with channel return button
                 has_tikz = UIFactory.has_real_diagram(question_data)
                 if has_tikz:
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
@@ -233,7 +206,8 @@ async def start_command(update: Update, context):
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                                m = await update.message.reply_photo(photo=resp.content, caption=legacy_caption, parse_mode="HTML")
+                                # Wrap resp.content in io.BytesIO to prevent client-side byte crashes
+                                m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                                 full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
                                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
                                 db_update_private_message_id(user_id, mid_key, f_m.message_id)
@@ -243,17 +217,14 @@ async def start_command(update: Update, context):
                 db_update_private_message_id(user_id, mid_key, f_m.message_id)
                 return
 
-            # Evaluate the score privately inside Neon database for first-time submissions
             is_correct = (user_selection == question_data['correct_option'])
             perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct, user_selection)
 
-            # Generate the comprehensive, context-retaining Answered View
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
 
             # If the question originally had an active diagram, send the solution image card!
             has_tikz = UIFactory.has_real_diagram(question_data)
             if has_tikz:
-                # Generate a COMPACT caption to stay safely under Telegram's 1024-character caption limit
                 explanation_html_compact = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=True, perf_card=perf_card)
                 latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
                 if latex_code:
@@ -262,16 +233,15 @@ async def start_command(update: Update, context):
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                            m = await update.message.reply_photo(photo=resp.content, caption=legacy_caption, parse_mode="HTML")
+                            # Wrap bytes in io.BytesIO and do not call update.message.reply_photo since we cleared chat history
+                            m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
 
-                            # Deliver the detailed, un-truncated derivation steps
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
                             f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
 
                             db_update_private_message_id(user_id, mid_key, f_m.message_id)
                             return
 
-            # Fallback to pure text message for standard algebraic questions with channel return button
             f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
             db_update_private_message_id(user_id, mid_key, f_m.message_id)
             return
@@ -281,7 +251,6 @@ async def start_command(update: Update, context):
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
-    # --- PERSISTENT PROFILE METRICS GREETER ---
     profile = db_get_user_profile(user_id)
     if profile and profile.get("grade"):
         grade = profile['grade']
@@ -308,7 +277,6 @@ async def start_command(update: Update, context):
         )
         return
 
-    # --- STANDARD ONBOARDING GRADE SELECTION ---
     keyboard = [
         [InlineKeyboardButton("🎒 Grade 6", callback_data="set_grade|6"),
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
@@ -329,7 +297,6 @@ async def start_command(update: Update, context):
     )
 
 async def leaderboard_command(update: Update, context):
-    """Pulls current user's profile and compiles the Grade-Level Weekly Top 10."""
     user_id = update.effective_user.id
     profile = db_get_user_profile(user_id)
 
@@ -341,7 +308,6 @@ async def leaderboard_command(update: Update, context):
     user_marks = profile['total_marks']
     mastery = get_grade_mastery_title(user_marks)
 
-    # Compile the top 10 weekly responders for this specific grade
     weekly_top = db_get_weekly_leaderboard(grade)
 
     channel_kb = InlineKeyboardMarkup([[
@@ -372,20 +338,16 @@ async def leaderboard_command(update: Update, context):
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
 
 async def run_cloud_server(app, port):
-    """Asynchronous runner to configure the webhook target and start the custom HTTP webserver."""
     PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-    # Set the webhook URL with Telegram manually (pointing to /webhook)
     await app.bot.set_webhook(
         url=f"{PUBLIC_URL}/webhook",
         drop_pending_updates=True
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
-    # Spawn a background task loop to check and publish any scheduled questions immediately upon wake-up
     asyncio.create_task(check_and_publish_scheduled(app))
 
-    # Spawn our completely custom, lightweight async web server on port
     server = await asyncio.start_server(
         lambda r, w: handle_http_request(r, w, app),
         "0.0.0.0",
@@ -408,35 +370,28 @@ def main():
         print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
         return
 
-    # Initialize complete async python-telegram-bot application wrapper
     app = Application.builder().token(token).build()
 
-    # Register core command and callback handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
-    # Start polling or webhook services
     RENDER_PORT = os.getenv("PORT")
 
     if RENDER_PORT:
-        # --- CLOUD PRODUCTION MODE (WEBHOOKS) ---
         print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        # Initialize and start the application so we can make outbound API calls
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
 
-        # Dynamically register the active bot username so build_keyboard can construct deep links automatically
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
         print(f"Registered Bot Username: @{bot_info.username}", flush=True)
 
-        # Execute the async server loop within the event loop
         try:
             loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
         except KeyboardInterrupt:
@@ -446,27 +401,21 @@ def main():
             loop.run_until_complete(app.shutdown())
             print(f"System successfully shut down.", flush=True)
     else:
-        # --- LOCAL DEVELOPMENT/ADMIN MODE (OUTBOUND-ONLY CLI CLIENT) ---
         print("Starting local Admin Dashboard cockpit...", flush=True)
 
-        # We initialize and start the application so we can make outbound API calls
-        # But we DO NOT start any polling listener! This prevents all webhook/polling conflicts!
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
 
-        # Dynamically register the active bot username for local deep-link simulation
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
         print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
 
-        # Run the Admin CLI only if stdin is a real terminal (TTY)
         run_cli = sys.stdin.isatty()
         if run_cli:
             try:
-                # Execute the admin panel using a synchronous runner wrapper
                 loop.run_until_complete(admin_panel(app, engine))
             except KeyboardInterrupt:
                 pass
@@ -475,7 +424,6 @@ def main():
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
         else:
-            # Fallback loop if local is run headless
             import time
             while True:
                 time.sleep(3600)

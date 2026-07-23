@@ -10,10 +10,10 @@ def is_complex(text):
     return any(t in str(text) for t in triggers)
 
 def has_real_diagram(q) -> bool:
-    """Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram or explicitly forces image generation."""
-    if q.get("force_image") or q.get("force_latex", False):
-        return True
-
+    """
+    Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram.
+    This guarantees math formulas use Telegram's native rich text rendering unless a graph is present.
+    """
     tikz = q.get("latex")
     if not tikz:
         return False
@@ -21,7 +21,12 @@ def has_real_diagram(q) -> bool:
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
         return False
 
-    drawing_triggers = [r"\draw", r"\fill", r"\node", r"\addplot", r"\path", r"\grid", r"\axis"]
+    # Check strictly for geometric and visual plotting triggers
+    drawing_triggers = [
+        r"\draw", r"\fill", r"\node", r"\addplot", r"\path", 
+        r"\grid", r"\axis", r"\circle", r"\ellipse", r"\rectangle",
+        r"tikzpicture", r"pgfplots"
+    ]
     return any(trigger in tikz for trigger in drawing_triggers)
 
 def escape_latex(text: str) -> str:
@@ -284,7 +289,6 @@ def create_explanation_assets(q, user_idx, display_id):
     if has_tikz:
         latex_code = build_widescreen_solution_latex(q, display_id, "@grade12EntranceExam", get_day_from_tags(q.get('tags', [])))
 
-    # Advanced compact heading structure
     text_parts = [
         f"<h2>📚 SOLUTION SHEET</h2>"
         f"<p><b>REF:</b> <code>{display_id}</code> | <b>Topic:</b> {escape(q.get('topic', 'General'))}</p>"
@@ -306,7 +310,6 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # Standard-compliant tag boundaries used natively
         label_segment = f"  <li>{color_lbl} <b>{let})</b> {beautify_markdown_math(o_text)}"
         details = []
         if why_text:
