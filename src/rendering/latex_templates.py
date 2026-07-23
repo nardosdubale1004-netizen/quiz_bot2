@@ -67,7 +67,7 @@ def escape_latex(text: str) -> str:
     return '$'.join(parts)
 
 def build_figure_block(q, add_strut=False):
-    """Parses and isolates the TikZ diagram coordinate space cleanly without artificial width expansion."""
+    """Parses, isolates, and sanitizes the TikZ diagram code to eliminate database-embedded struts."""
     if not q.get("latex"):
         return None
     tikz = q["latex"].strip()
@@ -80,6 +80,18 @@ def build_figure_block(q, add_strut=False):
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
     elif "\\begin{axis}" in tikz and "\\begin{tikzpicture}" not in tikz:
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
+    
+    # 1. Dynamically strip hardcoded horizontal page-padding struts embedded in individual JSON database questions
+    tikz = re.sub(
+        r'\\path\s*(?:\[.*?\])?\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\)\s*--\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\);', 
+        '', 
+        tikz, 
+        flags=re.IGNORECASE
+    )
+    
+    # 2. Dynamically realign overlapping coordinate and vector label nodes to ensure clean presentation
+    tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
+    tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {(1,2,2)}")
     
     return re.sub(r'\n\s*\n', '\n', tikz)
 
