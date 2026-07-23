@@ -45,29 +45,37 @@ def get_next_rank_info(marks: int) -> str:
     return "Maximum Mastery Level Reached! 🌌"
 
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
-    correct_letter = chr(65 + q['correct_option'])
+    correct_idx = q['correct_option']
+    letters = ["A", "B", "C", "D", "E"]
+    correct_letter = letters[correct_idx] if correct_idx < len(letters) else "?"
 
     # 1. Continuation Layout
     if continuation:
         exp = q.get("poll_explanation", {})
-        why = exp.get('why', 'N/A')
+        why = exp.get('why', 'No detailed solution available.')
         rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
         explanation_part = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<b>Principle:</b>\n"
             f"<blockquote expandable>"
-            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
-            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+            f"🏛️ <b>{beautify_markdown_math(rule_text)}</b>"
+            f"</blockquote>\n\n"
+            f"<b>Step-by-Step Derivation:</b>\n"
+            f"{beautify_markdown_math(why)}\n"
         )
-        if exp.get('analogy'): explanation_part += f"\n\n<b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}"
-        if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
-        explanation_part += "</blockquote>\n"
+        if exp.get('analogy'):
+            explanation_part += f"\n💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}\n"
+        if exp.get('memory_tip'):
+            explanation_part += f"\n🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
+        analysis_list = ["🔍 <b>OPTION-BY-OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
-        for i, o_text in enumerate(q['options']):
-            letter = chr(65 + i)
-            status_icon = "🟢" if letter == correct_letter else "⚪"
+        for i, o_text in enumerate(q.get('options', [])):
+            let = letters[i] if i < len(letters) else str(i+1)
+            is_opt_correct = (i == correct_idx)
+            status_icon = "🟢" if is_opt_correct else "⚪"
+            verdict_badge = "✅ <b>Correct.</b>" if is_opt_correct else "❌ <i>Incorrect.</i>"
 
             why_text = ""
             example_text = ""
@@ -75,46 +83,51 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"• {status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
+            cleaned_opt_val = lite_math(o_text)
+            cleaned_why = beautify_markdown_math(why_text)
+
+            analysis_line = f"• {status_icon} <b>Option {let} ({cleaned_opt_val}):</b> {verdict_badge} {cleaned_why}"
             if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+                cleaned_example = beautify_markdown_math(example_text)
+                analysis_line += f" (<i>e.g., {cleaned_example}</i>)"
             analysis_list.append(analysis_line)
+
         analysis_str = "\n".join(analysis_list)
 
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n{analysis_str}"
-        spoiler_content = replace_code_with_italic(spoiler_content)
-
         connection_header = (
-            f"📖 <b>DETAILED SOLUTION (CONTINUATION)</b> | REF: <code>{display_id}</code>\n"
+            f"📖 <b>DETAILED SOLUTION (CONTINUATION)</b> • REF <code>{display_id}</code>\n"
             f"<hr/>\n"
         )
         return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
 
     # 2. Main Layout
     day_str = get_day_from_tags(q.get('tags', []))
+    subject_str = q.get('subject', '').upper()
+    topic_str = q.get('topic', 'General')
+
     header = (
-        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n"
+        f"🎓 <b>{subject_str}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic_str}</b> • 📅 {day_str}\n"
         f"<hr/>\n\n"
     )
 
-    # Question text is placed in a highlighted callout container to create a clean problem deck
     body = (
-        f"\n\n"
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b>\n"
         f"{beautify_markdown_math(q['question'])}"
-        f"</blockquote>"
-        f"\n\n"
+        f"</blockquote>\n\n"
     )
 
     opts_list = ["📋 <b>OPTIONS:</b>"]
     for i, o in enumerate(q['options']):
-        opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
+        let = letters[i] if i < len(letters) else str(i+1)
+        clean_opt = beautify_markdown_math(o)
+        opts_list.append(f"• <b>{let})</b> {clean_opt}")
     opts_block = "\n".join(opts_list) + "\n\n"
 
     exp = q.get("poll_explanation", {})
-    why = exp.get('why', 'N/A')
+    why = exp.get('why', 'No detailed solution available.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
     if compact:
@@ -123,8 +136,8 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
             f"📝 <b>SOLUTION SUMMARY:</b>\n"
             f"<blockquote expandable>"
-            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
-            f"<b>Explanation:</b>\n{beautify_markdown_math(truncated_why)}"
+            f"🏛️ <b>Principle:</b> {beautify_markdown_math(rule_text)}\n\n"
+            f"<b>Explanation:</b> {beautify_markdown_math(truncated_why)}"
             f"</blockquote>\n"
         )
         footer_note = (
@@ -134,19 +147,25 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     else:
         explanation_part = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<b>Principle:</b>\n"
             f"<blockquote expandable>"
-            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
-            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+            f"🏛️ <b>{beautify_markdown_math(rule_text)}</b>"
+            f"</blockquote>\n\n"
+            f"<b>Step-by-Step Derivation:</b>\n"
+            f"{beautify_markdown_math(why)}\n\n"
         )
-        if exp.get('analogy'): explanation_part += f"\n\n<b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}"
-        if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
-        explanation_part += "</blockquote>\n"
+        if exp.get('analogy'):
+            explanation_part += f"💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'):
+            explanation_part += f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
+        analysis_list = ["🔍 <b>OPTION-BY-OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
-            letter = chr(65 + i)
-            status_icon = "🟢" if letter == correct_letter else "⚪"
+            let = letters[i] if i < len(letters) else str(i+1)
+            is_opt_correct = (i == correct_idx)
+            status_icon = "🟢" if is_opt_correct else "⚪"
+            verdict_badge = "✅ <b>Correct.</b>" if is_opt_correct else "❌ <i>Incorrect.</i>"
 
             why_text = ""
             example_text = ""
@@ -154,16 +173,19 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"• {status_icon} <b>{letter}:</b> {beautify_markdown_math(why_text)}"
+            cleaned_opt_val = lite_math(o_text)
+            cleaned_why = beautify_markdown_math(why_text)
+
+            analysis_line = f"• {status_icon} <b>Option {let} ({cleaned_opt_val}):</b> {verdict_badge} {cleaned_why}"
             if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+                cleaned_example = beautify_markdown_math(example_text)
+                analysis_line += f" (<i>e.g., {cleaned_example}</i>)"
             analysis_list.append(analysis_line)
+
         analysis_str = "\n".join(analysis_list)
 
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{explanation_part}\n{analysis_str}"
         footer_note = ""
-
-    spoiler_content = replace_code_with_italic(spoiler_content)
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
@@ -178,29 +200,37 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
     user_letter = letters[user_idx] if user_idx < len(letters) else "?"
-    user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
+    is_correct_user = (user_idx == correct_idx)
+    user_status = "🟩 CORRECT" if is_correct_user else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
 
     # 1. Continuation Layout
     if continuation:
         exp = q.get("poll_explanation", {})
-        why = exp.get('why', 'N/A')
+        why = exp.get('why', 'No detailed solution available.')
         rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
+        
         explanation_part = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<b>Principle:</b>\n"
             f"<blockquote expandable>"
-            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
-            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+            f"🏛️ <b>{beautify_markdown_math(rule_text)}</b>"
+            f"</blockquote>\n\n"
+            f"<b>Step-by-Step Derivation:</b>\n"
+            f"{beautify_markdown_math(why)}\n"
         )
-        if exp.get('analogy'): explanation_part += f"\n\n<b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}"
-        if exp.get('memory_tip'): explanation_part += f"\n\n<b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}"
-        explanation_part += "</blockquote>\n"
+        if exp.get('analogy'):
+            explanation_part += f"\n💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}\n"
+        if exp.get('memory_tip'):
+            explanation_part += f"\n🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
+        analysis_list = ["🔍 <b>OPTION-BY-OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
-        for i, o_text in enumerate(q['options']):
-            let = chr(65 + i)
-            status_icon = "🟢" if let == correct_letter else "⚪"
+        for i, o_text in enumerate(q.get('options', [])):
+            let = letters[i] if i < len(letters) else str(i+1)
+            is_opt_correct = (i == correct_idx)
+            status_icon = "🟢" if is_opt_correct else "⚪"
+            verdict_badge = "✅ <b>Correct.</b>" if is_opt_correct else "❌ <i>Incorrect.</i>"
 
             why_text = ""
             example_text = ""
@@ -208,56 +238,67 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"• {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            cleaned_opt_val = lite_math(o_text)
+            cleaned_why = beautify_markdown_math(why_text)
+
+            analysis_line = f"• {status_icon} <b>Option {let} ({cleaned_opt_val}):</b> {verdict_badge} {cleaned_why}"
             if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+                cleaned_example = beautify_markdown_math(example_text)
+                analysis_line += f" (<i>e.g., {cleaned_example}</i>)"
             analysis_list.append(analysis_line)
+
         analysis_str = "\n".join(analysis_list)
 
-        explanation_part = replace_code_with_italic(explanation_part)
-        analysis_block = replace_code_with_italic(analysis_str)
-
         connection_header = (
-            f"📖 <b>DETAILED DERIVATION (CONTINUATION)</b> | REF: <code>{display_id}</code>\n"
+            f"📖 <b>DETAILED DERIVATION (CONTINUATION)</b> • REF <code>{display_id}</code>\n"
             f"<hr/>\n"
         )
-        return f"{connection_header}{explanation_part}\n{analysis_block}"
+        return f"{connection_header}{explanation_part}\n{analysis_str}"
 
     # 2. Main Layout with Sleek Header
     day_str = get_day_from_tags(q.get('tags', []))
+    subject_str = q.get('subject', '').upper()
+    topic_str = q.get('topic', 'General')
+
     header = (
-        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n"
+        f"🎓 <b>{subject_str}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic_str}</b> • 📅 {day_str}\n"
         f"<hr/>\n\n"
     )
 
-    # Accent container creates distinct padding boundaries around the mathematical problem text
     body = (
-        f"\n\n"
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b>\n"
         f"{beautify_markdown_math(q['question'])}"
-        f"</blockquote>"
-        f"\n\n"
+        f"</blockquote>\n\n"
     )
 
     opts_list = ["📋 <b>OPTIONS:</b>"]
     for i, o in enumerate(q['options']):
-        opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
+        let = letters[i] if i < len(letters) else str(i+1)
+        clean_opt = beautify_markdown_math(o)
+        opts_list.append(f"• <b>{let})</b> {clean_opt}")
     opts_block = "\n".join(opts_list) + "\n\n"
 
-    status_block = f"<hr/>\n🎯 <b>Your Selection:</b> {user_letter} ({user_status})\n⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
+    status_block = (
+        f"<hr/>\n"
+        f"🎯 <b>Your Selection:</b> {user_letter} ({user_status})\n"
+        f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
+    )
+
     exp = q.get("poll_explanation", {})
-    why = exp.get('why', 'N/A')
+    why = exp.get('why', 'No detailed solution available.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
     if compact:
         truncated_why = smart_truncate_html(why, 300)
         explanation_block = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<b>Principle:</b>\n"
             f"<blockquote expandable>"
-            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
-            f"<b>Explanation:</b>\n{beautify_markdown_math(truncated_why)}"
+            f"🏛️ <b>{beautify_markdown_math(rule_text)}</b>\n\n"
+            f"<b>Explanation Summary:</b>\n"
+            f"{beautify_markdown_math(truncated_why)}"
             f"</blockquote>\n"
         )
         analysis_block = ""
@@ -268,21 +309,25 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     else:
         explanation_block = (
             f"📝 <b>DETAILED SOLUTION:</b>\n"
+            f"<b>Principle:</b>\n"
             f"<blockquote expandable>"
-            f"<b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n\n"
-            f"<b>Explanation:</b>\n{beautify_markdown_math(why)}"
+            f"🏛️ <b>{beautify_markdown_math(rule_text)}</b>"
+            f"</blockquote>\n\n"
+            f"<b>Step-by-Step Derivation:</b>\n"
+            f"{beautify_markdown_math(why)}\n\n"
         )
-        if exp.get('analogy'): explanation_block += f"   ▪️ <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}\n\n"
-        if exp.get('memory_tip'): explanation_block += f"   ▪️ <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n"
-        explanation_block += "</blockquote>\n"
-        explanation_block += "\n"
+        if exp.get('analogy'):
+            explanation_block += f"💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}\n\n"
+        if exp.get('memory_tip'):
+            explanation_block += f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}\n\n"
 
-        analysis_list = ["🔍 <b>OPTION BREAKDOWN:</b>"]
+        analysis_list = ["🔍 <b>OPTION-BY-OPTION BREAKDOWN:</b>"]
         options_analysis = q.get('options_analysis', [])
         for i, o_text in enumerate(q['options']):
-            let = chr(65 + i)
-            is_correct = (let == correct_letter)
-            status_icon = "🟢" if is_correct else "⚪"
+            let = letters[i] if i < len(letters) else str(i+1)
+            is_opt_correct = (i == correct_idx)
+            status_icon = "🟢" if is_opt_correct else "⚪"
+            verdict_badge = "✅ <b>Correct.</b>" if is_opt_correct else "❌ <i>Incorrect.</i>"
 
             why_text = ""
             example_text = ""
@@ -290,40 +335,41 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
                 why_text = options_analysis[i].get('why', '')
                 example_text = options_analysis[i].get('example', '')
 
-            analysis_line = f"• {status_icon} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+            cleaned_opt_val = lite_math(o_text)
+            cleaned_why = beautify_markdown_math(why_text)
+
+            analysis_line = f"• {status_icon} <b>Option {let} ({cleaned_opt_val}):</b> {verdict_badge} {cleaned_why}"
             if example_text:
-                analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
+                cleaned_example = beautify_markdown_math(example_text)
+                analysis_line += f" (<i>e.g., {cleaned_example}</i>)"
             analysis_list.append(analysis_line)
+
         analysis_block = "\n".join(analysis_list) + "\n"
         footer_note = ""
 
-    explanation_block = replace_code_with_italic(explanation_block)
-    analysis_block = replace_code_with_italic(analysis_block)
-
-    # 3. Textbook styled performance metrics (plain list instead of tables)
     score_segment = ""
     if perf_card:
-        if not perf_card['first_try']:
+        if not perf_card.get('first_try', True):
             marks_notice = "⚠️ <i>Practice Mode: Answer modified. No marks awarded.</i>"
-        elif perf_card['is_bonus_winner']:
+        elif perf_card.get('is_bonus_winner'):
             marks_notice = "⚡ <b>EARLY BIRD BONUS!</b> You solved this first! <b>(+10 Marks)</b>"
-        elif perf_card['marks_awarded'] > 0:
-            marks_notice = "✅ <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b>"
+        elif perf_card.get('marks_awarded', 0) > 0:
+            marks_notice = "✅ <b>CORRECT ANSWER!</b> Standard score awarded. <b>(+2 Marks)</b>"
         else:
-            marks_notice = "❌ <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
+            marks_notice = "❌ <b>INCORRECT ANSWER.</b> No marks awarded. <b>(+0 Marks)</b>"
 
-        mastery = get_grade_mastery_title(perf_card['total_marks'])
-        next_rank_info = get_next_rank_info(perf_card['total_marks'])
+        mastery = get_grade_mastery_title(perf_card.get('total_marks', 0))
+        next_rank_info = get_next_rank_info(perf_card.get('total_marks', 0))
 
         score_segment = (
             f"<hr/>\n"
             f"<h3>📊 STUDY PERFORMANCE CARD</h3>\n"
             f"{marks_notice}\n\n"
-            f"• 🎒 <b>Level:</b> Grade {perf_card.get('grade', 12)}\n"
-            f"• 📝 <b>Practice Score:</b> {perf_card['total_marks']} Marks\n"
-            f"• 🏆 <b>Mastery Rank:</b> {mastery}\n"
-            f"• 🎯 <b>Accuracy:</b> {perf_card['accuracy']}% ({perf_card['correct']} of {perf_card['total']} solved correctly)\n\n"
-            f"💡 <i>Target: {next_rank_info}</i>\n"
+            f"• 🎒 <b>Academic Level:</b> Grade {perf_card.get('grade', 12)}\n"
+            f"• 📝 <b>Practice Score:</b> {perf_card.get('total_marks', 0)} Marks\n"
+            f"• 🏆 <b>Mastery Level:</b> {mastery}\n"
+            f"• 🎯 <b>Accuracy Rate:</b> {perf_card.get('accuracy', 0)}% ({perf_card.get('correct', 0)} of {perf_card.get('total', 0)} solved correctly)\n\n"
+            f"💡 <b>Next Target:</b> <i>{next_rank_info}</i>\n"
         )
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
