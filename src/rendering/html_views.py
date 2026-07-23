@@ -98,7 +98,15 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         f"<hr/>\n\n"
     )
 
-    body = f"📝 <b>Question:</b>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
+    # Question text is placed in a highlighted callout container to create a clean problem deck
+    body = (
+        f"\n\n"
+        f"<blockquote>"
+        f"<b>PROBLEM PROPOSITION</b>\n"
+        f"{beautify_markdown_math(q['question'])}"
+        f"</blockquote>"
+        f"\n\n"
+    )
 
     opts_list = ["📋 <b>OPTIONS:</b>"]
     for i, o in enumerate(q['options']):
@@ -159,7 +167,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
-        f"\n<hr/>\n"
+        f"\n\n<hr/>\n"
         f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
         f"{' '.join(hashtag_list)}{footer_note}"
     )
@@ -223,7 +231,15 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         f"<hr/>\n\n"
     )
 
-    body = f"📝 <b>Question:</b>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
+    # Accent container creates distinct padding boundaries around the mathematical problem text
+    body = (
+        f"\n\n"
+        f"<blockquote>"
+        f"<b>PROBLEM PROPOSITION</b>\n"
+        f"{beautify_markdown_math(q['question'])}"
+        f"</blockquote>"
+        f"\n\n"
+    )
 
     opts_list = ["📋 <b>OPTIONS:</b>"]
     for i, o in enumerate(q['options']):
@@ -312,7 +328,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
-        f"\n<hr/>\n"
+        f"\n\n<hr/>\n"
         f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
         f"{' '.join(hashtag_list)}{footer_note}"
     )

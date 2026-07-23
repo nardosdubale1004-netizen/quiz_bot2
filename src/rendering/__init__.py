@@ -61,7 +61,16 @@ class UIFactory:
             img_url = None
 
         from src.typography import beautify_markdown_math
-        caption_q = f"📝 <b>Question:</b>\n{beautify_markdown_math(q['question'])}"
+        
+        # Wrapped inside a textbook callout blockquote to add margins, padding, and left vertical accent
+        caption_q = (
+            f"\n\n"
+            f"<blockquote>"
+            f"<b>PROBLEM PROPOSITION</b>\n"
+            f"{beautify_markdown_math(q['question'])}"
+            f"</blockquote>"
+            f"\n\n"
+        )
 
         if has_tikz:
             caption_q += '\n\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
@@ -69,7 +78,7 @@ class UIFactory:
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
 
-        # Minimalist modern study header
+        # Minimalist modern study header with structured spacing
         subject = q.get('subject','').upper()
         topic = q.get('topic','General')
         header = (
@@ -80,7 +89,7 @@ class UIFactory:
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         footer = (
-            f"\n<hr/>\n"
+            f"\n\n<hr/>\n"
             f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
             f"{' '.join(hashtag_list)}"
         )
