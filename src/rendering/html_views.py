@@ -46,13 +46,6 @@ def get_next_rank_info(marks: int) -> str:
     if marks < 1200: return f"Earn <b>{1200 - marks} Marks</b> to unlock <b>Legend</b>"
     return "Maximum Mastery Level Reached! 🌌"
 
-def indent_text(text: str, spaces: int = 6) -> str:
-    """Aligns subsequent lines with strict nested indentation to match the parent block."""
-    if not text:
-        return ""
-    indent = " " * spaces
-    return "\n".join(indent + line if line.strip() else "" for line in text.split("\n"))
-
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
     """Generates the final plain-text static fallback view for closed quizzes."""
     correct_letter = chr(65 + q['correct_option'])
