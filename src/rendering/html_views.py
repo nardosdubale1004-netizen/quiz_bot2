@@ -95,7 +95,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     header = (
         f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
         f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<hr/>\n\n"
     )
 
     body = f"📝 <b>Question:</b>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
@@ -156,14 +156,14 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         footer_note = ""
 
     spoiler_content = replace_code_with_italic(spoiler_content)
-    
+
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
-        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"\n<hr/>\n"
         f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
         f"{' '.join(hashtag_list)}{footer_note}"
     )
-    
+
     return f"{header}{body}{opts_block}<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer}"
 
 def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_card=None, continuation=False) -> str:
@@ -220,7 +220,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     header = (
         f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
         f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<hr/>\n\n"
     )
 
     body = f"📝 <b>Question:</b>\n<p>{beautify_markdown_math(q['question'])}</p>\n\n"
@@ -312,7 +312,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
-        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"\n<hr/>\n"
         f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
         f"{' '.join(hashtag_list)}{footer_note}"
     )

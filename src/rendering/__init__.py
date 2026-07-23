@@ -75,12 +75,12 @@ class UIFactory:
         header = (
             f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
             f"📐 <b>{topic}</b> • 📅 {day_str}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"<hr/>\n\n"
         )
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         footer = (
-            f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"\n<hr/>\n"
             f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
             f"{' '.join(hashtag_list)}"
         )
