@@ -170,25 +170,20 @@ async def admin_panel(app, engine: QuizEngine):
                         )
                         msg_type = "poll"
                     else:
-                        has_tikz, caption = UIFactory.create_question_assets(q, last_seq)
+                        img_url, caption = UIFactory.create_question_assets(q, last_seq)
                         kb = UIFactory.build_keyboard(q, last_seq)
                         
                         media_bytes = None
-                        if has_tikz:
-                            question_block = UIFactory.build_question_text_block(q, last_seq)
-                            figure_block = UIFactory.build_figure_block(q, add_strut=True)
-                            options_block = UIFactory.build_options_block(q)
-                            compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
-                            img_url = UIFactory.get_latex_url(compiled_latex)
+                        if img_url:
                             async with httpx.AsyncClient() as client:
-                                resp = await fetch_kroki_image(client, img_url, compiled_latex)
+                                resp = await fetch_kroki_image(client, img_url)
                                 if resp and resp.status_code == 200:
                                     media_bytes = resp.content
                                 else:
                                     raise Exception("Kroki rendering failure.")
                         
                         m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb, media_bytes=media_bytes)
-                        msg_type = "photo" if has_tikz else "text"
+                        msg_type = "photo" if img_url else "text"
 
                     # Save state dynamically to PostgreSQL Neon table
                     engine.db_save_track(m.message_id, q['id'], "active", last_seq, "native" if choice == "1" else "premium", msg_type)
@@ -287,19 +282,19 @@ async def admin_panel(app, engine: QuizEngine):
                             engine.db_update_track_status(mid, "closed")
                         else:
                             if v.get('type') == 'native': continue
-                            has_tikz, cap = UIFactory.create_question_assets(q, ref)
+                            img_url, cap = UIFactory.create_question_assets(q, ref)
                             kb = UIFactory.build_keyboard(q, ref)
                             if v.get('msg_type') == "photo":
                                 async with httpx.AsyncClient() as client:
                                     # If has diagram, compile the vector TikZ image cleanly
                                     media_bytes = None
-                                    if has_tikz:
+                                    if img_url:
                                         question_block = UIFactory.build_question_text_block(q, ref)
                                         figure_block = UIFactory.build_figure_block(q, add_strut=True)
                                         options_block = UIFactory.build_options_block(q)
                                         compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
-                                        img_url = UIFactory.get_latex_url(compiled_latex)
-                                        resp = await fetch_kroki_image(client, img_url, compiled_latex)
+                                        img_url_kroki = UIFactory.get_latex_url(compiled_latex)
+                                        resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
                                         if resp and resp.status_code == 200:
                                             media_bytes = resp.content
                                     

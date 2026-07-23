@@ -54,7 +54,8 @@ class UIFactory:
             img_url = None
 
         from src.typography import beautify_markdown_math
-        # Standard HTML Heading 3 tag used natively for question canvas title
+        # UPGRADED: Standard HTML Heading 3 tag used natively for question canvas title
+        # Embed the image inline inside the text block for Rich HTML 10.2
         caption_q = f"<h3>📝 Question:</h3>\n{beautify_markdown_math(q['question'])}"
         
         if has_tikz:
@@ -71,8 +72,6 @@ class UIFactory:
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         final_caption = f"{header}{caption_q}\n\n{' '.join(hashtag_list)}"
-        
-        # Return standard 3-tuple expected by the codebase (img_url, final_caption, metadata)
         return img_url, final_caption, None
 
     @classmethod

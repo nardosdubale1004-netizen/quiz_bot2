@@ -118,45 +118,28 @@ async def check_and_publish_scheduled(app):
     last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
 
     try:
-        has_tikz = bool(q.get("latex"))
-        if not has_tikz and not UIFactory.is_complex(q["question"]):
-            # Native Poll
-            poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
-            m = await app.bot.send_poll(
-                chat_id=channel,
-                question=lite_math(q['question'])[:290],
-                options=[lite_math(o)[:90] for o in q['options']],
-                type=Poll.QUIZ,
-                correct_option_id=q['correct_option'],
-                explanation=poll_hint,
-                explanation_parse_mode="HTML"
-            )
-            msg_type = "poll"
-            type_str = "native"
-        else:
-            # Premium Photo UI
-            has_tikz, caption = UIFactory.create_question_assets(q, last_seq)
-            kb = UIFactory.build_keyboard(q, last_seq)
-            
-            media_bytes = None
-            if has_tikz:
-                # Compile standard LaTeX document layout
-                question_block = UIFactory.build_question_text_block(q, last_seq)
-                figure_block = UIFactory.build_figure_block(q, add_strut=True)
-                options_block = UIFactory.build_options_block(q)
-                compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
-                img_url = UIFactory.get_latex_url(compiled_latex)
-                async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url, compiled_latex)
-                    if resp and resp.status_code == 200:
-                        media_bytes = resp.content
-                    else:
-                        raise Exception("Kroki failed to compile scheduled asset.")
+        has_tikz, caption = UIFactory.create_question_assets(q, last_seq)
+        kb = UIFactory.build_keyboard(q, last_seq)
+        
+        media_bytes = None
+        if has_tikz:
+            # Compile standard LaTeX document layout
+            question_block = UIFactory.build_question_text_block(q, last_seq)
+            figure_block = UIFactory.build_figure_block(q, add_strut=True)
+            options_block = UIFactory.build_options_block(q)
+            compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
+            img_url = UIFactory.get_latex_url(compiled_latex)
+            async with httpx.AsyncClient() as client:
+                resp = await fetch_kroki_image(client, img_url, compiled_latex)
+                if resp and resp.status_code == 200:
+                    media_bytes = resp.content
+                else:
+                    raise Exception("Kroki failed to compile scheduled asset.")
 
-            # Publish securely
-            m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
-            msg_type = "photo" if has_tikz else "text"
-            type_str = "premium"
+        # Publish securely
+        m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
+        msg_type = "photo" if has_tikz else "text"
+        type_str = "premium"
 
         # Register in sent_tracks and mark as sent in questions table
         engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)

@@ -37,7 +37,7 @@ def convert_to_legacy_html(rich_html: str) -> str:
     # Replace <li> with bullet point, strip <ul> and </ul>
     text = re.sub(r'<li>', "  • ", text)
     text = re.sub(r'</li>', "\n", text)
-    text = re.sub(r'</?u[lo](?:\s+[^>]?>)?', "", text)
+    text = re.sub(r'</?u[lo](?:\s+[^>]*)?>', "", text)
     
     # 6. Convert tables to clean plain-text key-value blocks
     def table_sub(match):

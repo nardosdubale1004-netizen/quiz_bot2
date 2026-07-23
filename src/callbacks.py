@@ -122,18 +122,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 # Update database tracking
                 engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
 
-            has_tikz, caption = UIFactory.create_question_assets(question_data, d_id)
+            img_url, caption = UIFactory.create_question_assets(question_data, d_id)
             orig_kb = UIFactory.build_keyboard(question_data, d_id)
 
-            if has_tikz:
+            if img_url:
                 # We compile standard LaTeX layout elements
                 question_block = UIFactory.build_question_text_block(question_data, d_id)
                 figure_block = UIFactory.build_figure_block(question_data, add_strut=True)
                 options_block = UIFactory.build_options_block(question_data)
                 compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block)
-                img_url = UIFactory.get_latex_url(compiled_latex)
+                img_url_kroki = UIFactory.get_latex_url(compiled_latex)
                 async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url, compiled_latex)
+                    resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
                     if resp and resp.status_code == 200:
                         legacy_caption = convert_to_legacy_html(caption)
                         media = InputMediaPhoto(media=resp.content, caption=legacy_caption, parse_mode="HTML")
