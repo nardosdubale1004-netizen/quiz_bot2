@@ -4,7 +4,6 @@ from datetime import datetime
 from src.typography import UNICODE_TO_LATEX
 
 def is_complex(text):
-    """Determines if a string contains advanced mathematical expressions or layout symbols."""
     if not text: return False
     triggers = [r"\begin", r"\frac", r"\int", r"\sum", r"\vec", r"\addplot", r"\\", r"\matrix", r"\cases", r"\sqrt{"]
     return any(t in str(text) for t in triggers)
@@ -12,16 +11,21 @@ def is_complex(text):
 def has_real_diagram(q) -> bool:
     """
     Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram.
-    This guarantees math formulas use Telegram's native rich text rendering unless a graph is present.
+    Guarantees math formulas use Telegram's native rich text rendering unless a graph is present.
     """
-    if q.get("force_image") or q.get("force_latex", False):
-        return True
-
-    tikz = q.get("latex")
-    if not tikz:
+    # Safety Check: If there is no LaTeX drawing code, never try to compile a diagram
+    if not q.get("latex"):
+        print(f"\033[93m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} has no 'latex' payload. Bypassing compilation (diagram: False).")
         return False
+
+    if q.get("force_image") or q.get("force_latex", False):
+        print(f"\033[92m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} forces image output (diagram: True).")
+        return True
+    
+    tikz = q.get("latex")
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
+        print(f"\033[93m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} contains empty tikz block. Bypassing compilation (diagram: False).")
         return False
 
     drawing_triggers = [
@@ -29,7 +33,9 @@ def has_real_diagram(q) -> bool:
         r"\grid", r"\axis", r"\circle", r"\ellipse", r"\rectangle",
         r"tikzpicture", r"pgfplots"
     ]
-    return any(trigger in tikz for trigger in drawing_triggers)
+    has_trigger = any(trigger in tikz for trigger in drawing_triggers)
+    print(f"\033[96m[DIAGRAM SAFE-GUARD]\033[0m Checked {q.get('id')} for visual triggers ---> result: {has_trigger}")
+    return has_trigger
 
 def escape_latex(text: str) -> str:
     if not text:
@@ -67,22 +73,16 @@ def escape_latex(text: str) -> str:
     return '$'.join(parts)
 
 def scale_tikz_block(tikz_code: str, scale_factor: float = 0.75) -> str:
-    """
-    Safely wraps a TikZ environment block in a LaTeX \scalebox to scale the
-    drawing dynamically without modifying the environment optional arguments.
-    """
     if not tikz_code:
         return ""
     return f"\\scalebox{{{scale_factor}}}{{\n{tikz_code.strip()}\n}}"
 
 def build_figure_block(q, add_strut=False):
-    """Parses, isolates, and sanitizes the TikZ diagram code to eliminate database-embedded struts."""
     if not q.get("latex"):
         return None
     tikz = q["latex"].strip()
     tikz = re.sub(r'\n\s*\n', '\n', tikz)
 
-    # Strip outer horizontal boxes (like \makebox, \mbox, \hbox) that conflict with the preview package.
     tikz = re.sub(r'\\makebox\s*(?:\[[^\]]*\])*\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\mbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\hbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
@@ -96,7 +96,6 @@ def build_figure_block(q, add_strut=False):
     elif "\\begin{axis}" in tikz and "\\begin{tikzpicture}" not in tikz:
         tikz = "\\begin{tikzpicture}%\n" + tikz + "%\n\\end{tikzpicture}"
 
-    # 1. Dynamically strip hardcoded horizontal page-padding struts embedded in individual JSON database questions
     tikz = re.sub(
         r'\\path\s*(?:\[.*?\])?\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\)\s*--\s*\(\[xshift=[^)]+\]current\s+bounding\s+box\.[^)]+\);',
         '',
@@ -104,10 +103,8 @@ def build_figure_block(q, add_strut=False):
         flags=re.IGNORECASE
     )
 
-    # 2. Dynamically realign overlapping coordinate and vector label nodes to ensure clean presentation
     tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
     tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {(1,2,2)}")
-
     return re.sub(r'\n\s*\n', '\n', tikz)
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str, display_id: str = None) -> str:
@@ -121,10 +118,7 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{options_block}\n\\end{{minipage}}")
 
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
-
-    # Format the footer strictly inside a centered tabular row to force inline presentation
     if display_id:
-         print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
          footer_text = f"\\begin{{tabular}}{{@{{}}c@{{}}}} Q.REF: {display_id} \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip {escaped_watermark} \\end{{tabular}}"
     else:
          footer_text = f"\\begin{{tabular}}{{@{{}}c@{{}}}} \\telegramicon \\enskip {escaped_watermark} \\end{{tabular}}"
@@ -177,8 +171,6 @@ __BODY_CONTENT__
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
-    print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
-
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -235,7 +227,6 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"  }}\n"
         f"\\end{{tikzpicture}}"
     )
-    print(f"[CONSOLE LOG] formatting Q.REF: {display_id} and Telegram username {watermark} on the SAME LINE using a shrink version of the icon.")
 
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
@@ -349,8 +340,7 @@ def sanitize_tag_to_hashtag(tag):
     return f"#{tag}"
 
 def create_explanation_assets(q, user_idx, display_id):
-    from html import escape
-    from src.typography import beautify_markdown_math
+    from src.rendering.html_views import replace_code_with_italic
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
 
@@ -365,12 +355,12 @@ def create_explanation_assets(q, user_idx, display_id):
         figure_block = build_figure_block(q, add_strut=False)
         if figure_block:
             latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
+            print(f"\033[92m[ASSETS DEBUG]\033[0m Diagram rendering initiated for explanation canvas REF: {display_id}")
         else:
             has_tikz = False
 
     subject = q.get('subject','').upper()
     topic = q.get('topic','General')
-    from src.rendering.latex_templates import get_day_from_tags
     day_str = get_day_from_tags(q.get('tags', []))
     header = (
         f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
@@ -411,4 +401,4 @@ def create_explanation_assets(q, user_idx, display_id):
     text_parts.append(footer)
 
     caption_html = "\n".join(text_parts)
-    return latex_code, caption_html
+    return latex_code, replace_code_with_italic(caption_html)
