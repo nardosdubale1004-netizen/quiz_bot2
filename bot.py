@@ -402,7 +402,11 @@ def main():
 
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
-        
+
+        # Clean up any active webhook conflict from cloud deployments before polling
+        print("Clearing active webhook to prevent polling conflict...", flush=True)
+        loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
+
         # Start background polling updater so students can receive explanation cards
         loop.run_until_complete(app.updater.start_polling())
 
