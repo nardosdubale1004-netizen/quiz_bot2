@@ -10,7 +10,8 @@ from src.rendering.latex_templates import (
     sanitize_tag_to_hashtag,
     create_explanation_assets,
     is_complex,
-    has_real_diagram
+    has_real_diagram,
+    has_explanation_diagram
 )
 from src.rendering.html_views import (
     build_closed_static_view,
@@ -43,6 +44,7 @@ class UIFactory:
     get_latex_url = staticmethod(get_latex_url)
     is_complex = staticmethod(is_complex)
     has_real_diagram = staticmethod(has_real_diagram)
+    has_explanation_diagram = staticmethod(has_explanation_diagram)
 
     @classmethod
     def create_question_assets(cls, q, display_id):
@@ -59,17 +61,18 @@ class UIFactory:
 
         from src.typography import beautify_markdown_math
 
+        # Tightened the leading and trailing padding around the question block to prevent mobile layout stretch
         caption_q = (
-            f"\n\n"
+            f"\n"
             f"<blockquote>"
             f"<b>PROBLEM PROPOSITION</b>\n"
             f"{beautify_markdown_math(q['question'])}"
             f"</blockquote>"
-            f"\n\n"
+            f"\n"
         )
 
         if has_tikz:
-            caption_q += '\n\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
+            caption_q += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
@@ -80,12 +83,12 @@ class UIFactory:
         header = (
             f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
             f"📐 <b>{topic}</b> • 📅 {day_str}\n"
-            f"<hr/>\n\n"
+            f"<hr/>\n"
         )
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         footer = (
-            f"\n\n<hr/>\n"
+            f"\n<hr/>\n"
             f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
             f"{' '.join(hashtag_list)}"
         )

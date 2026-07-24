@@ -48,11 +48,9 @@ async def admin_panel(app, engine: QuizEngine):
             clear_screen()
             continue
 
-        # --- 4: AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
         if choice == "4":
             print(f"\n{Style.CYAN}--- DYNAMIC DATABASE QUESTIONS IMPORTER ---{Style.RESET}")
 
-            # Scan the questions/ directory recursively for JSON files
             questions_dir = Path("questions")
             json_files = []
             if questions_dir.exists():
@@ -85,9 +83,11 @@ async def admin_panel(app, engine: QuizEngine):
                     raw_data = json.load(f)
 
                 print(f"{Style.YELLOW}Importing questions to cloud Neon PostgreSQL database...{Style.RESET}")
-                count = engine.db_import_questions(raw_data)
+                count = await asyncio.to_thread(engine.db_import_questions, raw_data)
                 if count > 0:
                     print(f"{Style.GREEN}✅ SUCCESS: {count} questions successfully imported/synced to Neon database.{Style.RESET}")
+                    # Force clean database refresh on next action
+                    await asyncio.to_thread(engine.refresh_database, force=True)
                 else:
                     print(f"{Style.RED}❌ FAILED: No questions were imported. Check your JSON schema.{Style.RESET}")
             except Exception as e:
@@ -95,7 +95,8 @@ async def admin_panel(app, engine: QuizEngine):
             continue
 
         if choice in ["1", "2"]:
-            db = engine.refresh_database()
+            # Explicitly force-reload on admin configuration request
+            db = await asyncio.to_thread(engine.refresh_database, force=True)
             subjects = list(db.keys())
             if not subjects:
                 print(f"{Style.RED}No questions found.{Style.RESET}")
@@ -142,7 +143,7 @@ async def admin_panel(app, engine: QuizEngine):
                 for idx in indices:
                     if 0 <= idx < len(target_list): to_send.append(target_list[idx])
 
-            tracks = engine.db_get_all_tracks()
+            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
             last_seq = tracks.get("last_seq", 100)
             if tracks:
                 last_seq = max(v.get('display_id', 100) for v in tracks.values())
@@ -184,17 +185,14 @@ async def admin_panel(app, engine: QuizEngine):
                         m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb, media_bytes=media_bytes)
                         msg_type = "photo" if img_url else "text"
 
-                    engine.db_save_track(m.message_id, q['id'], "active", last_seq, "premium", msg_type)
+                    await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, "premium", msg_type)
                     print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
-                    
-                    # Standard 1.5 second non-blocking delay to respect Telegram Flood limits
+
                     await asyncio.sleep(1.5)
-                    
+
                 except Exception as e:
                     traceback.print_exc()
                     print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
-                    
-                    # Wait momentarily on failure to allow network clear
                     await asyncio.sleep(2.0)
 
             local_sent_tracks = engine.load_json("logs/sent_tracks.json")
@@ -203,9 +201,9 @@ async def admin_panel(app, engine: QuizEngine):
 
         elif choice == "3":
             while True:
-                engine.refresh_database()
+                await asyncio.to_thread(engine.refresh_database)
                 all_qs = {q['id']: q for sub_list in engine.db.values() for q in sub_list}
-                tracks = engine.db_get_all_tracks()
+                tracks = await asyncio.to_thread(engine.db_get_all_tracks)
 
                 filtered_mids = [mid for mid, data in tracks.items() if mid.isdigit() and data.get("status") == curr_stat and (curr_type == "bop" or (curr_type == "nap" and data.get("type") == "native") or (curr_type == "prp" and data.get("type") == "premium"))]
                 items = sorted(filtered_mids, key=int, reverse=True)
@@ -237,13 +235,12 @@ async def admin_panel(app, engine: QuizEngine):
 
                 if cmd == 'clean':
                     print(f"{Style.YELLOW}Syncing with Telegram...{Style.RESET}")
-                    modified = False
                     for mid, v in list(tracks.items()):
                         if mid.isdigit() and v.get("status") != "deleted":
-                            try: await app.bot.forward_message(bot_info.id, engine.config['channel'], int(mid))
+                            try: 
+                                await app.bot.forward_message(bot_info.id, engine.config['channel'], int(mid))
                             except Exception:
-                                engine.db_update_track_status(mid, "deleted")
-                                modified = True
+                                await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
                     continue
 
                 targets = [items[int(part)-1] for part in cmd.split(',') if part.strip().isdigit() and 0 <= int(part)-1 < len(items)] if cmd.lower() != 'all' else [m for m in items[page*10 : (page+1)*10] if tracks[m].get('type') != 'native']
@@ -255,8 +252,10 @@ async def admin_panel(app, engine: QuizEngine):
                     try:
                         if curr_stat == "active":
                             if "followup_mid" in v:
-                                try: await app.bot.delete_message(engine.config['channel'], int(v["followup_mid"]))
-                                except Exception: pass
+                                try: 
+                                    await app.bot.delete_message(engine.config['channel'], int(v["followup_mid"]))
+                                except Exception: 
+                                    pass
                                 del v["followup_mid"]
                             if v.get('type') == 'native':
                                 await app.bot.stop_poll(engine.config['channel'], int(mid))
@@ -277,17 +276,17 @@ async def admin_panel(app, engine: QuizEngine):
                                                 full_text = UIFactory.build_closed_static_view(q, ref, compact=False, continuation=True)
                                                 if len(full_text) > len(media.caption):
                                                     follow_up = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=full_text, reply_to_message_id=int(mid))
-                                                    engine.db_save_track(mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
+                                                    await asyncio.to_thread(engine.db_save_track, mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
                                             else:
                                                 await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
-                                                engine.db_update_track_status(mid, "closed", followup_mid=None)
+                                                await asyncio.to_thread(engine.db_update_track_status, mid, "closed", followup_mid=None)
                                     else:
                                         await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
-                                        engine.db_update_track_status(mid, "closed", followup_mid=None)
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "closed", followup_mid=None)
                                 else:
                                     await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=UIFactory.build_closed_static_view(q, ref, compact=False), reply_markup=None)
-                                    engine.db_update_track_status(mid, "closed", followup_mid=None)
-                            engine.db_update_track_status(mid, "closed")
+                                    await asyncio.to_thread(engine.db_update_track_status, mid, "closed", followup_mid=None)
+                            await asyncio.to_thread(engine.db_update_track_status, mid, "closed")
                         else:
                             if v.get('type') == 'native': continue
                             img_url, cap = UIFactory.create_question_assets(q, ref)
@@ -309,7 +308,7 @@ async def admin_panel(app, engine: QuizEngine):
                                         await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
                             else:
                                 await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=cap, reply_markup=kb)
-                            engine.db_update_track_status(mid, "active")
+                            await asyncio.to_thread(engine.db_update_track_status, mid, "active")
                     except Exception as e:
                         traceback.print_exc()
                         print(f"Error processing REF:{ref} | {e}")

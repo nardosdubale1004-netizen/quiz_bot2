@@ -1,4 +1,3 @@
-# bot.py
 import os
 import sys
 import json
@@ -90,14 +89,14 @@ async def handle_http_request(reader, writer, app):
             pass
 
 async def check_and_publish_scheduled(app):
-    q = db_get_pending_scheduled_question()
+    q = await asyncio.to_thread(db_get_pending_scheduled_question)
     if not q:
         return
 
     print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
     channel = CONFIG.get("channel")
 
-    tracks = engine.db_get_all_tracks()
+    tracks = await asyncio.to_thread(engine.db_get_all_tracks)
     last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
 
     try:
@@ -132,8 +131,8 @@ async def check_and_publish_scheduled(app):
             msg_type = "photo" if img_url else "text"
             type_str = "premium"
 
-        engine.db_save_track(m.message_id, q['id'], "active", last_seq, type_str, msg_type)
-        db_mark_question_as_sent(q['id'])
+        await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
+        await asyncio.to_thread(db_mark_question_as_sent, q['id'])
         print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
     except Exception as e:
         traceback.print_exc()
@@ -155,14 +154,14 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            tracks = engine.db_get_all_tracks()
+            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
             mid_key = next((k for k, v in tracks.items() if k.isdigit() and int(v.get('display_id')) == display_id), None)
 
             if not mid_key:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
-            engine.refresh_database()
+            await asyncio.to_thread(engine.refresh_database)
             all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
             question_data = all_qs.get(tracks[mid_key]['q_id'])
 
@@ -170,7 +169,7 @@ async def start_command(update: Update, context):
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
                 return
 
-            existing_response = db_get_user_response(user_id, mid_key)
+            existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
 
             if existing_response:
                 original_selection = existing_response['selected_option']
@@ -188,13 +187,13 @@ async def start_command(update: Update, context):
                     except Exception:
                         pass
 
-                perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
+                perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
                 explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
 
-                has_tikz = UIFactory.has_real_diagram(question_data)
-                if has_tikz:
+                has_ex_diag = UIFactory.has_explanation_diagram(question_data)
+                if has_ex_diag:
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
                     latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
                     if latex_code:
@@ -206,20 +205,20 @@ async def start_command(update: Update, context):
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                                 full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
                                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
-                                db_update_private_message_id(user_id, mid_key, f_m.message_id)
+                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                                 return
 
                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
-                db_update_private_message_id(user_id, mid_key, f_m.message_id)
+                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                 return
 
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct, user_selection)
+            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection)
 
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
 
-            has_tikz = UIFactory.has_real_diagram(question_data)
-            if has_tikz:
+            has_ex_diag = UIFactory.has_explanation_diagram(question_data)
+            if has_ex_diag:
                 explanation_html_compact = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=True, perf_card=perf_card)
                 latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
                 if latex_code:
@@ -233,11 +232,11 @@ async def start_command(update: Update, context):
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
                             f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
 
-                            db_update_private_message_id(user_id, mid_key, f_m.message_id)
+                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                             return
 
             f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
-            db_update_private_message_id(user_id, mid_key, f_m.message_id)
+            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
             traceback.print_exc()
@@ -245,7 +244,7 @@ async def start_command(update: Update, context):
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
-    profile = db_get_user_profile(user_id)
+    profile = await asyncio.to_thread(db_get_user_profile, user_id)
     if profile and profile.get("grade"):
         grade = profile['grade']
         user_marks = profile['total_marks']
@@ -292,7 +291,7 @@ async def start_command(update: Update, context):
 
 async def leaderboard_command(update: Update, context):
     user_id = update.effective_user.id
-    profile = db_get_user_profile(user_id)
+    profile = await asyncio.to_thread(db_get_user_profile, user_id)
 
     if not profile:
         await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Please register your grade first by typing /start.")
@@ -302,7 +301,7 @@ async def leaderboard_command(update: Update, context):
     user_marks = profile['total_marks']
     mastery = get_grade_mastery_title(user_marks)
 
-    weekly_top = db_get_weekly_leaderboard(grade)
+    weekly_top = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
 
     channel_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")

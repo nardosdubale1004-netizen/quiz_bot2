@@ -1,4 +1,5 @@
 # src/callbacks.py
+import asyncio
 import traceback
 import httpx
 import io
@@ -18,7 +19,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
     if action == "set_grade":
         grade = int(d_id)
-        db_set_user_grade(query.from_user.id, grade)
+        await asyncio.to_thread(db_set_user_grade, query.from_user.id, grade)
         await query.answer(f"Grade {grade} registered!")
         await query.edit_message_text(
             f"✅ <b>Success!</b> Your profile is registered under <b>Grade {grade}</b>.\n\n"
@@ -28,7 +29,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    tracks = engine.db_get_all_tracks()
+    tracks = await asyncio.to_thread(engine.db_get_all_tracks)
     mid_key = next((k for k, v in tracks.items() if k.isdigit() and str(v.get('display_id')) == d_id), None)
 
     if not mid_key:
@@ -42,7 +43,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("This quiz session has ended.", show_alert=True)
         return
 
-    engine.refresh_database()
+    await asyncio.to_thread(engine.refresh_database)
     all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
     question_data = all_qs.get(tracks[mid_key]['q_id'])
 
@@ -59,7 +60,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = process_user_score(user_id, query.message.message_id, question_data['id'], is_correct, user_selection)
+            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], is_correct, user_selection)
 
             active_is_photo = (tracks[mid_key].get('msg_type') == "photo")
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=active_is_photo, perf_card=perf_card)
@@ -75,7 +76,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         if resp and resp.status_code == 200:
                             print(f" {Style.GREEN}├─ [SUCCESS] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}")
                             legacy_caption = convert_to_legacy_html(explanation_html)
-                            # Wrap resp.content in io.BytesIO stream to ensure correct type parsing
                             media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=retry_kb)
 
@@ -93,7 +93,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                                     html_content=full_explanation_text,
                                     reply_to_message_id=query.message.message_id
                                 )
-                                engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                                await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
                         else:
                             await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
                 else:
@@ -114,7 +114,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                     await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
                 except Exception:
                     pass
-                engine.db_save_track(mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
+                await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
 
             img_url, caption = UIFactory.create_question_assets(question_data, d_id)
             orig_kb = UIFactory.build_keyboard(question_data, d_id)
@@ -124,7 +124,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 figure_block = UIFactory.build_figure_block(question_data, add_strut=True)
                 options_block = UIFactory.build_options_block(question_data)
 
-                # Updated: Pass the d_id parameter to enable the single-line header with reference
                 compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block, display_id=d_id)
                 img_url_kroki = UIFactory.get_latex_url(compiled_latex)
                 async with httpx.AsyncClient() as client:

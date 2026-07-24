@@ -1,28 +1,74 @@
 import os
 import json
+import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 from pathlib import Path
 from src.config import CONFIG, Style
 
 class QuizEngine:
+    _pool = None
+
     def __init__(self):
         self.config = CONFIG
         self.db = {}
+        self.last_refresh = 0
+        self.refresh_interval = 30  # 30 seconds caching TTL
         self.db_url = self.config.get("database_url")
         if self.db_url:
             print(f"{Style.GREEN}[DATABASE] PostgreSQL detected in environment.{Style.RESET}")
+            if not QuizEngine._pool:
+                try:
+                    QuizEngine._pool = ThreadedConnectionPool(
+                        minconn=2,
+                        maxconn=20,
+                        dsn=self.db_url
+                    )
+                    print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
+                except Exception as e:
+                    print(f"{Style.RED}[DATABASE ERROR] Failed to initialize connection pool: {e}{Style.RESET}")
         else:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def get_db_connection(self):
-        """Creates a fresh database connection to PostgreSQL."""
+        """Gets a connection from the pool or falls back to direct connection."""
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
+        
+        if QuizEngine._pool:
+            try:
+                conn = QuizEngine._pool.getconn()
+                conn.cursor_factory = RealDictCursor
+                
+                # Monkey-patch close to return the connection to pool instead of destroying it
+                if not hasattr(conn, "_is_pooled"):
+                    original_close = conn.close
+                    conn._closed_in_pool = False
+                    
+                    def pool_close():
+                        if conn._closed_in_pool:
+                            return
+                        try:
+                            conn.rollback()  # Reset active transaction state
+                            QuizEngine._pool.putconn(conn)
+                            conn._closed_in_pool = True
+                        except Exception:
+                            try:
+                                original_close()
+                            except Exception:
+                                pass
+                    conn.close = pool_close
+                    conn._is_pooled = True
+                return conn
+            except Exception as e:
+                print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool getconn failed, falling back to direct connection: {e}{Style.RESET}")
+                
         return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
 
     # --- TRACKING STATE METHODS ---
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
+        conn = None
         try:
             conn = self.get_db_connection()
             cur = conn.cursor()
@@ -37,9 +83,11 @@ class QuizEngine:
             cur.close()
             conn.close()
         except Exception as e:
+            if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to save track: {e}{Style.RESET}")
 
     def db_get_all_tracks(self):
+        conn = None
         try:
             conn = self.get_db_connection()
             cur = conn.cursor()
@@ -49,10 +97,12 @@ class QuizEngine:
             conn.close()
             return {r['message_id']: dict(r) for r in rows}
         except Exception as e:
+            if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to retrieve tracks: {e}{Style.RESET}")
             return {}
 
     def db_update_track_status(self, message_id, status, followup_mid=None):
+        conn = None
         try:
             conn = self.get_db_connection()
             cur = conn.cursor()
@@ -64,11 +114,13 @@ class QuizEngine:
             cur.close()
             conn.close()
         except Exception as e:
+            if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to update track status: {e}{Style.RESET}")
 
     # --- AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
     def db_import_questions(self, json_data):
         """Imports an array of questions dynamically into the PostgreSQL questions table."""
+        conn = None
         try:
             questions_list = json_data if isinstance(json_data, list) else [json_data]
             conn = self.get_db_connection()
@@ -79,7 +131,6 @@ class QuizEngine:
                 if not q.get("id") or not q.get("subject"):
                     continue
 
-                # Standardize array and JSONB representations
                 tags = q.get("tags", [])
                 options = q.get("options", [])
                 poll_explanation = json.dumps(q.get("poll_explanation", {}))
@@ -111,10 +162,10 @@ class QuizEngine:
             conn.close()
             return imported_count
         except Exception as e:
+            if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to import questions: {e}{Style.RESET}")
             return 0
 
-    # --- FILE FALLBACK SYSTEM FOR LOCAL ADMIN BACKUPS ---
     @staticmethod
     def load_json(path):
         try:
@@ -134,9 +185,15 @@ class QuizEngine:
         except Exception as e:
             print(f"{Style.RED}JSON Save Error ({path}): {e}{Style.RESET}")
 
-    def refresh_database(self):
-        """Loads and syncs all questions dynamically directly from the cloud PostgreSQL database."""
+    def refresh_database(self, force=False):
+        """Loads and syncs questions with a TTL caching mechanism."""
+        now = time.time()
+        if self.db and not force and (now - self.last_refresh < self.refresh_interval):
+            return self.db
+
         self.db = {}
+        self.last_refresh = now
+        
         if self.db_url:
             try:
                 conn = self.get_db_connection()
@@ -148,7 +205,13 @@ class QuizEngine:
 
                 for row in rows:
                     q = dict(row)
-                    # Convert parsed database fields into the standard structure
+                    for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+                        if field in q and isinstance(q[field], str):
+                            try:
+                                q[field] = json.loads(q[field])
+                            except Exception:
+                                pass
+
                     subject = q.get("subject", "General").lower()
                     if subject not in self.db:
                         self.db[subject] = []
@@ -157,7 +220,6 @@ class QuizEngine:
             except Exception as e:
                 print(f"{Style.YELLOW}[DB WARNING] Cloud loading failed, falling back to local files: {e}{Style.RESET}")
 
-        # Fallback to scanning local directory files if cloud database is not connected
         return self.refresh_database_local()
 
     def refresh_database_local(self):
@@ -181,30 +243,46 @@ class QuizEngine:
 # --- COMPREHENSIVE OUT-OF-CLASS DB UTILITIES ---
 def db_set_user_grade(user_id, grade: int):
     engine_db = QuizEngine()
-    conn = engine_db.get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO user_stats (user_id, grade)
-        VALUES (%s, %s)
-        ON CONFLICT (user_id) DO UPDATE SET grade = EXCLUDED.grade;
-    """, (str(user_id), int(grade)))
-    conn.commit()
-    cur.close()
-    conn.close()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_stats (user_id, grade)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET grade = EXCLUDED.grade;
+        """, (str(user_id), int(grade)))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set user grade: {e}")
+    finally:
+        if conn: conn.close()
 
 def db_get_user_profile(user_id):
     engine_db = QuizEngine()
-    conn = engine_db.get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM user_stats WHERE user_id = %s;", (str(user_id),))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    return row
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM user_stats WHERE user_id = %s;", (str(user_id),))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to fetch user profile: {e}")
+        return None
+    finally:
+        if conn: conn.close()
 
 def db_get_user_response(user_id, message_id):
     """Retrieves a user's previous response to a specific question post."""
     engine_db = QuizEngine()
+    conn = None
     try:
         conn = engine_db.get_db_connection()
         cur = conn.cursor()
@@ -217,12 +295,16 @@ def db_get_user_response(user_id, message_id):
         conn.close()
         return dict(row) if row else None
     except Exception as e:
+        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch user response: {e}")
         return None
+    finally:
+        if conn: conn.close()
 
 def db_update_private_message_id(user_id, message_id, private_message_id):
     """Updates the private message ID of an existing response."""
     engine_db = QuizEngine()
+    conn = None
     try:
         conn = engine_db.get_db_connection()
         cur = conn.cursor()
@@ -235,30 +317,42 @@ def db_update_private_message_id(user_id, message_id, private_message_id):
         cur.close()
         conn.close()
     except Exception as e:
+        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to update private message ID: {e}")
+    finally:
+        if conn: conn.close()
 
 def db_get_weekly_leaderboard(grade: int):
     engine_db = QuizEngine()
-    conn = engine_db.get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ur.user_id, SUM(ur.marks_awarded) as total_score
-        FROM user_responses ur
-        JOIN user_stats us ON ur.user_id = us.user_id
-        WHERE us.grade = %s
-          AND ur.answered_at >= NOW() - INTERVAL '7 days'
-        GROUP BY ur.user_id
-        ORDER BY total_score DESC
-        LIMIT 10;
-    """, (int(grade),))
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return rows
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT ur.user_id, SUM(ur.marks_awarded) as total_score
+            FROM user_responses ur
+            JOIN user_stats us ON ur.user_id = us.user_id
+            WHERE us.grade = %s
+              AND ur.answered_at >= NOW() - INTERVAL '7 days'
+            GROUP BY ur.user_id
+            ORDER BY total_score DESC
+            LIMIT 10;
+        """, (int(grade),))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to fetch weekly leaderboard: {e}")
+        return []
+    finally:
+        if conn: conn.close()
 
 def db_get_pending_scheduled_question():
     """Retrieves the oldest un-sent question that is past its scheduled posting time."""
     engine_db = QuizEngine()
+    conn = None
     try:
         conn = engine_db.get_db_connection()
         cur = conn.cursor()
@@ -275,12 +369,16 @@ def db_get_pending_scheduled_question():
         conn.close()
         return dict(row) if row else None
     except Exception as e:
+        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch scheduled question: {e}")
         return None
+    finally:
+        if conn: conn.close()
 
 def db_mark_question_as_sent(q_id):
     """Marks a question as sent to prevent duplicate re-posts on the channel."""
     engine_db = QuizEngine()
+    conn = None
     try:
         conn = engine_db.get_db_connection()
         cur = conn.cursor()
@@ -289,72 +387,83 @@ def db_mark_question_as_sent(q_id):
         cur.close()
         conn.close()
     except Exception as e:
+        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to mark question as sent: {e}")
+    finally:
+        if conn: conn.close()
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, bonus_limit=3):
     engine_db = QuizEngine()
-    conn = engine_db.get_db_connection()
-    cur = conn.cursor()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
 
-    first_try = True
-    marks_to_award = 0
-    is_bonus_winner = False
+        first_try = True
+        marks_to_award = 0
+        is_bonus_winner = False
 
-    cur.execute("""
-        SELECT EXISTS(SELECT 1 FROM user_responses WHERE user_id = %s AND message_id = %s);
-    """, (str(user_id), str(message_id)))
-    already_answered = cur.fetchone()['exists']
+        cur.execute("""
+            SELECT EXISTS(SELECT 1 FROM user_responses WHERE user_id = %s AND message_id = %s);
+        """, (str(user_id), str(message_id)))
+        already_answered = cur.fetchone()['exists']
 
-    if already_answered:
-        first_try = False
-    else:
-        if is_correct:
-            cur.execute("""
-                SELECT COUNT(*) FROM user_responses
-                WHERE message_id = %s AND is_correct = TRUE;
-            """, (str(message_id),))
-            correct_count = cur.fetchone()['count']
-
-            if correct_count < bonus_limit:
-                marks_to_award = 10
-                is_bonus_winner = True
-            else:
-                marks_to_award = 2
+        if already_answered:
+            first_try = False
         else:
-            marks_to_award = 0
+            if is_correct:
+                cur.execute("""
+                    SELECT COUNT(*) FROM user_responses
+                    WHERE message_id = %s AND is_correct = TRUE;
+                """, (str(message_id),))
+                correct_count = cur.fetchone()['count']
 
-        cur.execute("""
-            INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s);
-        """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id))
+                if correct_count < bonus_limit:
+                    marks_to_award = 10
+                    is_bonus_winner = True
+                else:
+                    marks_to_award = 2
+            else:
+                marks_to_award = 0
 
-        correct_inc = 1 if is_correct else 0
-        cur.execute("""
-            INSERT INTO user_stats (user_id, total, correct, total_marks)
-            VALUES (%s, 1, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET
-                total = user_stats.total + 1,
-                correct = user_stats.correct + %s,
-                total_marks = user_stats.total_marks + %s;
-        """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
-        conn.commit()
+            cur.execute("""
+                INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s);
+            """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id))
 
-    cur.execute("SELECT total, correct, total_marks, grade FROM user_stats WHERE user_id = %s;", (str(user_id),))
-    stats = cur.fetchone()
+            correct_inc = 1 if is_correct else 0
+            cur.execute("""
+                INSERT INTO user_stats (user_id, total, correct, total_marks)
+                VALUES (%s, 1, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    total = user_stats.total + 1,
+                    correct = user_stats.correct + %s,
+                    total_marks = user_stats.total_marks + %s;
+            """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
+            conn.commit()
 
-    cur.close()
-    conn.close()
+        cur.execute("SELECT total, correct, total_marks, grade FROM user_stats WHERE user_id = %s;", (str(user_id),))
+        stats = cur.fetchone()
 
-    if stats:
-        accuracy = int((stats['correct'] / stats['total']) * 100) if stats['total'] > 0 else 0
-        return {
-            "total": stats['total'],
-            "correct": stats['correct'],
-            "accuracy": accuracy,
-            "total_marks": stats['total_marks'],
-            "marks_awarded": marks_to_award,
-            "first_try": first_try,
-            "is_bonus_winner": is_bonus_winner,
-            "grade": stats['grade']
-        }
-    return None
+        cur.close()
+        conn.close()
+
+        if stats:
+            accuracy = int((stats['correct'] / stats['total']) * 100) if stats['total'] > 0 else 0
+            return {
+                "total": stats['total'],
+                "correct": stats['correct'],
+                "accuracy": accuracy,
+                "total_marks": stats['total_marks'],
+                "marks_awarded": marks_to_award,
+                "first_try": first_try,
+                "is_bonus_winner": is_bonus_winner,
+                "grade": stats['grade']
+            }
+        return None
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Error in process_user_score: {e}")
+        return None
+    finally:
+        if conn: conn.close()
