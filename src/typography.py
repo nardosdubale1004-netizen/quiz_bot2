@@ -38,14 +38,13 @@ SUBSCRIPTS = {
 }
 
 def escape_plain_text(text: str) -> str:
-    # Allowed tags are kept unescaped so Telegram renders them as entities
     allowed_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
         "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
         "tg-math", "/tg-math", "tg-math-block", "/tg-math-block",
         "h1", "/h1", "h2", "/h2", "h3", "/h3", "h4", "/h4", "h5", "/h5", "h6", "/h6",
         "ul", "/ul", "ol", "/ol", "li", "/li", "table", "/table", "tr", "/tr", "td", "/td",
-        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/sup"  # Fixed: corrected /superscript to /sup
+        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/sup"
     ]
     parts = re.split(r'(</?[a-zA-Z1-6-]+(?:\s+[^>]*)?/?>)', text)
     for i in range(len(parts)):
@@ -80,7 +79,6 @@ def clean_latex_to_unicode(text):
     if not text:
         return ""
     text = str(text)
-    # Strip Telegram advance rich math tags for plain-text fallback (e.g. native polls)
     text = re.sub(r'</?tg-math(?:-block)?>', '', text)
     text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
@@ -113,6 +111,51 @@ def lite_math(text):
         return ""
     return clean_latex_to_unicode(text.replace("$", ""))
 
+def sanitize_latex_for_telegram_math(expr: str) -> str:
+    """
+    Cleans and standardizes LaTeX expressions to adhere strictly to Telegram's native 
+    mathematical parser, preventing client-side compilation failures.
+    """
+    if not expr:
+        return ""
+    
+    expr = expr.strip().replace("\n", " ").replace("\r", "")
+    expr = expr.replace(r"\allowbreak", "")
+    expr = expr.replace(r"\par", " ")
+    expr = expr.replace(r"\,", " ")
+    expr = expr.replace(r"\quad", "   ")
+    expr = expr.replace(r"\qquad", "   ")
+    expr = expr.replace(r"\\", ", ")
+    expr = expr.replace(r"\left", "").replace(r"\right", "")
+    expr = expr.replace(r"\|", "||")
+    
+    # Map common degree indicators to standard Unicode representation
+    expr = expr.replace(r"^\circ", "°").replace(r"\circ", "°")
+    
+    # Map complex number sets to direct mathematical Unicode symbols
+    expr = expr.replace(r"\mathbb{R}", "ℝ").replace(r"\mathbb{N}", "ℕ")
+    expr = expr.replace(r"\mathbb{Z}", "ℤ").replace(r"\mathbb{C}", "ℂ")
+    expr = expr.replace(r"\mathbb{Q}", "ℚ")
+    
+    # Sanitize font and structure modifiers (e.g. \text{ATP} -> ATP, \vec{a} -> a)
+    for _ in range(3):
+        expr = re.sub(r'\\math[a-zA-Z]*\s*\{([^}]+)\}', r'\1', expr)
+        expr = re.sub(r'\\text[a-zA-Z]*\s*\{([^}]+)\}', r'\1', expr)
+        expr = re.sub(r'\\vec\s*\{([^}]+)\}', r'\1', expr)
+        expr = re.sub(r'\\overline\s*\{([^}]+)\}', r'\1', expr)
+        expr = re.sub(r'\\hat\s*\{([^}]+)\}', r'\1', expr)
+        expr = re.sub(r'\\bar\s*\{([^}]+)\}', r'\1', expr)
+
+    # Convert complex matrix layouts into readable arrays to avoid crashes
+    def convert_matrices(match):
+        content = match.group(1).strip()
+        content = content.replace("&", ", ").replace("\\\\", "; ").replace("\n", " ")
+        content = re.sub(r'\s+', ' ', content)
+        return f"[{content}]"
+    
+    expr = re.sub(r'\\begin\{(?:pmatrix|matrix|bmatrix|cases)\}(.*?)\\end\{(?:pmatrix|matrix|bmatrix|cases)\}', convert_matrices, expr, flags=re.DOTALL)
+    return re.sub(r'\s+', ' ', expr).strip()
+
 def beautify_markdown_math(text):
     if not text:
         return ""
@@ -137,25 +180,38 @@ def beautify_markdown_math(text):
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # --- LATEX DELIMITER NORMALIZATION BRIDGE ---
-    # Automatically map standard LaTeX bracket block styles to Markdown dollar style
     result = result.replace(r'\[', '$$').replace(r'\]', '$$')
     result = result.replace(r'\(', '$').replace(r'\)', '$')
 
-    # Convert dollar block/inline math delimiters to native Telegram rich tags
+    # Convert any standard block/inline math delimiters to native Telegram rich tags
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
-            parts_block[i] = f"\n<tg-math-block>{parts_block[i].strip()}</tg-math-block>\n"
+            sanitized_formula = sanitize_latex_for_telegram_math(parts_block[i])
+            parts_block[i] = f"\n<tg-math-block>{sanitized_formula}</tg-math-block>\n"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
-                    parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
+                    sanitized_formula = sanitize_latex_for_telegram_math(parts_inline[j])
+                    parts_inline[j] = f"<tg-math>{sanitized_formula}</tg-math>"
                 else:
                     parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)
 
     result = "".join(parts_block)
+
+    # Sanitize any pre-existing tg-math and tg-math-block tags loaded directly from database files
+    def sanitize_tg_math_tag(match):
+        formula = match.group(1)
+        return f"<tg-math>{sanitize_latex_for_telegram_math(formula)}</tg-math>"
+        
+    def sanitize_tg_math_block_tag(match):
+        formula = match.group(1)
+        return f"<tg-math-block>{sanitize_latex_for_telegram_math(formula)}</tg-math-block>"
+
+    result = re.sub(r'<tg-math>(.*?)</tg-math>', sanitize_tg_math_tag, result, flags=re.DOTALL)
+    result = re.sub(r'<tg-math-block>(.*?)</tg-math-block>', sanitize_tg_math_block_tag, result, flags=re.DOTALL)
+
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
