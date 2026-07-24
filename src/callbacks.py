@@ -6,7 +6,7 @@ import io
 from src.config import CONFIG, Style
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
-from src.database import process_user_score, db_set_user_grade, db_update_private_message_id
+from src.database import process_user_score, db_set_user_grade, db_update_private_message_id, db_update_response_view_state
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -60,10 +60,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], is_correct, user_selection)
+            # Initial DM interaction choice clicks start in Detailed Mode (show_derivation=True, show_perf=False)
+            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], is_correct, user_selection, None, True, False)
 
             active_is_photo = (tracks[mid_key].get('msg_type') == "photo")
-            explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, compact=active_is_photo, perf_card=perf_card)
+            explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)
             retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data=f"reset|{d_id}")]])
 
             if active_is_photo:
@@ -75,37 +76,130 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             print(f" {Style.GREEN}├─ [SUCCESS] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}")
+                            
+                            photo_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=True)
+                            
                             legacy_caption = convert_to_legacy_html(explanation_html)
                             media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
-                            await query.edit_message_media(media=media, reply_markup=retry_kb)
+                            await query.edit_message_media(media=media, reply_markup=photo_kb)
 
-                            full_explanation_text = UIFactory.build_answered_view(
-                                question_data, d_id, user_selection, compact=False, perf_card=perf_card, continuation=True
+                            # Send detailed derivation followup
+                            full_text = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card, continuation=True)
+                            follow_up = await send_rich_message_safe(
+                                context.bot,
+                                chat_id=query.message.chat_id,
+                                html_content=full_text,
+                                reply_to_message_id=query.message.message_id
                             )
-                            if len(full_explanation_text) > len(explanation_html):
-                                if "followup_mid" in tracks[mid_key]:
-                                    try: await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
-                                    except Exception: pass
-
-                                follow_up = await send_rich_message_safe(
-                                    context.bot,
-                                    chat_id=query.message.chat_id,
-                                    html_content=full_explanation_text,
-                                    reply_to_message_id=query.message.message_id
-                                )
-                                await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                            await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                            return
                         else:
                             await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
                 else:
                     await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
             else:
+                reveal_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=False)
                 await edit_rich_message_safe(
                     context.bot,
                     chat_id=query.message.chat_id,
                     message_id=query.message.message_id,
                     html_content=explanation_html,
-                    reply_markup=retry_kb
+                    reply_markup=reveal_kb
                 )
+            return
+
+        elif action == "toggle":
+            user_selection = int(data[2])
+            show_derivation = (int(data[3]) == 1)
+            show_perf = (int(data[4]) == 1)
+            user_id = query.from_user.id
+            await query.answer("Updating View...")
+
+            # Save the layout state persistently in the database
+            await asyncio.to_thread(db_update_response_view_state, user_id, query.message.message_id, show_derivation, show_perf)
+
+            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
+            
+            # Displays both detailed derivations and performance table concurrently if both are active
+            explanation_html = UIFactory.build_answered_view(
+                question_data, 
+                d_id, 
+                user_selection, 
+                show_derivation=show_derivation, 
+                show_perf=show_perf, 
+                perf_card=perf_card
+            )
+            
+            kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=False)
+                
+            await edit_rich_message_safe(
+                context.bot,
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
+                html_content=explanation_html,
+                reply_markup=kb
+            )
+            return
+
+        elif action == "toggle_photo":
+            user_selection = int(data[2])
+            show_derivation = (int(data[3]) == 1)
+            show_perf = (int(data[4]) == 1)
+            user_id = query.from_user.id
+            await query.answer("Updating Solution Card...")
+
+            # Save the layout state persistently in the database
+            await asyncio.to_thread(db_update_response_view_state, user_id, query.message.message_id, show_derivation, show_perf)
+
+            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
+            
+            kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=True)
+            await query.message.edit_reply_markup(reply_markup=kb)
+
+            if not show_derivation and not show_perf:
+                if mid_key and tracks[mid_key].get("followup_mid"):
+                    try:
+                        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
+                    except Exception:
+                        pass
+                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
+            else:
+                full_text = UIFactory.build_answered_view(
+                    question_data, 
+                    d_id, 
+                    user_selection, 
+                    show_derivation=show_derivation, 
+                    show_perf=show_perf, 
+                    perf_card=perf_card, 
+                    continuation=True
+                )
+
+                if mid_key and tracks[mid_key].get("followup_mid"):
+                    try:
+                        await edit_rich_message_safe(
+                            context.bot,
+                            chat_id=query.message.chat_id,
+                            message_id=tracks[mid_key]["followup_mid"],
+                            html_content=full_text,
+                            reply_markup=None
+                        )
+                    except Exception:
+                        follow_up = await send_rich_message_safe(
+                            context.bot,
+                            chat_id=query.message.chat_id,
+                            html_content=full_text,
+                            reply_to_message_id=query.message.message_id
+                        )
+                        await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                else:
+                    follow_up = await send_rich_message_safe(
+                        context.bot,
+                        chat_id=query.message.chat_id,
+                        html_content=full_text,
+                        reply_to_message_id=query.message.message_id
+                    )
+                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+            return
 
         elif action == "reset":
             await query.answer("Resetting view...")

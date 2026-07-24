@@ -64,13 +64,15 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     )
 
     step_by_step_parts = [
-        f"\n<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
+        f"<blockquote expandable>\n"
+        f"<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
     if exp.get('analogy'):
         step_by_step_parts.append(f"<b>💡 Analogy</b>\n{beautify_markdown_math(exp['analogy'])}")
     if exp.get('memory_tip'):
         step_by_step_parts.append(f"<b>🧠 Memory Tip</b>\n{beautify_markdown_math(exp['memory_tip'])}")
+    step_by_step_parts.append("</blockquote>")
 
     step_by_step = "\n".join(step_by_step_parts)
 
@@ -120,23 +122,16 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         f"</blockquote>"
     )
 
-    opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
-    for i, o in enumerate(q['options']):
-        opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
-    opts_list.append("</ul>")
-    opts_block = "\n".join(opts_list)
-
     if compact:
-        truncated_why = smart_truncate_html(why, 240)
-        spoiler_content = (
-            f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
-            f"<blockquote expandable>\n"
-            f"  <b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n"
-            f"  <b>Explanation:</b>\n{beautify_markdown_math(truncated_why)}\n"
-            f"</blockquote>"
-        )
-        footer_note = "\n<hr/>\n📖 <i>The complete step-by-step derivation has been posted in the message below.</i>"
+        opts_block = ""
+        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
+        footer_note = ""
     else:
+        opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
+        for i, o in enumerate(q['options']):
+            opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
+        opts_list.append("</ul>")
+        opts_block = "\n" + "\n".join(opts_list)
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
         footer_note = ""
 
@@ -149,9 +144,29 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         f"{' '.join(hashtag_list)}{footer_note}"
     )
 
-    return f"{header}\n{body}\n{opts_block}\n<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>{footer}"
+    components = [header, body]
+    if opts_block:
+        components.append(opts_block)
+    components.append(f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>")
+    components.append(footer)
 
-def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_card=None, continuation=False) -> str:
+    return "\n".join(components)
+
+def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
+    # Defensively support legacy configuration states for backward compatibility
+    if compact is not None:
+        show_derivation = not compact
+        show_perf = False
+    elif mode == "detailed":
+        show_derivation = True
+        show_perf = False
+    elif mode == "performance":
+        show_derivation = False
+        show_perf = True
+    elif mode in ["all", "both"]:
+        show_derivation = True
+        show_perf = True
+
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
     user_letter = letters[user_idx] if user_idx < len(letters) else "?"
@@ -171,13 +186,15 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     )
 
     step_by_step_parts = [
-        f"\n<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
+        f"<blockquote expandable>\n"
+        f"<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
     if exp.get('analogy'):
         step_by_step_parts.append(f"<b>💡 Analogy</b>\n{beautify_markdown_math(exp['analogy'])}")
     if exp.get('memory_tip'):
         step_by_step_parts.append(f"<b>🧠 Memory Tip</b>\n{beautify_markdown_math(exp['memory_tip'])}")
+    step_by_step_parts.append("</blockquote>")
 
     step_by_step = "\n".join(step_by_step_parts)
 
@@ -208,53 +225,9 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     step_by_step = replace_code_with_italic(step_by_step)
     breakdown_block = replace_code_with_italic(breakdown_block)
 
-    if continuation:
-        connection_header = f"<b>📖 DETAILED DERIVATION (CONTINUATION) • REF <code>{display_id}</code></b>\n<hr/>"
-        return f"{connection_header}\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-
-    subject_text = beautify_markdown_math(q.get('subject','').upper())
-    topic_text = beautify_markdown_math(q.get('topic','General'))
-    header = (
-        f"🎓 <b>{subject_text}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{topic_text}</b> • 📅 {day_str}\n<hr/>"
-    )
-
-    body = (
-        f"<blockquote>"
-        f"<b>PROBLEM PROPOSITION</b><br/>"
-        f"{beautify_markdown_math(q['question'])}"
-        f"</blockquote>"
-    )
-
-    opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
-    for i, o in enumerate(q['options']):
-        opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
-    opts_list.append("</ul>")
-    opts_block = "\n".join(opts_list)
-
-    status_block = (
-        f"<hr/>\n"
-        f"🎯 <b>Your Selection:</b> <code>{user_letter}</code> ({user_status})\n"
-        f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>"
-    )
-
-    if compact:
-        truncated_why = smart_truncate_html(why, 240)
-        explanation_block = (
-            f"<blockquote expandable>\n"
-            f"  <b>Principle:</b>\n{beautify_markdown_math(rule_text)}\n"
-            f"  <b>Explanation:</b>\n{beautify_markdown_math(truncated_why)}\n"
-            f"</blockquote>"
-        )
-        analysis_block = ""
-        footer_note = "\n<hr/>\n📖 <i>The complete step-by-step derivation has been posted in the message below.</i>"
-    else:
-        explanation_block = f"{general_principle}\n{step_by_step}"
-        analysis_block = breakdown_block
-        footer_note = ""
-
+    # Render score card section dynamically if turned on
     score_segment = ""
-    if perf_card:
+    if show_perf and perf_card:
         if not perf_card['first_try']:
             marks_notice = "⚠️ <i>Practice Mode: Score locked. No marks awarded.</i>"
         elif perf_card['is_bonus_winner']:
@@ -292,14 +265,94 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
+    # --- Standalone Followup Continuation Responses (Unified and Combined) ---
+    if continuation:
+        parts = []
+        if show_derivation:
+            parts.append(f"<b>📖 DERIVATION DETAILS:</b>\n{general_principle}\n{step_by_step}\n{breakdown_block}")
+        if show_perf and score_segment:
+            parts.append(score_segment)
+            
+        connection_header = f"<b>📝 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
+        return f"{connection_header}\n" + "\n\n".join(parts)
+
+    subject_text = beautify_markdown_math(q.get('subject','').upper())
+    topic_text = beautify_markdown_math(q.get('topic','General'))
+    header = (
+        f"🎓 <b>{subject_text}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic_text}</b> • 📅 {day_str}\n<hr/>"
+    )
+
+    body = (
+        f"<blockquote>"
+        f"<b>PROBLEM PROPOSITION</b><br/>"
+        f"{beautify_markdown_math(q['question'])}"
+        f"</blockquote>"
+    )
+
+    user_val = q['options'][user_idx] if user_idx < len(q['options']) else "Unknown"
+    correct_val = q['options'][correct_idx]
+
+    # Displays selection letters alongside text values
+    status_block = (
+        f"<hr/>\n"
+        f"🎯 <b>Your Selection:</b> {user_letter} │ {lite_math(user_val)} ({user_status})\n"
+        f"⭐ <b>Correct Option:</b> <b>[{correct_letter} │ {lite_math(correct_val)}]</b>"
+    )
+
+    opts_block = ""
+    explanation_block = ""
+    analysis_block = ""
+
+    if show_derivation:
+        opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
+        for i, o in enumerate(q['options']):
+            opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
+        opts_list.append("</ul>")
+        opts_block = "\n" + "\n".join(opts_list)
+        explanation_block = f"\n{general_principle}\n{step_by_step}"
+        analysis_block = f"\n{breakdown_block}"
+
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n<hr/>\n"
         f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
-        f"{' '.join(hashtag_list)}{footer_note}"
+        f"{' '.join(hashtag_list)}"
     )
 
-    return f"{header}\n{body}\n{opts_block}\n{status_block}\n{explanation_block}\n{analysis_block}\n{score_segment}{footer}"
+    components = [header, body]
+    if opts_block:
+        components.append(opts_block)
+    components.append(status_block)
+    if explanation_block:
+        components.append(explanation_block)
+    if analysis_block:
+        components.append(analysis_block)
+    if score_segment:
+        components.append(score_segment)
+    components.append(footer)
+
+    return "\n".join(components)
+
+def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: bool, show_perf: bool, is_photo=False) -> InlineKeyboardMarkup:
+    """Generates a composite, binary state-driven keyboard mapping the exact on/off layout combination."""
+    prefix = "toggle_photo" if is_photo else "toggle"
+    buttons = []
+    
+    # Derivation toggle button
+    if show_derivation:
+        buttons.append([InlineKeyboardButton("↩️ HIDE SOLUTION DETAILS", callback_data=f"{prefix}|{d_id}|{user_selection}|0|{1 if show_perf else 0}")])
+    else:
+        buttons.append([InlineKeyboardButton("📖 REVEAL COMPLETE DERIVATION", callback_data=f"{prefix}|{d_id}|{user_selection}|1|{1 if show_perf else 0}")])
+        
+    # Performance card toggle button
+    if show_perf:
+        buttons.append([InlineKeyboardButton("↩️ HIDE PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|0")])
+    else:
+        buttons.append([InlineKeyboardButton("📊 VIEW PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|1")])
+        
+    buttons.append([InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")])
+    return InlineKeyboardMarkup(buttons)
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]

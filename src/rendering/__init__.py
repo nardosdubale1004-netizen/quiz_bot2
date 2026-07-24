@@ -21,7 +21,8 @@ from src.rendering.html_views import (
     smart_truncate_html,
     generate_poll_hint,
     get_grade_mastery_title,
-    build_interactive_keyboard
+    build_interactive_keyboard,
+    build_answered_keyboard
 )
 
 class UIFactory:
@@ -38,6 +39,7 @@ class UIFactory:
     build_answered_view = staticmethod(build_answered_view)
     build_keyboard = staticmethod(build_keyboard)
     build_interactive_keyboard = staticmethod(build_interactive_keyboard)
+    build_answered_keyboard = staticmethod(build_answered_keyboard)
     replace_code_with_italic = staticmethod(replace_code_with_italic)
     smart_truncate_html = staticmethod(smart_truncate_html)
     create_explanation_assets = staticmethod(create_explanation_assets)
@@ -61,7 +63,6 @@ class UIFactory:
 
         from src.typography import beautify_markdown_math
 
-        # Tightened the leading and trailing padding around the question block to prevent mobile layout stretch
         caption_q = (
             f"\n"
             f"<blockquote>"
@@ -77,7 +78,6 @@ class UIFactory:
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
 
-        # Secure mathematical parsing for headers
         subject = beautify_markdown_math(q.get('subject','').upper())
         topic = beautify_markdown_math(q.get('topic','General'))
         header = (

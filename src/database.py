@@ -1,11 +1,34 @@
+# src/database.py
 import os
 import json
 import time
 import psycopg2
+import psycopg2.extensions
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 from pathlib import Path
 from src.config import CONFIG, Style
+
+class PooledConnection(psycopg2.extensions.connection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_pooled = False
+        self._closed_in_pool = False
+
+    def close(self):
+        """Overrides close to return the connection to the pool if pooled."""
+        if hasattr(self, "_is_pooled") and self._is_pooled:
+            if hasattr(self, "_closed_in_pool") and self._closed_in_pool:
+                return
+            try:
+                self.rollback()  # Safely roll back transaction state before releasing
+                if QuizEngine._pool:
+                    QuizEngine._pool.putconn(self)
+                self._closed_in_pool = True
+            except Exception:
+                super().close()
+        else:
+            super().close()
 
 class QuizEngine:
     _pool = None
@@ -23,7 +46,8 @@ class QuizEngine:
                     QuizEngine._pool = ThreadedConnectionPool(
                         minconn=2,
                         maxconn=20,
-                        dsn=self.db_url
+                        dsn=self.db_url,
+                        connection_factory=PooledConnection
                     )
                     print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
                 except Exception as e:
@@ -32,7 +56,7 @@ class QuizEngine:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def get_db_connection(self):
-        """Gets a connection from the pool or falls back to direct connection."""
+        """Retrieves a pooled connection or falls back to a direct connection."""
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
         
@@ -40,31 +64,18 @@ class QuizEngine:
             try:
                 conn = QuizEngine._pool.getconn()
                 conn.cursor_factory = RealDictCursor
-                
-                # Monkey-patch close to return the connection to pool instead of destroying it
-                if not hasattr(conn, "_is_pooled"):
-                    original_close = conn.close
-                    conn._closed_in_pool = False
-                    
-                    def pool_close():
-                        if conn._closed_in_pool:
-                            return
-                        try:
-                            conn.rollback()  # Reset active transaction state
-                            QuizEngine._pool.putconn(conn)
-                            conn._closed_in_pool = True
-                        except Exception:
-                            try:
-                                original_close()
-                            except Exception:
-                                pass
-                    conn.close = pool_close
-                    conn._is_pooled = True
+                conn._is_pooled = True
+                conn._closed_in_pool = False
                 return conn
             except Exception as e:
                 print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool getconn failed, falling back to direct connection: {e}{Style.RESET}")
                 
-        return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
+        # Direct connection fallback
+        return psycopg2.connect(
+            self.db_url, 
+            cursor_factory=RealDictCursor, 
+            connection_factory=PooledConnection
+        )
 
     # --- TRACKING STATE METHODS ---
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
@@ -119,7 +130,7 @@ class QuizEngine:
 
     # --- AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
     def db_import_questions(self, json_data):
-        """Imports an array of questions dynamically into the PostgreSQL questions table."""
+        """Imports questions dynamically into the PostgreSQL questions table."""
         conn = None
         try:
             questions_list = json_data if isinstance(json_data, list) else [json_data]
@@ -322,6 +333,27 @@ def db_update_private_message_id(user_id, message_id, private_message_id):
     finally:
         if conn: conn.close()
 
+def db_update_response_view_state(user_id, message_id, show_derivation: bool, show_perf: bool):
+    """Updates the saved view layout toggles inside the user_responses table."""
+    engine_db = QuizEngine()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE user_responses
+            SET show_derivation = %s, show_perf = %s
+            WHERE user_id = %s AND message_id = %s;
+        """, (show_derivation, show_perf, str(user_id), str(message_id)))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update response view state: {e}")
+    finally:
+        if conn: conn.close()
+
 def db_get_weekly_leaderboard(grade: int):
     engine_db = QuizEngine()
     conn = None
@@ -350,7 +382,6 @@ def db_get_weekly_leaderboard(grade: int):
         if conn: conn.close()
 
 def db_get_pending_scheduled_question():
-    """Retrieves the oldest un-sent question that is past its scheduled posting time."""
     engine_db = QuizEngine()
     conn = None
     try:
@@ -376,7 +407,6 @@ def db_get_pending_scheduled_question():
         if conn: conn.close()
 
 def db_mark_question_as_sent(q_id):
-    """Marks a question as sent to prevent duplicate re-posts on the channel."""
     engine_db = QuizEngine()
     conn = None
     try:
@@ -392,7 +422,7 @@ def db_mark_question_as_sent(q_id):
     finally:
         if conn: conn.close()
 
-def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, bonus_limit=3):
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
     engine_db = QuizEngine()
     conn = None
     try:
@@ -426,10 +456,11 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             else:
                 marks_to_award = 0
 
+            # Store expansion states when inserting the initial response record
             cur.execute("""
-                INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s);
-            """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id))
+                INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, show_derivation, show_perf)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, show_derivation, show_perf))
 
             correct_inc = 1 if is_correct else 0
             cur.execute("""

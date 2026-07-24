@@ -86,7 +86,6 @@ async def admin_panel(app, engine: QuizEngine):
                 count = await asyncio.to_thread(engine.db_import_questions, raw_data)
                 if count > 0:
                     print(f"{Style.GREEN}✅ SUCCESS: {count} questions successfully imported/synced to Neon database.{Style.RESET}")
-                    # Force clean database refresh on next action
                     await asyncio.to_thread(engine.refresh_database, force=True)
                 else:
                     print(f"{Style.RED}❌ FAILED: No questions were imported. Check your JSON schema.{Style.RESET}")
@@ -95,7 +94,6 @@ async def admin_panel(app, engine: QuizEngine):
             continue
 
         if choice in ["1", "2"]:
-            # Explicitly force-reload on admin configuration request
             db = await asyncio.to_thread(engine.refresh_database, force=True)
             subjects = list(db.keys())
             if not subjects:
@@ -117,6 +115,11 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"    {i+1}. {diff_color} {m_tag}[{q['id']}] {q['question'][:45]}...")
 
             range_in = await cli.ask("<b>Selection (e.g. 1, 3-5 or easy:3): </b>")
+            
+            # Crash-resistance safety guard to handle empty, interrupted, or cancelled inputs safely
+            if not range_in:
+                continue
+
             to_send = []
 
             if ":" in range_in:

@@ -1,3 +1,4 @@
+# bot.py
 import os
 import sys
 import json
@@ -17,7 +18,8 @@ from src.database import (
     db_get_weekly_leaderboard,
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
-    process_user_score
+    process_user_score,
+    db_update_response_view_state
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info
@@ -175,6 +177,10 @@ async def start_command(update: Update, context):
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
+                # Load expansion states directly from the database row dynamically
+                show_derivation = existing_response.get('show_derivation', False)
+                show_perf = existing_response.get('show_perf', False)
+
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
                 except Exception:
@@ -190,11 +196,16 @@ async def start_command(update: Update, context):
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
-                explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
+                
+                explanation_html = warning_notice + UIFactory.build_answered_view(
+                    question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
+                )
 
                 has_ex_diag = UIFactory.has_explanation_diagram(question_data)
                 if has_ex_diag:
-                    explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
+                    explanation_html_compact = warning_notice + UIFactory.build_answered_view(
+                        question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
+                    )
                     latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
                     if latex_code:
                         img_url = UIFactory.get_latex_url(latex_code)
@@ -202,24 +213,42 @@ async def start_command(update: Update, context):
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                                m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
-                                full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
-                                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
-                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
+                                photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
+                                m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+
+                                # Restore expanded followups immediately on reload
+                                if show_derivation or show_perf:
+                                    full_text = UIFactory.build_answered_view(
+                                        question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card, continuation=True
+                                    )
+                                    follow_up = await send_rich_message_safe(
+                                        context.bot,
+                                        chat_id=update.message.chat_id,
+                                        html_content=full_text,
+                                        reply_to_message_id=m.message_id
+                                    )
+                                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", display_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
                                 return
 
-                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
+                reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=False)
+                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                 return
 
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection)
+            # Initial answer from channel starts in compact mode (False, False)
+            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
 
-            explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
+            explanation_html = UIFactory.build_answered_view(
+                question_data, str(display_id), user_selection, show_derivation=False, show_perf=False, perf_card=perf_card
+            )
 
             has_ex_diag = UIFactory.has_explanation_diagram(question_data)
             if has_ex_diag:
-                explanation_html_compact = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=True, perf_card=perf_card)
+                explanation_html_compact = UIFactory.build_answered_view(
+                    question_data, str(display_id), user_selection, show_derivation=False, show_perf=False, perf_card=perf_card
+                )
                 latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
                 if latex_code:
                     img_url = UIFactory.get_latex_url(latex_code)
@@ -227,15 +256,13 @@ async def start_command(update: Update, context):
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                            m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
-
-                            full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
-                            f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
-
-                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
+                            photo_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=True)
+                            m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                             return
 
-            f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
+            reveal_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=False)
+            f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
             await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
             return
         except Exception as e:
