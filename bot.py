@@ -6,6 +6,16 @@ import asyncio
 import threading
 import traceback
 import io
+import logging
+
+# Suppress Telegram updater warnings, polling conflicts, and httpx connection logs from spamming the CLI cockpit
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.WARNING
+)
+for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.ext._updater", "httpx"]:
+    logging.getLogger(log_name).setLevel(logging.CRITICAL)
+
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -197,12 +207,14 @@ async def start_command(update: Update, context):
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
                 
+                # Render using the loaded state
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
                 )
 
                 has_ex_diag = UIFactory.has_explanation_diagram(question_data)
                 if has_ex_diag:
+                    # Keep main caption compact, let followup handle derivations
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(
                         question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                     )
