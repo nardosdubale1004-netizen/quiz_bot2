@@ -129,6 +129,9 @@ def sanitize_latex_for_telegram_math(expr: str) -> str:
     expr = expr.replace(r"\left", "").replace(r"\right", "")
     expr = expr.replace(r"\|", "||")
     
+    # Ensure commands like \to are followed by a space so the client parser doesn't bundle them, e.g., \to2 -> \to 2
+    expr = re.sub(r'\\([a-zA-Z]+)(?=[0-9])', r'\\\1 ', expr)
+    
     # Map common degree indicators to standard Unicode representation
     expr = expr.replace(r"^\circ", "°").replace(r"\circ", "°")
     
@@ -156,6 +159,55 @@ def sanitize_latex_for_telegram_math(expr: str) -> str:
     expr = re.sub(r'\\begin\{(?:pmatrix|matrix|bmatrix|cases)\}(.*?)\\end\{(?:pmatrix|matrix|bmatrix|cases)\}', convert_matrices, expr, flags=re.DOTALL)
     return re.sub(r'\s+', ' ', expr).strip()
 
+def wrap_naked_math(text: str) -> str:
+    """
+    Scans plain-text segments recursively, identifying standalone "naked" equations, 
+    fraction series, coordinate points, and algebraic terms, wrapping them in mathematical delimiters safely.
+    """
+    if not text:
+        return ""
+        
+    # Split by any HTML tags to ensure we don't modify tag parameters, tag names, or existing tag properties
+    parts = re.split(r'(</?[a-zA-Z1-6-]+(?:\s+[^>]*)?/?>)', text)
+    for i in range(len(parts)):
+        if i % 2 == 0:
+            # Check if this plain segment is already enclosed inside a tg-math or tg-math-block tag
+            if i > 0 and ("tg-math" in parts[i-1].lower()):
+                continue
+                
+            segment = parts[i]
+            
+            # Pattern 1: Standalone algebra equations like "x^2 - 4 = (x-2)(x+2)" or "2x + 3 = 11"
+            def eq_repl(match):
+                expr = match.group(0).strip()
+                if expr.startswith('$') and expr.endswith('$'):
+                    return expr
+                # Ensure it is a mathematical expression by checking for operators, variables, or exponents
+                if any(c in expr for c in ['^', '_', '+', '-', '*', '/', '(', ')', '\\']) or re.search(r'\b[a-zA-Z]\b', expr):
+                    return f"${expr}$"
+                return match.group(0)
+                
+            segment = re.sub(r'\b[a-zA-Z\d\^_\+\-\*/\(\)\s]+=[a-zA-Z\d\^_\+\-\*/\(\)\s]+\b', eq_repl, segment)
+            
+            # Pattern 2: Standalone algebraic terms with powers/subscripts, e.g. x^2, a_1, (1+i)^2
+            def power_repl(match):
+                expr = match.group(0).strip()
+                if expr.startswith('$') and expr.endswith('$'):
+                    return expr
+                return f"${expr}$"
+                
+            segment = re.sub(r'\b[a-zA-Z\d\(\)]+[\^_]\{?[a-zA-Z\d\+\-]+\}?\b', power_repl, segment)
+            
+            # Pattern 3: Coordinate point/vector structures, e.g. (3,4) or (1,2,2)
+            segment = re.sub(r'\b\(\d+\s*,\s*\d+(?:\s*,\s*\d+)?\)\b', r'$\g<0>$', segment)
+            
+            # Pattern 4: Standalone fractions in derivation steps, e.g. "1/2 + 1/4" or "3/6"
+            segment = re.sub(r'\b\d+/\d+\s*[\+\-\*/]\s*\d+/\d+\b', r'$\g<0>$', segment)
+            
+            parts[i] = segment
+            
+    return "".join(parts)
+
 def beautify_markdown_math(text):
     if not text:
         return ""
@@ -179,6 +231,9 @@ def beautify_markdown_math(text):
         return f"\n<b>{emoji} Step {step_num}:</b>\n  "
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
+
+    # Automatically identify, isolate, and wrap naked math blocks in math tags
+    result = wrap_naked_math(result)
 
     result = result.replace(r'\[', '$$').replace(r'\]', '$$')
     result = result.replace(r'\(', '$').replace(r'\)', '$')
