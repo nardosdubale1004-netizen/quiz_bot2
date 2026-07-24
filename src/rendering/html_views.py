@@ -19,13 +19,17 @@ def smart_truncate_html(text: str, max_len: int) -> str:
             break
         accumulated += (sentence + " ")
     accumulated = accumulated.strip() or text[:max_len - 3].strip()
-    if accumulated.count('$') % 2 != 0: accumulated += '$'
+    if accumulated.count('$') % 2 != 0: 
+        accumulated += '$'
     tag_pattern = re.compile(r'<(/?)(code|b|i|span|tg-spoiler|a)(?:\s+[^>]*?)?>')
     open_tags = []
     for match in tag_pattern.finditer(accumulated):
-        if not match.group(1): open_tags.append(match.group(2))
-        elif open_tags and open_tags[-1] == match.group(2): open_tags.pop()
-    for tag in reversed(open_tags): accumulated += f'</{tag}>'
+        if not match.group(1): 
+            open_tags.append(match.group(2))
+        elif open_tags and open_tags[-1] == match.group(2): 
+            open_tags.pop()
+    for tag in reversed(open_tags): 
+        accumulated += f'</{tag}>'
     return accumulated + "..."
 
 def get_grade_mastery_title(marks: int) -> str:
@@ -86,7 +90,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # Removed leading bullet point "•" for extreme space efficiency
+        # Redundant bullet point "•" removed here
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
@@ -192,7 +196,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # Removed redundant bullet points "•" for a clean look on phone screens
+        # Redundant bullet point "•" removed here
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
@@ -314,3 +318,23 @@ def build_interactive_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
         label = f"{letters[i]} │ {clean_opt}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"ans|{display_id}|{i}")])
     return InlineKeyboardMarkup(buttons)
+
+def generate_poll_hint(q):
+    exp = q.get("poll_explanation", {})
+    custom_hint = exp.get("poll_hint") or exp.get("hint")
+    if custom_hint:
+        cleaned = clean_latex_to_unicode(custom_hint)
+        return cleaned[:195] if len(cleaned) > 195 else cleaned
+    clean_rule = lite_math(exp.get("governing_principle") or exp.get("rule") or "")
+    clean_why = lite_math(exp.get("why", ""))
+    if clean_rule:
+        combined = f"Rule: {clean_rule}"
+        equations = re.findall(r'([A-Za-z\d\-\[\]\(\)]+\s*=\s*[^.\n]+)', clean_why)
+        if equations and len(f"{combined} | {equations[-1].strip()}") <= 195:
+            return f"{combined} | {equations[-1].strip()}"
+        if len(combined) <= 195: 
+            return combined
+    for sentence in re.split(r'(?<=[.!?])\s+', clean_why):
+        if len(sentence) <= 195 and any(sym in sentence for sym in ["=", "√", "∫", "π", "θ", "°"]):
+            return sentence
+    return f"Apply {clean_rule[:100]}."[:195] if clean_rule else "Check Premium UI for derivations."[:195]
