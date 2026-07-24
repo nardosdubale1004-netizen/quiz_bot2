@@ -52,12 +52,14 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     why = exp.get('why', 'No detailed explanation provided.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Mathematical Concept'
 
+    # SECTION 1: HEADER
     header = (
         f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code> • 📅 {day_str}\n"
         f"📐 <b>Topic:</b> {q.get('topic','General')}\n"
         f"────────────────────────\n\n"
     )
 
+    # SECTION 2: PROBLEM PROPOSITION & OPTIONS
     body = (
         f"<b>PROBLEM PROPOSITION</b>\n"
         f"{beautify_markdown_math(q['question'])}\n\n"
@@ -68,17 +70,17 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
     opts_block = "\n".join(opts_list) + "\n\n"
 
-    # --- 3 SUB-CATEGORIES BOXED INDIVIDUALLY FOR CLEAN COLOR SHADING & BORDERS ---
-
-    # Sub-category 1: Governing Principle (Blue blockquote card)
+    # SECTION 3: DETAILED EXPLANATION (3 ACCENTED BLOCKQUOTE SUB-CATEGORIES)
     general_principle = (
         f"<blockquote>\n"
         f"  🟦 <b>1. GOVERNING PRINCIPLE</b>\n\n"
         f"  <i>{beautify_markdown_math(rule_text)}</i>\n"
-        f"</blockquote>\n"
     )
+    if not compact:
+        general_principle += "</blockquote>\n"
+    else:
+        general_principle += f"\n  🎯 <b>Correct Option: [{correct_letter}]</b>\n</blockquote>\n"
 
-    # Sub-category 2: Step-by-Step Derivation (Orange blockquote card)
     step_by_step = (
         f"<blockquote>\n"
         f"  🟧 <b>2. STEP-BY-STEP DERIVATION</b>\n\n"
@@ -90,7 +92,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         step_by_step += f"\n  <b>🧠 Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
     step_by_step += "</blockquote>\n\n"
 
-    # Sub-category 3: Options Breakdown (Purple blockquote card)
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
         f"<blockquote>\n"
@@ -111,8 +112,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     breakdown_block = "\n".join(breakdown_parts)
 
     solution_title = f"🎯 <b>CORRECT OPTION: <tg-spoiler>[{correct_letter}]</tg-spoiler></b>\n\n"
-    solution_block = f"{solution_title}{general_principle}{step_by_step}{breakdown_block}"
+    
+    if compact:
+        solution_block = f"{solution_title}{general_principle}"
+    else:
+        solution_block = f"{solution_title}{general_principle}{step_by_step}{breakdown_block}"
 
+    # SECTION 4 & 5: FOOTER (WATERMARK & HASHTAGS)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n\n📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
@@ -133,12 +139,14 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     why = exp.get('why', 'No step-by-step derivation available.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Formula Concept'
 
+    # SECTION 1: HEADER
     header = (
         f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code> • 📅 {day_str}\n"
         f"📐 <b>Topic:</b> {q.get('topic','General')}\n"
         f"────────────────────────\n\n"
     )
 
+    # SECTION 2: PROBLEM PROPOSITION & SELECTION
     body = (
         f"<b>PROBLEM PROPOSITION</b>\n"
         f"{beautify_markdown_math(q['question'])}\n\n"
@@ -154,9 +162,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
     )
 
-    # --- 3 SUB-CATEGORIES BOXED INDIVIDUALLY FOR CLEAN COLOR SHADING & BORDERS ---
-
-    # Sub-category 1: Governing Principle (Blue blockquote card)
+    # SECTION 3: DETAILED EXPLANATION (3 ACCENTED BLOCKQUOTE SUB-CATEGORIES)
     general_principle = (
         f"<blockquote>\n"
         f"  🟦 <b>1. GOVERNING PRINCIPLE</b>\n\n"
@@ -164,7 +170,6 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         f"</blockquote>\n"
     )
 
-    # Sub-category 2: Step-by-Step Derivation (Orange blockquote card)
     step_by_step_block = (
         f"<blockquote>\n"
         f"  🟧 <b>2. STEP-BY-STEP DERIVATION</b>\n\n"
@@ -176,7 +181,6 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         step_by_step_block += f"\n  <b>🧠 Memory Tip:</b> {beautify_markdown_math(exp['memory_tip'])}\n"
     step_by_step_block += "</blockquote>\n\n"
 
-    # Sub-category 3: Options Breakdown (Purple blockquote card)
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
         f"<blockquote>\n"
@@ -196,17 +200,18 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
-    explanation_block = f"{general_principle}\n{step_by_step_block}\n{breakdown_block}"
+    if compact:
+        explanation_block = general_principle
+    else:
+        explanation_block = f"{general_principle}\n{step_by_step_block}\n{breakdown_block}"
 
-    # Flat, table-free study metrics list optimized for mobile screen widths
+    # SECTION 4: STUDY PERFORMANCE CARD (FLAT HIGH-CONTRAST MOBILE GRID)
     score_segment = ""
     if perf_card:
-        if not perf_card['first_try']:
-            marks_notice = "⚠️ <i>Practice Mode: Answer modified. No marks awarded.</i>"
-        elif perf_card['is_bonus_winner']:
+        if perf_card['is_bonus_winner']:
             marks_notice = "⚡ <b>EARLY BIRD BONUS! (+10 Marks)</b>"
         elif perf_card['marks_awarded'] > 0:
-            marks_notice = "🟩 <b>CORRECT! Standard score awarded. (+2 Marks)</b>"
+            marks_notice = "🟩 <b>CORRECT! Score awarded. (+2 Marks)</b>"
         else:
             marks_notice = "🟥 <b>INCORRECT. No marks awarded. (+0 Marks)</b>"
 
@@ -223,6 +228,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
+    # SECTION 5 & 6: FOOTER (WATERMARK, HASHTAGS, AND RETURN ACTION)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n\n📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"

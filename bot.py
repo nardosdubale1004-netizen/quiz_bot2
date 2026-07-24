@@ -147,7 +147,7 @@ async def start_command(update: Update, context):
         InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
     ]])
 
-    # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
+    # --- DEEP-LINKED QUIZ ANSWER PROCESSING (EVALUATED FRESH AND OVERWRITTEN) ---
     if args and args[0].startswith("ans_"):
         payload = args[0]
         try:
@@ -170,53 +170,7 @@ async def start_command(update: Update, context):
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
                 return
 
-            # anti-cheat: check if the student has already answered this question post
-            existing_response = db_get_user_response(user_id, mid_key)
-
-            if existing_response:
-                original_selection = existing_response['selected_option']
-                old_private_mid = existing_response.get('private_message_id')
-
-                # Delete the incoming /start text command immediately to avoid clutter
-                try:
-                    await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
-                except Exception:
-                    pass
-
-                # Delete the previous score cards to avoid duplicates
-                if old_private_mid:
-                    try:
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid + 1)
-                    except Exception:
-                        pass
-
-                perf_card = process_user_score(user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
-                warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
-                                 "<i>Your original selection and score have been securely locked.</i>\n\n"
-                explanation_html = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card)
-
-                has_tikz = UIFactory.has_real_diagram(question_data)
-                if has_tikz:
-                    explanation_html_compact = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=True, perf_card=perf_card)
-                    latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
-                    if latex_code:
-                        img_url = UIFactory.get_latex_url(latex_code)
-                        async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, img_url, latex_code)
-                            if resp and resp.status_code == 200:
-                                legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                                # Fixed: Wrap bytes in io.BytesIO stream to prevent visual crashes
-                                m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
-                                full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
-                                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
-                                db_update_private_message_id(user_id, mid_key, f_m.message_id)
-                                return
-
-                f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=channel_kb)
-                db_update_private_message_id(user_id, mid_key, f_m.message_id)
-                return
-
+            # Read and adjust scores in database without lockout warning notices
             is_correct = (user_selection == question_data['correct_option'])
             perf_card = process_user_score(user_id, mid_key, question_data['id'], is_correct, user_selection)
 
@@ -233,7 +187,6 @@ async def start_command(update: Update, context):
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                            # Fixed: Wrap bytes in io.BytesIO stream to prevent visual crashes
                             m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
 
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
