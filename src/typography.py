@@ -112,13 +112,9 @@ def lite_math(text):
     return clean_latex_to_unicode(text.replace("$", ""))
 
 def sanitize_latex_for_telegram_math(expr: str) -> str:
-    """
-    Cleans and standardizes LaTeX expressions to adhere strictly to Telegram's native 
-    mathematical parser, preventing client-side compilation failures.
-    """
     if not expr:
         return ""
-    
+
     expr = expr.strip().replace("\n", " ").replace("\r", "")
     expr = expr.replace(r"\allowbreak", "")
     expr = expr.replace(r"\par", " ")
@@ -128,16 +124,13 @@ def sanitize_latex_for_telegram_math(expr: str) -> str:
     expr = expr.replace(r"\\", ", ")
     expr = expr.replace(r"\left", "").replace(r"\right", "")
     expr = expr.replace(r"\|", "||")
-    
-    # Map common degree indicators to standard Unicode representation
+
     expr = expr.replace(r"^\circ", "°").replace(r"\circ", "°")
-    
-    # Map complex number sets to direct mathematical Unicode symbols
+
     expr = expr.replace(r"\mathbb{R}", "ℝ").replace(r"\mathbb{N}", "ℕ")
     expr = expr.replace(r"\mathbb{Z}", "ℤ").replace(r"\mathbb{C}", "ℂ")
     expr = expr.replace(r"\mathbb{Q}", "ℚ")
-    
-    # Sanitize font and structure modifiers (e.g. \text{ATP} -> ATP, \vec{a} -> a)
+
     for _ in range(3):
         expr = re.sub(r'\\math[a-zA-Z]*\s*\{([^}]+)\}', r'\1', expr)
         expr = re.sub(r'\\text[a-zA-Z]*\s*\{([^}]+)\}', r'\1', expr)
@@ -146,21 +139,174 @@ def sanitize_latex_for_telegram_math(expr: str) -> str:
         expr = re.sub(r'\\hat\s*\{([^}]+)\}', r'\1', expr)
         expr = re.sub(r'\\bar\s*\{([^}]+)\}', r'\1', expr)
 
-    # Convert complex matrix layouts into readable arrays to avoid crashes
+    # Clean fallback for any unformatted standard mathematical matrices
     def convert_matrices(match):
         content = match.group(1).strip()
         content = content.replace("&", ", ").replace("\\\\", "; ").replace("\n", " ")
         content = re.sub(r'\s+', ' ', content)
         return f"[{content}]"
-    
+
     expr = re.sub(r'\\begin\{(?:pmatrix|matrix|bmatrix|cases)\}(.*?)\\end\{(?:pmatrix|matrix|bmatrix|cases)\}', convert_matrices, expr, flags=re.DOTALL)
     return re.sub(r'\s+', ' ', expr).strip()
+
+def convert_latex_matrix_to_unicode(text: str) -> str:
+    """
+    Converts LaTeX matrices (pmatrix, bmatrix, matrix, cases) to gorgeous,
+    perfectly-aligned 2D Unicode plain-text arrays for standard messages.
+    """
+    pattern = re.compile(r'\\begin\{(pmatrix|bmatrix|matrix|cases)\}(.*?)\\end\{\1\}', re.DOTALL)
+    
+    def repl(match):
+        env_type = match.group(1)
+        content = match.group(2).strip()
+        
+        rows_raw = re.split(r'\\\\|\\cr', content)
+        rows = []
+        for r in rows_raw:
+            r = r.strip()
+            if not r and len(rows_raw) > 1:
+                continue
+            cols = [c.strip() for c in r.split('&')]
+            rows.append(cols)
+            
+        if not rows:
+            return ""
+            
+        num_cols = max(len(r) for r in rows)
+        col_widths = [0] * num_cols
+        for r in rows:
+            for c_idx, cell in enumerate(r):
+                clean_cell = lite_math(cell)
+                col_widths[c_idx] = max(col_widths[c_idx], len(clean_cell))
+                
+        formatted_rows = []
+        for r in rows:
+            row_cells = []
+            for c_idx in range(num_cols):
+                cell_val = r[c_idx] if c_idx < len(r) else ""
+                clean_cell = lite_math(cell_val)
+                padded = clean_cell.center(col_widths[c_idx])
+                row_cells.append(padded)
+            formatted_rows.append("  ".join(row_cells))
+            
+        n_rows = len(formatted_rows)
+        result_lines = []
+        
+        if env_type == "pmatrix":
+            if n_rows == 1:
+                result_lines.append(f"({formatted_rows[0]})")
+            elif n_rows == 2:
+                result_lines.append(f"⎛ {formatted_rows[0]} ⎞")
+                result_lines.append(f"⎝ {formatted_rows[1]} ⎠")
+            else:
+                result_lines.append(f"⎛ {formatted_rows[0]} ⎞")
+                for i in range(1, n_rows - 1):
+                    result_lines.append(f"⎜ {formatted_rows[i]} ⎟")
+                result_lines.append(f"⎝ {formatted_rows[-1]} ⎠")
+                
+        elif env_type == "bmatrix":
+            if n_rows == 1:
+                result_lines.append(f"[{formatted_rows[0]}]")
+            elif n_rows == 2:
+                result_lines.append(f"⎡ {formatted_rows[0]} ⎤")
+                result_lines.append(f"⎣ {formatted_rows[1]} ⎦")
+            else:
+                result_lines.append(f"⎡ {formatted_rows[0]} ⎤")
+                for i in range(1, n_rows - 1):
+                    result_lines.append(f"⎢ {formatted_rows[i]} ⎥")
+                result_lines.append(f"⎣ {formatted_rows[-1]} ⎦")
+                
+        elif env_type == "cases":
+            if n_rows == 1:
+                result_lines.append(f"⎧ {formatted_rows[0]}")
+            elif n_rows == 2:
+                result_lines.append(f"⎧ {formatted_rows[0]}")
+                result_lines.append(f"⎩ {formatted_rows[1]}")
+            else:
+                result_lines.append(f"⎧ {formatted_rows[0]}")
+                for i in range(1, n_rows - 1):
+                    result_lines.append(f"⎨ {formatted_rows[i]}")
+                result_lines.append(f"⎩ {formatted_rows[-1]}")
+        else:
+            result_lines = formatted_rows
+            
+        return "\n" + "\n".join(result_lines) + "\n"
+
+    return pattern.sub(repl, text)
+
+def auto_wrap_math_expressions(text: str) -> str:
+    """
+    Intelligently scans the plain text parts of a string and wraps any mathematical 
+    equations, variables, or expressions in '$' delimiters, without touching existing HTML tags.
+    """
+    if not text:
+        return ""
+
+    # Protect existing mathematical blocks, tags, and formatting blocks
+    pattern = re.compile(
+        r'(<tg-math-block>.*?</tg-math-block>|'
+        r'<tg-math>.*?</tg-math>|'
+        r'<pre>.*?</pre>|'
+        r'<code>.*?</code>|'
+        r'</?[a-zA-Z1-6-]+(?:\s+[^>]*)?/?>|'
+        r'\$\$.*?\$\$|'
+        r'\$.*?\$|'
+        r'\\\[.*?\\\]|'
+        r'\\\(.*?\\\))',
+        re.DOTALL
+    )
+    
+    parts = pattern.split(text)
+    
+    for i in range(len(parts)):
+        # Every even index represents plain text outside tags/blocks
+        if i % 2 == 0:
+            segment = parts[i]
+            if not segment.strip():
+                continue
+            
+            # Pattern A: Contiguous LaTeX commands with backslashes
+            # e.g., \lim_{x\to2}\frac{(x-2)(x+2)}{x-2} = \lim_{x\to2}(x+2)
+            segment = re.sub(
+                r'((?:\\[a-zA-Z]+|\d|[a-zA-Z]|[+\-*/^=<>(){}\[\]_.,\\ \t]|\\neq|\\approx|\\le|\\ge|\\to)+)',
+                lambda m: f"${m.group(1).strip()}$" if '\\' in m.group(1) else m.group(1),
+                segment
+            )
+            
+            # Pattern B: Standard math equations & inequalities
+            # e.g., "x^2 - 4 = (x-2)(x+2)" or "2 + 0 = 2 \neq 4"
+            segment = re.sub(
+                r'((?:[a-zA-Z0-9_+*/^()-]+\s*)+(?:=|<=|>=|<|>|\\neq|\\approx|\\le|\\ge)\s*(?:[a-zA-Z0-9_+*/^()-]+\s*)+)',
+                lambda m: f"${m.group(1).strip()}$" if not m.group(1).strip().startswith('$') else m.group(1),
+                segment
+            )
+            
+            # Pattern C: Standard individual variable expressions
+            # e.g., "x^2", "a^2", "f(x)"
+            segment = re.sub(
+                r'\b([a-zA-Z]\^[0-9a-zA-Z+-]+|\b[a-zA-Z]\([a-zA-Z0-9+-]\))\b',
+                r'$\1$',
+                segment
+            )
+            
+            # Clean consecutive delimiters from replacements
+            segment = segment.replace('$$', '$')
+            parts[i] = segment
+
+    return "".join(parts)
 
 def beautify_markdown_math(text):
     if not text:
         return ""
 
     text = str(text)
+    
+    # First convert standard LaTeX matrices to elegant 2D plain-text Unicode alignments
+    text = convert_latex_matrix_to_unicode(text)
+    
+    # Parse and wrap remaining unformatted plain-text equations safely
+    text = auto_wrap_math_expressions(text)
+    
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
@@ -183,7 +329,6 @@ def beautify_markdown_math(text):
     result = result.replace(r'\[', '$$').replace(r'\]', '$$')
     result = result.replace(r'\(', '$').replace(r'\)', '$')
 
-    # Convert any standard block/inline math delimiters to native Telegram rich tags
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
@@ -201,11 +346,10 @@ def beautify_markdown_math(text):
 
     result = "".join(parts_block)
 
-    # Sanitize any pre-existing tg-math and tg-math-block tags loaded directly from database files
     def sanitize_tg_math_tag(match):
         formula = match.group(1)
         return f"<tg-math>{sanitize_latex_for_telegram_math(formula)}</tg-math>"
-        
+
     def sanitize_tg_math_block_tag(match):
         formula = match.group(1)
         return f"<tg-math-block>{sanitize_latex_for_telegram_math(formula)}</tg-math-block>"
