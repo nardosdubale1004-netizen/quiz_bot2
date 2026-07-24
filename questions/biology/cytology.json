@@ -5,19 +5,19 @@
     "topic": "Cell Structures",
     "difficulty": "easy",
     "tags": ["grade12", "cytology", "energy", "2026-07-15"],
-    "question": "Which cell organelle is primarily responsible for generating the chemical energy carrier adenosine triphosphate (ATP)?",
+    "question": "Which cell organelle is primarily responsible for generating the chemical energy carrier adenosine triphosphate (<tg-math>\\text{ATP}</tg-math>)?",
     "latex": null,
     "options": ["Nucleus", "Ribosome", "Mitochondria", "Lysosome"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Cellular Respiration and ATP Production",
-      "why": "Mitochondria are the double-membrane organelle systems that function as the main site of aerobic respiration and cellular ATP production.",
-      "poll_hint": "Mitochondria generate ATP (adenosine triphosphate) through cellular aerobic respiration, functioning as the cellular power generator."
+      "rule": "Cellular Respiration and <tg-math>\\text{ATP}</tg-math> Production",
+      "why": "Mitochondria are the double-membrane organelle systems that function as the main site of aerobic respiration and cellular <tg-math>\\text{ATP}</tg-math> production.",
+      "poll_hint": "Mitochondria generate ATP through cellular aerobic respiration, functioning as the cellular power generator."
     },
     "options_analysis": [
       {"why": "Incorrect. The nucleus serves as the repository of genetic instructions and cell control.", "example": "Contains DNA."},
       {"why": "Incorrect. Ribosomes serve as the physical site of protein translation.", "example": "Synthesizes peptides."},
-      {"why": "Correct. Mitochondria perform cellular respiration to generate ATP energy.", "example": "Synthesizes ATP."},
+      {"why": "Correct. Mitochondria perform cellular respiration to generate <tg-math>\\text{ATP}</tg-math> energy.", "example": "Synthesizes <tg-math>\\text{ATP}</tg-math>."},
       {"why": "Incorrect. Lysosomes contain digestive enzymes to break down waste.", "example": "Breaks down cellular waste."}
     ]
   }

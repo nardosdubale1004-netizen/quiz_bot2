@@ -89,32 +89,38 @@ Dashboard Commands:
         one).
       - all: Bulk-close all active quizzes on the current page.
 
-📊 Adding Questions (JSON Format)
+📂 Adding Questions (JSON Format)
 
-Add .json files to the questions/ folder. For complex graphs, use the
-tikzpicture environment in the latex field.
+Add `.json` files to the `questions/` folder. For all formulas, use Telegram's advance rich text math format:
 
+```json
 {
   "id": "MATH-GEO-001",
   "subject": "Mathematics",
   "topic": "Geometry",
   "tags": ["circle", "angles"],
-  "question": "Find the value of angle θ in the unit circle.",
+  "question": "Find the value of angle <tg-math>\\theta</tg-math> in the unit circle.",
   "latex": "\\begin{tikzpicture} ... TikZ Code ... \\end{tikzpicture}",
-  "options": ["30°", "45°", "60°", "90°"],
+  "options": [
+    "<tg-math>30^\\circ</tg-math>",
+    "<tg-math>45^\\circ</tg-math>",
+    "<tg-math>60^\\circ</tg-math>",
+    "<tg-math>90^\\circ</tg-math>"
+  ],
   "correct_option": 2,
   "poll_explanation": {
-    "rule": "Arc Sine",
-    "why": "The y-coordinate at this point is 0.866, which corresponds to sin(60°)."
+    "rule": "Arc Sine Identity: <tg-math-block>\\sin\\theta = y</tg-math-block>",
+    "why": "The y-coordinate at this point is <tg-math>0.866 = \\frac{\\sqrt{3}}{2}</tg-math>, which corresponds to <tg-math>\\sin(60^\\circ)</tg-math>."
   },
   "options_analysis": [
-    {"why": "Incorrect", "example": "sin(30) = 0.5"},
-    {"why": "Incorrect", "example": "sin(45) = 0.707"},
-    {"why": "Correct", "example": "sin(60) = 0.866"},
-    {"why": "Incorrect", "example": "sin(90) = 1"}
+    {"why": "Incorrect", "example": "<tg-math>\\sin(30^\\circ) = 0.5</tg-math>"},
+    {"why": "Incorrect", "example": "<tg-math>\\sin(45^\\circ) = 0.707</tg-math>"},
+    {"why": "Correct", "example": "<tg-math>\\sin(60^\\circ) = 0.866</tg-math>"},
+    {"why": "Incorrect", "example": "<tg-math>\\sin(90^\\circ) = 1</tg-math>"}
   ]
 }
 
+```
 🧠 Rendering Engines
 
 1.  Local Kroki (Port 8000): Used for tikzpicture. It produces high-definition

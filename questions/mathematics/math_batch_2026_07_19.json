@@ -6,22 +6,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["algebra", "linear", "2026-07-20"],
-    "question": "Solve the linear equation:\n\n$2x+3=11$.",
+    "question": "Solve the linear equation:\n\n<tg-math-block>2x+3=11</tg-math-block>",
     "native_question": "Solve the linear equation: 2x + 3 = 11.",
     "latex": null,
-    "options": ["2", "3", "4", "5"],
+    "options": ["<tg-math>x = 2</tg-math>", "<tg-math>x = 3</tg-math>", "<tg-math>x = 4</tg-math>", "<tg-math>x = 5</tg-math>"],
     "native_options": ["A) x = 2", "B) x = 3", "C) x = 4", "D) x = 5"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "For a standard linear form $ax+b=c$:\n\nIsolate $x$ by subtracting $b$, then dividing by $a$:\n\n$x = (c - b) / a$",
-      "why": "Step 1: Write down the given linear expression:\n$2x + 3 = 11$\n\nStep 2: Subtract 3 from both sides to isolate the variable term $2x$:\n$2x = 11 - 3$\n$2x = 8$\n\nStep 3: Solve for $x$ by dividing both sides of the equation by 2:\n$x = \\frac{8}{2}$\n$x = 4$.",
+      "rule": "For a standard linear form <tg-math>ax+b=c</tg-math>:\n\nIsolate <tg-math>x</tg-math> by subtracting <tg-math>b</tg-math>, then dividing by <tg-math>a</tg-math>:\n\n<tg-math-block>x = \\frac{c - b}{a}</tg-math-block>",
+      "why": "Step 1: Write down the given linear expression:\n<tg-math-block>2x + 3 = 11</tg-math-block>\n\nStep 2: Subtract 3 from both sides to isolate the variable term <tg-math>2x</tg-math>:\n<tg-math-block>2x = 11 - 3 = 8</tg-math-block>\n\nStep 3: Solve for <tg-math>x</tg-math> by dividing both sides of the equation by 2:\n<tg-math-block>x = \\frac{8}{2} = 4</tg-math-block>",
       "poll_hint": "2x+3=11 ⇒ 2x=8 ⇒ x=4"
     },
     "options_analysis": [
-      {"why": "Incorrect. Substituting x = 2 into the left side of the equation yields 7, which does not equal 11.", "example": "2(2)+3 = 7"},
-      {"why": "Incorrect. Substituting x = 3 into the left side of the equation yields 9, which does not equal 11.", "example": "2(3)+3 = 9"},
-      {"why": "Correct. Substituting x = 4 balances the algebraic statement perfectly.", "example": "2(4)+3 = 11"},
-      {"why": "Incorrect. Substituting x = 5 into the left side of the equation yields 13, which does not equal 11.", "example": "2(5)+3 = 13"}
+      {"why": "Incorrect. Substituting <tg-math>x = 2</tg-math> into the left side of the equation yields <tg-math>7</tg-math>, which does not equal <tg-math>11</tg-math>.", "example": "<tg-math>2(2)+3 = 7 \\neq 11</tg-math>"},
+      {"why": "Incorrect. Substituting <tg-math>x = 3</tg-math> into the left side of the equation yields <tg-math>9</tg-math>, which does not equal <tg-math>11</tg-math>.", "example": "<tg-math>2(3)+3 = 9 \\neq 11</tg-math>"},
+      {"why": "Correct. Substituting <tg-math>x = 4</tg-math> balances the algebraic statement perfectly.", "example": "<tg-math>2(4)+3 = 11</tg-math>"},
+      {"why": "Incorrect. Substituting <tg-math>x = 5</tg-math> into the left side of the equation yields <tg-math>13</tg-math>, which does not equal <tg-math>11</tg-math>.", "example": "<tg-math>2(5)+3 = 13 \\neq 11</tg-math>"}
     ],
     "scheduled_for": "2026-07-20T08:00:00+03:00"
   },
@@ -32,22 +32,22 @@
     "difficulty": "medium",
     "force_image": true,
     "tags": ["calculus", "integrals", "2026-07-20"],
-    "question": "Find the exact area under the parabola $f(x) = x^2$ over the interval $[0, 2]$, corresponding to the definite integral:\n\n$\\int_{0}^{2} x^2\\,dx$.",
+    "question": "Find the exact area under the parabola <tg-math>f(x) = x^2</tg-math> over the interval <tg-math>[0, 2]</tg-math>, corresponding to the definite integral:\n\n<tg-math-block>\\int_{0}^{2} x^2\\,dx</tg-math-block>",
     "native_question": "Find the definite integral of x² from x = 0 to x = 2.",
     "latex": "\\begin{tikzpicture}[scale=1.2] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,4.5); \\draw[-{Stealth}] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-0.5) -- (0,4.5) node[above] {$y$}; \\fill[fill=blue!15, opacity=0.6, domain=0:2, samples=100] (0,0) -- plot (\\x, {\\x*\\x}) -- (2,0) -- cycle; \\draw[domain=0:2.1, samples=100, color=blue, line width=1.5pt] plot (\\x, {\\x*\\x}) node[right] {$f(x)=x^2$}; \\draw[dashed, draw=gray] (2,0) -- (2,4); \\node[below] at (2,0) {$2$}; \\node[below left] at (0,0) {$0$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["4/3", "8/3", "2", "3"],
+    "options": ["<tg-math>\\frac{4}{3}</tg-math>", "<tg-math>\\frac{8}{3}</tg-math>", "<tg-math>2</tg-math>", "<tg-math>3</tg-math>"],
     "native_options": ["A) 4/3", "B) 8/3", "C) 2", "D) 3"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "The Fundamental Theorem of Calculus (Part 2):\n\nIf $F'(x) = f(x)$, then:\n\n$\\int_{a}^{b} f(x)\\,dx = F(b) - F(a)$",
-      "why": "Step 1: Identify the integration rule. Apply the standard power rule of integration:\n$\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C$\n\nStep 2: Find the general antiderivative $F(x)$ of the integrand $f(x) = x^2$:\n$F(x) = \\frac{x^{2+1}}{2+1} = \\frac{x^3}{3}$\n\nStep 3: Apply the integration boundaries $a=0$ and $b=2$:\n$\\int_{0}^{2} x^2\\,dx = \\left[ \\frac{x^3}{3} \\right]_0^2 = F(2) - F(0)$\n\nStep 4: Substitute the upper limit $x=2$:\n$F(2) = \\frac{2^3}{3} = \\frac{8}{3}$\n\nStep 5: Substitute the lower limit $x=0$:\n$F(0) = \\frac{0^3}{3} = 0$\n\nStep 6: Compute the definitive difference:\n$F(2) - F(0) = \\frac{8}{3} - 0 = \\frac{8}{3}$.",
+      "rule": "The Fundamental Theorem of Calculus (Part 2):\n\nIf <tg-math>F'(x) = f(x)</tg-math>, then:\n\n<tg-math-block>\\int_{a}^{b} f(x)\\,dx = F(b) - F(a)</tg-math-block>",
+      "why": "Step 1: Identify the integration rule. Apply the standard power rule of integration:\n<tg-math-block>\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C</tg-math-block>\n\nStep 2: Find the general antiderivative <tg-math>F(x)</tg-math> of the integrand <tg-math>f(x) = x^2</tg-math>:\n<tg-math-block>F(x) = \\frac{x^{2+1}}{2+1} = \\frac{x^3}{3}</tg-math-block>\n\nStep 3: Apply the integration boundaries <tg-math>a=0</tg-math> and <tg-math>b=2</tg-math>:\n<tg-math-block>\\int_{0}^{2} x^2\\,dx = \\left[ \\frac{x^3}{3} \\right]_0^2 = F(2) - F(0)</tg-math-block>\n\nStep 4: Substitute the upper limit <tg-math>x=2</tg-math>:\n<tg-math-block>F(2) = \\frac{2^3}{3} = \\frac{8}{3}</tg-math-block>\n\nStep 5: Substitute the lower limit <tg-math>x=0</tg-math>:\n<tg-math-block>F(0) = \\frac{0^3}{3} = 0</tg-math-block>\n\nStep 6: Compute the definitive difference:\n<tg-math-block>F(2) - F(0) = \\frac{8}{3} - 0 = \\frac{8}{3}</tg-math-block>",
       "poll_hint": "∫₀²x²dx=[x³/3]₀²=8/3"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents a scaling factor computational omission.", "example": "4/3 < 8/3"},
-      {"why": "Correct. Fundamental integration yields exactly 8/3.", "example": "Area = 8/3 = 2.67"},
-      {"why": "Incorrect. Likely evaluated f(x) directly at x=2 without integrating.", "example": "f(2) = 2^2 / 2 = 2"},
-      {"why": "Incorrect. An integer rounding approximation error.", "example": "8/3 ≈ 2.67 ≠ 3"}
+      {"why": "Incorrect. This represents a scaling factor computational omission.", "example": "<tg-math>\\frac{4}{3} < \\frac{8}{3}</tg-math>"},
+      {"why": "Correct. Fundamental integration yields exactly <tg-math>\\frac{8}{3}</tg-math>.", "example": "Area = <tg-math>\\frac{8}{3} \\approx 2.67</tg-math>"},
+      {"why": "Incorrect. Likely evaluated <tg-math>f(x)</tg-math> directly at <tg-math>x=2</tg-math> without integrating.", "example": "<tg-math>f(2) = 2</tg-math>"},
+      {"why": "Incorrect. An integer rounding approximation error.", "example": "<tg-math>\\frac{8}{3} \\approx 2.67 \\neq 3</tg-math>"}
     ],
     "scheduled_for": "2026-07-20T12:00:00+03:00"
   },
@@ -58,22 +58,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["vectors", "dot-product", "angles", "2026-07-20"],
-    "question": "Calculate the exact spatial angle $\\theta$ between the vectors:\n\n$\\vec{a} = \\vec{i} + \\sqrt{3}\\vec{j}$ and $\\vec{b} = \\sqrt{3}\\vec{i} + \\vec{j}$.",
+    "question": "Calculate the exact spatial angle <tg-math>\\theta</tg-math> between the vectors:\n\n<tg-math-block>\\vec{a} = \\vec{i} + \\sqrt{3}\\vec{j} \\quad \\text{and} \\quad \\vec{b} = \\sqrt{3}\\vec{i} + \\vec{j}</tg-math-block>",
     "native_question": "Calculate the exact angle θ between vectors a = i + √3 j and b = √3 i + j.",
     "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[step=0.5cm, draw=gray!15, line width=0.5pt] (-0.5,-0.5) grid (2.5,2.5); \\draw[-{Stealth}] (-0.5,0) -- (2.5,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-0.5) -- (0,2.5) node[above] {$y$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (1, 1.732) node[above right] {$\\vec{a}$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=red] (0,0) -- (1.732, 1) node[above right] {$\\vec{b}$}; \\draw[draw=violet, line width=1pt, -{Stealth}] (0.6,0.346) arc (30:60:0.7) node[midway, above right=1pt] {$\\theta$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["$\\pi/6$", "$\\pi/4$", "$\\pi/3$", "$\\pi/2$"],
+    "options": ["<tg-math>\\frac{\\pi}{6}</tg-math>", "<tg-math>\\frac{\\pi}{4}</tg-math>", "<tg-math>\\frac{\\pi}{3}</tg-math>", "<tg-math>\\frac{\\pi}{2}</tg-math>"],
     "native_options": ["A) π/6", "B) π/4", "C) π/3", "D) π/2"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "Vector Dot Product Definition:\n\n$\\cos\\theta = \\frac{\\vec{a} \\cdot \\vec{b}}{\\|\\vec{a}\\| \\|\\vec{b}\\|}$",
-      "why": "Step 1: Write down the components of the vectors:\n$\\vec{a} = (1, \\sqrt{3})$\n$\\vec{b} = (\\sqrt{3}, 1)$\n\nStep 2: Calculate the coordinate dot product:\n$\\vec{a} \\cdot \\vec{b} = a_x b_x + a_y b_y$\n$\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}$\n\nStep 3: Calculate the vector magnitudes:\n$\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = \\sqrt{4} = 2$\n$\\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = \\sqrt{4} = 2$\\n\nStep 4: Substitute values into the formulation to solve for $\\cos\\theta$:\n$\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}$\n\nStep 5: Determine the reference angle:\n$\\theta = \\cos^{-1}(\\frac{\\sqrt{3}}{2}) = 30^\\circ = \\frac{\\pi}{6}$.",
+      "rule": "Vector Dot Product Definition:\n\n<tg-math-block>\\cos\\theta = \\frac{\\vec{a} \\cdot \\vec{b}}{\\|\\vec{a}\\| \\|\\vec{b}\\|}</tg-math-block>",
+      "why": "Step 1: Write down the components of the vectors:\n<tg-math-block>\\vec{a} = (1, \\sqrt{3}), \\quad \\vec{b} = (\\sqrt{3}, 1)</tg-math-block>\n\nStep 2: Calculate the coordinate dot product:\n<tg-math-block>\\vec{a} \\cdot \\vec{b} = (1)(\\sqrt{3}) + (\\sqrt{3})(1) = 2\\sqrt{3}</tg-math-block>\n\nStep 3: Calculate the vector magnitudes:\n<tg-math-block>\\|\\vec{a}\\| = \\sqrt{1^2 + (\\sqrt{3})^2} = 2, \\quad \\|\\vec{b}\\| = \\sqrt{(\\sqrt{3})^2 + 1^2} = 2</tg-math-block>\n\nStep 4: Substitute values into the formulation to solve for <tg-math>\\cos\\theta</tg-math>:\n<tg-math-block>\\cos\\theta = \\frac{2\\sqrt{3}}{(2)(2)} = \\frac{\\sqrt{3}}{2}</tg-math-block>\n\nStep 5: Determine the reference angle:\n<tg-math-block>\\theta = \\cos^{-1}\\left(\\frac{\\sqrt{3}}{2}\\right) = 30^\\circ = \\frac{\\pi}{6}</tg-math-block>",
       "poll_hint": "cos(θ) = (a·b)/(||a||·||b||) = √3/2 ⇒ θ = 30° = π/6 rad"
     },
     "options_analysis": [
-      {"why": "Correct. Substitution resolves to a cosine ratio of exactly √3/2.", "example": "cos(π/6) = √3/2 = 0.866"},
-      {"why": "Incorrect. This represents a 45-degree spatial offset.", "example": "cos(π/4) = √2/2 = 0.707"},
-      {"why": "Incorrect. This is 60 degrees.", "example": "cos(π/3) = 1/2 = 0.5"},
-      {"why": "Incorrect. Perpendicular vectors yield a product of zero.", "example": "cos(π/2) = 0"}
+      {"why": "Correct. Substitution resolves to a cosine ratio of exactly <tg-math>\\frac{\\sqrt{3}}{2}</tg-math>.", "example": "<tg-math>\\cos\\left(\\frac{\\pi}{6}\\right) = \\frac{\\sqrt{3}}{2}</tg-math>"},
+      {"why": "Incorrect. This represents a 45-degree spatial offset.", "example": "<tg-math>\\cos\\left(\\frac{\\pi}{4}\\right) = \\frac{\\sqrt{2}}{2}</tg-math>"},
+      {"why": "Incorrect. This is 60 degrees.", "example": "<tg-math>\\cos\\left(\\frac{\\pi}{3}\\right) = \\frac{1}{2}</tg-math>"},
+      {"why": "Incorrect. Perpendicular vectors yield a product of zero.", "example": "<tg-math>\\cos\\left(\\frac{\\pi}{2}\\right) = 0</tg-math>"}
     ],
     "scheduled_for": "2026-07-20T18:00:00+03:00"
   },
@@ -87,19 +87,19 @@
     "question": "The interior angles of any triangle in Euclidean space always sum to?",
     "native_question": "The sum of the interior angles of a triangle is equal to?",
     "latex": null,
-    "options": ["90°", "180°", "270°", "360°"],
+    "options": ["<tg-math>90^\\circ</tg-math>", "<tg-math>180^\\circ</tg-math>", "<tg-math>270^\\circ</tg-math>", "<tg-math>360^\\circ</tg-math>"],
     "native_options": ["A) 90°", "B) 180°", "C) 270°", "D) 360°"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Euclidean Angle Sum Theorem:\n\nThe sum of the interior angles of any triangle is always $180^\\circ$ (or $\\pi$ radians).",
-      "why": "This is a fundamental geometry fact: for any triangle with angles $\\alpha$, $\\beta$, and $\\gamma$:\n$\\alpha + \\beta + \\gamma = 180^\\circ$",
+      "rule": "Euclidean Angle Sum Theorem:\n\nThe sum of the interior angles of any triangle is always <tg-math>180^\\circ</tg-math> (or <tg-math>\\pi</tg-math> radians).",
+      "why": "This is a fundamental geometry fact: for any triangle with angles <tg-math>\\alpha</tg-math>, <tg-math>\\beta</tg-math>, and <tg-math>\\gamma</tg-math>:\n<tg-math-block>\\alpha + \\beta + \\gamma = 180^\\circ</tg-math-block>",
       "poll_hint": "Triangle interior angles = 180°"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents a right angle, not a complete sum.", "example": "90° < 180°"},
-      {"why": "Correct. Euclid's parallel postulate guarantees exactly 180°.", "example": "60° + 60° + 60° = 180°"},
-      {"why": "Incorrect. Value exceeds standard triangular bounds.", "example": "270° > 180°"},
-      {"why": "Incorrect. This is the sum of a quadrilateral.", "example": "4 * 90° = 360°"}
+      {"why": "Incorrect. This represents a right angle, not a complete sum.", "example": "<tg-math>90^\\circ < 180^\\circ</tg-math>"},
+      {"why": "Correct. Euclid's parallel postulate guarantees exactly <tg-math>180^\\circ</tg-math>.", "example": "<tg-math>60^\\circ + 60^\\circ + 60^\\circ = 180^\\circ</tg-math>"},
+      {"why": "Incorrect. Value exceeds standard triangular bounds.", "example": "<tg-math>270^\\circ > 180^\\circ</tg-math>"},
+      {"why": "Incorrect. This is the sum of a quadrilateral.", "example": "<tg-math>4 \\times 90^\\circ = 360^\\circ</tg-math>"}
     ],
     "scheduled_for": "2026-07-21T08:00:00+03:00"
   },
@@ -110,22 +110,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["quadratic", "roots", "2026-07-21"],
-    "question": "Solve the quadratic equation:\n\n$x^2-5x+6=0$.",
+    "question": "Solve the quadratic equation:\n\n<tg-math-block>x^2-5x+6=0</tg-math-block>",
     "native_question": "Solve the quadratic equation x² - 5x + 6 = 0.",
     "latex": null,
-    "options": ["1,6", "2,3", "-2,-3", "-1,-6"],
+    "options": ["<tg-math>x = 1, 6</tg-math>", "<tg-math>x = 2, 3</tg-math>", "<tg-math>x = -2, -3</tg-math>", "<tg-math>x = -1, -6</tg-math>"],
     "native_options": ["A) x = 1, 6", "B) x = 2, 3", "C) x = -2, -3", "D) x = -1, -6"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Factoring Monic Quadratics:\n\nFor $x^2+bx+c=0$, find two numbers that multiply to $c$ and sum to $b$:\n\n$(x - p)(x - q) = 0 \\implies x = p, q$",
-      "why": "Step 1: Write down the quadratic expression:\n$x^2 - 5x + 6 = 0$\n\nStep 2: Find two numbers that multiply to $+6$ and sum to $-5$. These are $-2$ and $-3$:\n$(-2) \\times (-3) = 6$\n$(-2) + (-3) = -5$\n\nStep 3: Express in factored form:\n$(x - 2)(x - 3) = 0$\n\nStep 4: Solve for $x$ by setting each linear factor to zero:\n$x - 2 = 0 \\implies x = 2$\n$x - 3 = 0 \\implies x = 3$.",
+      "rule": "Factoring Monic Quadratics:\n\nFor <tg-math>x^2+bx+c=0</tg-math>, find two numbers that multiply to <tg-math>c</tg-math> and sum to <tg-math>b</tg-math>:\n\n<tg-math-block>(x - p)(x - q) = 0 \\implies x = p, q</tg-math-block>",
+      "why": "Step 1: Write down the quadratic expression:\n<tg-math-block>x^2 - 5x + 6 = 0</tg-math-block>\n\nStep 2: Find two numbers that multiply to <tg-math>+6</tg-math> and sum to <tg-math>-5</tg-math>. These are <tg-math>-2</tg-math> and <tg-math>-3</tg-math>:\n<tg-math-block>(-2) \\times (-3) = 6, \\quad (-2) + (-3) = -5</tg-math-block>\n\nStep 3: Express in factored form:\n<tg-math-block>(x - 2)(x - 3) = 0</tg-math-block>\n\nStep 4: Solve for <tg-math>x</tg-math> by setting each linear factor to zero:\n<tg-math-block>x - 2 = 0 \\implies x = 2, \\quad x - 3 = 0 \\implies x = 3</tg-math-block>",
       "poll_hint": "x²−5x+6=(x−2)(x−3)"
     },
     "options_analysis": [
-      {"why": "Incorrect. Sum of these roots equals 7, not 5.", "example": "1 + 6 = 7"},
-      {"why": "Correct. Factoring yields root solutions at x = 2 and x = 3.", "example": "(2)^2 - 5(2) + 6 = 0"},
-      {"why": "Incorrect. Leads to a sign coefficient error.", "example": "(-2)^2 - 5(-2) + 6 = 20 ≠ 0"},
-      {"why": "Incorrect. Product is correct, but sum is negative.", "example": "(-1)^2 - 5(-1) + 6 = 12 ≠ 0"}
+      {"why": "Incorrect. Sum of these roots equals 7, not 5.", "example": "<tg-math>1 + 6 = 7 \\neq 5</tg-math>"},
+      {"why": "Correct. Factoring yields root solutions at <tg-math>x = 2</tg-math> and <tg-math>x = 3</tg-math>.", "example": "<tg-math>(2)^2 - 5(2) + 6 = 0</tg-math>"},
+      {"why": "Incorrect. Leads to a sign coefficient error.", "example": "<tg-math>(-2)^2 - 5(-2) + 6 = 20 \\neq 0</tg-math>"},
+      {"why": "Incorrect. Product is correct, but sum is negative.", "example": "<tg-math>(-1)^2 - 5(-1) + 6 = 12 \\neq 0</tg-math>"}
     ],
     "scheduled_for": "2026-07-21T12:00:00+03:00"
   },
@@ -136,22 +136,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["matrices", "determinant", "2026-07-21"],
-    "question": "Find the determinant of the $2 \\times 2$ matrix:\n\n$\\begin{pmatrix}2&1\\\\5&3\\end{pmatrix}$.",
+    "question": "Find the determinant of the <tg-math>2 \\times 2</tg-math> matrix:\n\n<tg-math-block>\\begin{pmatrix}2&1\\\\5&3\\end{pmatrix}</tg-math-block>",
     "native_question": "Find the determinant of the 2x2 matrix: [[2, 1], [5, 3]].",
     "latex": null,
-    "options": ["3", "5", "7", "11"],
-    "native_options": ["A) det = 1", "B) det = 5", "C) det = 7", "D) det = 11"],
+    "options": ["<tg-math>3</tg-math>", "<tg-math>5</tg-math>", "<tg-math>1</tg-math>", "<tg-math>11</tg-math>"],
+    "native_options": ["A) det = 3", "B) det = 5", "C) det = 1", "D) det = 11"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Determinant of a $2\\times2$ Matrix:\n\nFor $A = \\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$, the determinant is:\n\n$\\det(A) = ad - bc$",
-      "why": "Step 1: Write down the entries of the matrix:\n$a = 2, b = 1, c = 5, d = 3$\n\nStep 2: Substitute the entry values into the determinant formula:\n$\\det(M) = (2)(3) - (1)(5)$\n\nStep 3: Calculate the arithmetic result:\n$\\det(M) = 6 - 5 = 1$.",
+      "rule": "Determinant of a <tg-math>2\\times2</tg-math> Matrix:\n\nFor <tg-math>A = \\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}</tg-math>, the determinant is:\n\n<tg-math-block>\\det(A) = ad - bc</tg-math-block>",
+      "why": "Step 1: Write down the entries of the matrix:\n<tg-math-block>a = 2, b = 1, c = 5, d = 3</tg-math-block>\n\nStep 2: Substitute the entry values into the determinant formula:\n<tg-math-block>\\det(M) = (2)(3) - (1)(5)</tg-math-block>\n\nStep 3: Calculate the arithmetic result:\n<tg-math-block>\\det(M) = 6 - 5 = 1</tg-math-block>",
       "poll_hint": "ad−bc = 6−5 = 1"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents a distinct computational error.", "example": "3 ≠ 1"},
-      {"why": "Incorrect. This represents a computational sign translation slip.", "example": "5 ≠ 1"},
-      {"why": "Correct. Standard determinant expansion yields exactly 1.", "example": "(2)(3) - (1)(5) = 1"},
-      {"why": "Incorrect. Likely resulted from adding entries instead of subtracting.", "example": "(2)(3) + (1)(5) = 11"}
+      {"why": "Incorrect. This represents a distinct computational error.", "example": "<tg-math>3 \\neq 1</tg-math>"},
+      {"why": "Incorrect. This represents a computational sign translation slip.", "example": "<tg-math>5 \\neq 1</tg-math>"},
+      {"why": "Correct. Standard determinant expansion yields exactly 1.", "example": "<tg-math>(2)(3) - (1)(5) = 1</tg-math>"},
+      {"why": "Incorrect. Likely resulted from adding entries instead of subtracting.", "example": "<tg-math>(2)(3) + (1)(5) = 11</tg-math>"}
     ],
     "scheduled_for": "2026-07-21T18:00:00+03:00"
   },
@@ -162,22 +162,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["powers", "indices", "2026-07-22"],
-    "question": "Evaluate the exponential term:\n\n$2^3$.",
+    "question": "Evaluate the exponential term:\n\n<tg-math-block>2^3</tg-math-block>",
     "native_question": "Evaluate 2³.",
     "latex": null,
-    "options": ["6", "8", "9", "12"],
+    "options": ["<tg-math>6</tg-math>", "<tg-math>8</tg-math>", "<tg-math>9</tg-math>", "<tg-math>12</tg-math>"],
     "native_options": ["A) 6", "B) 8", "C) 9", "D) 12"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Definition of Integer Power:\n\nFor any base $a$ and positive integer power $n$:\n\n$a^n = a \\times a \\times \\dots \\times a$ ($n$ times)",
-      "why": "Step 1: Write down the term:\n$2^3$\n\nStep 2: Express as repeated multiplication of base 2 three times:\n$2^3 = 2 \\times 2 \\times 2$\n\nStep 3: Solve step-by-step:\n$2 \\times 2 = 4$\n$4 \\times 2 = 8$.",
+      "rule": "Definition of Integer Power:\n\nFor any base <tg-math>a</tg-math> and positive integer power <tg-math>n</tg-math>:\n\n<tg-math-block>a^n = a \\times a \\times \\dots \\times a \\quad (n\\text{ times})</tg-math-block>",
+      "why": "Step 1: Write down the term:\n<tg-math-block>2^3</tg-math-block>\n\nStep 2: Express as repeated multiplication of base 2 three times:\n<tg-math-block>2^3 = 2 \\times 2 \\times 2</tg-math-block>\n\nStep 3: Solve step-by-step:\n<tg-math-block>2 \\times 2 = 4, \\quad 4 \\times 2 = 8</tg-math-block>",
       "poll_hint": "2³ = 2×2×2 = 8"
     },
     "options_analysis": [
-      {"why": "Incorrect. Multiplied the base by the exponent instead of self-multiplying.", "example": "2 * 3 = 6"},
-      {"why": "Correct. Repeated multiplication evaluates to 8.", "example": "2 * 2 * 2 = 8"},
-      {"why": "Incorrect. Confused with 3².", "example": "3^2 = 9"},
-      {"why": "Incorrect. Multiplied exponents incorrectly.", "example": "2 * 2 * 3 = 12"}
+      {"why": "Incorrect. Multiplied the base by the exponent instead of self-multiplying.", "example": "<tg-math>2 \\times 3 = 6</tg-math>"},
+      {"why": "Correct. Repeated multiplication evaluates to 8.", "example": "<tg-math>2 \\times 2 \\times 2 = 8</tg-math>"},
+      {"why": "Incorrect. Confused with <tg-math>3^2</tg-math>.", "example": "<tg-math>3^2 = 9</tg-math>"},
+      {"why": "Incorrect. Multiplied exponents incorrectly.", "example": "<tg-math>2 \\times 2 \\times 3 = 12</tg-math>"}
     ],
     "scheduled_for": "2026-07-22T08:00:00+03:00"
   },
@@ -191,19 +191,19 @@
     "question": "What is the exact probability of rolling an even number on a fair standard 6-sided die?",
     "native_question": "What is the probability of rolling an even number on a fair 6-sided die?",
     "latex": null,
-    "options": ["1/6", "1/3", "1/2", "2/3"],
+    "options": ["<tg-math>\\frac{1}{6}</tg-math>", "<tg-math>\\frac{1}{3}</tg-math>", "<tg-math>\\frac{1}{2}</tg-math>", "<tg-math>\\frac{2}{3}</tg-math>"],
     "native_options": ["A) 1/6", "B) 1/3", "C) 1/2", "D) 2/3"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Classical Probability Formula:\n\n$P(E) = \\frac{n(E)}{n(S)}$\n\nwhere $n(E)$ is the count of favorable outcomes, and $n(S)$ is the total sample space.",
-      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\n$S = \\{1, 2, 3, 4, 5, 6\\} \\implies n(S) = 6$\n\nStep 2: List the favorable outcomes (even numbers):\n$E = \\{2, 4, 6\\} \\implies n(E) = 3$\n\nStep 3: Apply the probability formula:\nP = \\frac{3}{6}\n\nStep 4: Simplify the fraction:\nP = \\frac{1}{2}$.",
+      "rule": "Classical Probability Formula:\n\n<tg-math-block>P(E) = \\frac{n(E)}{n(S)}</tg-math-block>\n\nwhere <tg-math>n(E)</tg-math> is the count of favorable outcomes, and <tg-math>n(S)</tg-math> is the total sample space.",
+      "why": "Step 1: List the total sample space of outcomes on a 6-sided die:\n<tg-math-block>S = \\{1, 2, 3, 4, 5, 6\\} \\implies n(S) = 6</tg-math-block>\n\nStep 2: List the favorable outcomes (even numbers):\n<tg-math-block>E = \\{2, 4, 6\\} \\implies n(E) = 3</tg-math-block>\n\nStep 3: Apply the probability formula:\n<tg-math-block>P = \\frac{3}{6}</tg-math-block>\n\nStep 4: Simplify the fraction:\n<tg-math-block>P = \\frac{1}{2}</tg-math-block>",
       "poll_hint": "3 favorable ÷ 6 total = 1/2"
     },
     "options_analysis": [
-      {"why": "Incorrect. Only represents the probability of rolling a single specific number.", "example": "1/6 = 0.167"},
-      {"why": "Incorrect. Corresponds to rolling only two even outcomes.", "example": "2/6 = 1/3 = 0.333"},
-      {"why": "Correct. Since exactly half the outcomes are even, the probability is 1/2.", "example": "3/6 = 1/2 = 0.5"},
-      {"why": "Incorrect. Exceeds even ratio bounds.", "example": "4/6 = 2/3 = 0.667"}
+      {"why": "Incorrect. Only represents the probability of rolling a single specific number.", "example": "<tg-math>\\frac{1}{6} \\approx 0.167</tg-math>"},
+      {"why": "Incorrect. Corresponds to rolling only two even outcomes.", "example": "<tg-math>\\frac{2}{6} = \\frac{1}{3}</tg-math>"},
+      {"why": "Correct. Since exactly half the outcomes are even, the probability is 1/2.", "example": "<tg-math>\\frac{3}{6} = \\frac{1}{2}</tg-math>"},
+      {"why": "Incorrect. Exceeds even ratio bounds.", "example": "<tg-math>\\frac{4}{6} = \\frac{2}{3}</tg-math>"}
     ],
     "scheduled_for": "2026-07-22T12:00:00+03:00"
   },
@@ -214,22 +214,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["complex", "algebra", "2026-07-22"],
-    "question": "Compute the complex square:\n\n$(1+i)^2$.",
+    "question": "Compute the complex square:\n\n<tg-math-block>(1+i)^2</tg-math-block>",
     "native_question": "Compute (1 + i)².",
     "latex": null,
-    "options": ["2i", "2+2i", "-2", "1+2i"],
+    "options": ["<tg-math>2i</tg-math>", "<tg-math>2+2i</tg-math>", "<tg-math>-2</tg-math>", "<tg-math>1+2i</tg-math>"],
     "native_options": ["A) 2i", "B) 2 + 2i", "C) -2", "D) 1 + 2i"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "Complex Algebra Rules:\n\nExpand using binomial expansion, then apply $i^2 = -1$:\n\n$(a + bi)^2 = a^2 + 2abi - b^2$",
-      "why": "Step 1: Write down the expression:\n$(1 + i)^2$\n\nStep 2: Expand using the binomial formula $(a+b)^2 = a^2 + 2ab + b^2$:\n$(1 + i)^2 = 1^2 + 2(1)(i) + i^2$\n$(1 + i)^2 = 1 + 2i + i^2$\n\nStep 3: Apply the fundamental complex identity $i^2 = -1$:\n$(1 + i)^2 = 1 + 2i - 1$\n\nStep 4: Cancel real parts to find the final result:\n$(1 + i)^2 = 2i$.",
+      "rule": "Complex Algebra Rules:\n\nExpand using binomial expansion, then apply <tg-math>i^2 = -1</tg-math>:\n\n<tg-math-block>(a + bi)^2 = a^2 + 2abi - b^2</tg-math-block>",
+      "why": "Step 1: Write down the expression:\n<tg-math-block>(1 + i)^2</tg-math-block>\n\nStep 2: Expand using the binomial formula <tg-math>(a+b)^2 = a^2 + 2ab + b^2</tg-math>:\n<tg-math-block>(1 + i)^2 = 1^2 + 2(1)(i) + i^2 = 1 + 2i + i^2</tg-math-block>\n\nStep 3: Apply the fundamental complex identity <tg-math>i^2 = -1</tg-math>:\n<tg-math-block>(1 + i)^2 = 1 + 2i - 1</tg-math-block>\n\nStep 4: Cancel real parts to find the final result:\n<tg-math-block>(1 + i)^2 = 2i</tg-math-block>",
       "poll_hint": "(1+i)²=1+2i−1=2i"
     },
     "options_analysis": [
-      {"why": "Correct. Binomial expansion and substitution of i²=-1 yields exactly 2i.", "example": "2i"},
-      {"why": "Incorrect. Failed to apply the identity i² = -1.", "example": "1 + 2i + 1 = 2 + 2i"},
-      {"why": "Incorrect. Erroneously simplified the imaginary component.", "example": "1 - 1 = 0 ≠ -2"},
-      {"why": "Incorrect. Basic arithmetic error.", "example": "1 + 2i + 0 = 1 + 2i"}
+      {"why": "Correct. Binomial expansion and substitution of <tg-math>i^2=-1</tg-math> yields exactly <tg-math>2i</tg-math>.", "example": "<tg-math>2i</tg-math>"},
+      {"why": "Incorrect. Failed to apply the identity <tg-math>i^2 = -1</tg-math>.", "example": "<tg-math>1 + 2i + 1 = 2 + 2i</tg-math>"},
+      {"why": "Incorrect. Erroneously simplified the imaginary component.", "example": "<tg-math>1 - 1 = 0 \\neq -2</tg-math>"},
+      {"why": "Incorrect. Basic arithmetic error.", "example": "<tg-math>1 + 2i + 0 = 1 + 2i</tg-math>"}
     ],
     "scheduled_for": "2026-07-22T18:00:00+03:00"
   },
@@ -240,22 +240,22 @@
     "difficulty": "easy",
     "force_image": true,
     "tags": ["coordinates", "distance", "2026-07-23"],
-    "question": "What is the Euclidean distance between the origin $(0,0)$ and the coordinate point $(3,4)$?",
+    "question": "What is the Euclidean distance between the origin <tg-math>(0,0)</tg-math> and the coordinate point <tg-math>(3,4)</tg-math>?",
     "native_question": "What is the distance between origin (0,0) and point (3,4)?",
     "latex": "\\begin{tikzpicture}[scale=0.8] \\draw[step=1cm, draw=gray!15, line width=0.5pt] (-1,-1) grid (4,5); \\draw[-{Stealth}] (-1.2,0) -- (4.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,5.2) node[above] {$y$}; \\draw[dashed, draw=gray] (3,0) -- (3,4); \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0) -- (3,4) node[midway, above left] {$d$}; \\filldraw[red] (3,4) circle (2pt) node[above right] {$(3,4)$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["5", "6", "7", "4"],
+    "options": ["<tg-math>5</tg-math>", "<tg-math>6</tg-math>", "<tg-math>7</tg-math>", "<tg-math>4</tg-math>"],
     "native_options": ["A) d = 5", "B) d = 6", "C) d = 7", "D) d = 4"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "The Distance Formula in $\\mathbb{R}^2$:\n\nFor any two points $P_1(x_1, y_1)$ and $P_2(x_2, y_2)$:\n\n$d = \\sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}$",
-      "why": "Step 1: Write down the point coordinates:\n$P_1 = (0,0)$ and $P_2 = (3,4)$\n\nStep 2: Substitute the coordinate values into the distance formula:\n$d = \\sqrt{(3 - 0)^2 + (4 - 0)^2}$\n$d = \\sqrt{3^2 + 4^2}$\n\nStep 3: Solve the arithmetic sum inside the square root:\nd = \\sqrt{9 + 16}\nd = \\sqrt{25}\n\nStep 4: Solve the square root:\nd = 5.",
+      "rule": "The Distance Formula in <tg-math>\\mathbb{R}^2</tg-math>:\n\nFor any two points <tg-math>P_1(x_1, y_1)</tg-math> and <tg-math>P_2(x_2, y_2)</tg-math>:\n\n<tg-math-block>d = \\sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}</tg-math-block>",
+      "why": "Step 1: Write down the point coordinates:\n<tg-math-block>P_1 = (0,0) \\quad \\text{and} \\quad P_2 = (3,4)</tg-math-block>\n\nStep 2: Substitute the coordinate values into the distance formula:\n<tg-math-block>d = \\sqrt{(3 - 0)^2 + (4 - 0)^2} = \\sqrt{3^2 + 4^2}</tg-math-block>\n\nStep 3: Solve the arithmetic sum inside the square root:\n<tg-math-block>d = \\sqrt{9 + 16} = \\sqrt{25}</tg-math-block>\n\nStep 4: Solve the square root:\n<tg-math-block>d = 5</tg-math-block>",
       "poll_hint": "√(3²+4²)=5"
     },
     "options_analysis": [
-      {"why": "Correct. Standard 3-4-5 right-triangle ratio evaluates hypotenuse to exactly 5.", "example": "d = 5"},
-      {"why": "Incorrect. Computational estimate error.", "example": "6 ≠ 5"},
-      {"why": "Incorrect. Erroneously added components directly.", "example": "3 + 4 = 7"},
-      {"why": "Incorrect. Represents a subset coordinate dimension.", "example": "4 ≠ 5"}
+      {"why": "Correct. Standard 3-4-5 right-triangle ratio evaluates hypotenuse to exactly 5.", "example": "<tg-math>d = 5</tg-math>"},
+      {"why": "Incorrect. Computational estimate error.", "example": "<tg-math>6 \\neq 5</tg-math>"},
+      {"why": "Incorrect. Erroneously added components directly.", "example": "<tg-math>3 + 4 = 7 \\neq 5</tg-math>"},
+      {"why": "Incorrect. Represents a subset coordinate dimension.", "example": "<tg-math>4 \\neq 5</tg-math>"}
     ],
     "scheduled_for": "2026-07-23T08:00:00+03:00"
   },
@@ -266,22 +266,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["logs", "algebra", "2026-07-23"],
-    "question": "Evaluate the logarithmic expression:\n\n$\\log_2 32$.",
+    "question": "Evaluate the logarithmic expression:\n\n<tg-math-block>\\log_2 32</tg-math-block>",
     "native_question": "Evaluate log₂ 32.",
     "latex": null,
-    "options": ["4", "5", "6", "32"],
+    "options": ["<tg-math>4</tg-math>", "<tg-math>5</tg-math>", "<tg-math>6</tg-math>", "<tg-math>32</tg-math>"],
     "native_options": ["A) 4", "B) 5", "C) 6", "D) 32"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Logarithm Definition:\n\n$\\log_b(a) = c \\iff b^c = a$ ",
-      "why": "Step 1: Set up the equivalent equation:\n$\\log_2(32) = x \\iff 2^x = 32$\n\nStep 2: Find the power of base 2 that equals 32:\n$2^1 = 2$\n$2^2 = 4$\n$2^3 = 8$\n$2^4 = 16$\n$2^5 = 32$\n\nStep 3: Since $2^5 = 32$, we conclude:\nx = 5.",
+      "rule": "Logarithm Definition:\n\n<tg-math-block>\\log_b(a) = c \\iff b^c = a</tg-math-block>",
+      "why": "Step 1: Set up the equivalent equation:\n<tg-math-block>\\log_2(32) = x \\iff 2^x = 32</tg-math-block>\n\nStep 2: Find the power of base 2 that equals 32:\n<tg-math-block>2^1 = 2, \\quad 2^2 = 4, \\quad 2^3 = 8, \\quad 2^4 = 16, \\quad 2^5 = 32</tg-math-block>\n\nStep 3: Since <tg-math>2^5 = 32</tg-math>, we conclude:\n<tg-math-block>x = 5</tg-math-block>",
       "poll_hint": "2⁵ = 32"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "2^4 = 16 ≠ 32"},
-      {"why": "Correct. Power exponent evaluates to exactly 5.", "example": "2^5 = 32"},
-      {"why": "Incorrect. Too large.", "example": "2^6 = 64 ≠ 32"},
-      {"why": "Incorrect. Confused the base coordinate directly.", "example": "2^32 ≠ 32"}
+      {"why": "Incorrect. Too small.", "example": "<tg-math>2^4 = 16 \\neq 32</tg-math>"},
+      {"why": "Correct. Power exponent evaluates to exactly 5.", "example": "<tg-math>2^5 = 32</tg-math>"},
+      {"why": "Incorrect. Too large.", "example": "<tg-math>2^6 = 64 \\neq 32</tg-math>"},
+      {"why": "Incorrect. Confused the base coordinate directly.", "example": "<tg-math>2^{32} \\neq 32</tg-math>"}
     ],
     "scheduled_for": "2026-07-23T12:00:00+03:00"
   },
@@ -292,15 +292,15 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["calculus", "derivative", "2026-07-23"],
-    "question": "Find the derivative with respect to $x$ of:\n\n$\\frac{d}{dx}(x^3\\sin x)$.",
+    "question": "Find the derivative with respect to <tg-math>x</tg-math> of:\n\n<tg-math-block>\\frac{d}{dx}(x^3\\sin x)</tg-math-block>",
     "native_question": "Find the derivative with respect to x of x³ sin x.",
     "latex": null,
-    "options": ["$3x^2\\sin x+x^3\\cos x$", "$3x^2\\cos x$", "$x^3\\cos x$", "$3x^2\\sin x$"],
+    "options": ["<tg-math>3x^2\\sin x+x^3\\cos x</tg-math>", "<tg-math>3x^2\\cos x</tg-math>", "<tg-math>x^3\\cos x</tg-math>", "<tg-math>3x^2\\sin x</tg-math>"],
     "native_options": ["A) 3x² sin x + x³ cos x", "B) 3x² cos x", "C) x³ cos x", "D) 3x² sin x"],
     "correct_option": 0,
     "poll_explanation": {
-      "rule": "The Derivative Product Rule:\n\nFor any two functions $u(x)$ and $v(x)$:\n\n$\\frac{d}{dx}(uv) = u'v + uv'$",
-      "why": "Step 1: Identify the two parts of the function:\n$u(x) = x^3$\n$v(x) = \\sin x$\n\nStep 2: Find their individual derivatives:\n$u'(x) = 3x^2$ (by Power Rule)\n$v'(x) = \\cos x$ (by Trig derivative rule)\n\nStep 3: Substitute functions into the product rule formula:\n$\\frac{d}{dx}(x^3\\sin x) = u'v + uv'$\n$\\frac{d}{dx}(x^3\\sin x) = (3x^2)(\\sin x) + (x^3)(\\cos x)$\n\nStep 4: Combine the terms:\n$\\frac{d}{dx}(x^3\\sin x) = 3x^2\\sin x + x^3\\cos x$.",
+      "rule": "The Derivative Product Rule:\n\nFor any two functions <tg-math>u(x)</tg-math> and <tg-math>v(x)</tg-math>:\n\n<tg-math-block>\\frac{d}{dx}(uv) = u'v + uv'</tg-math-block>",
+      "why": "Step 1: Identify the two parts of the function:\n<tg-math-block>u(x) = x^3, \\quad v(x) = \\sin x</tg-math-block>\n\nStep 2: Find their individual derivatives:\n<tg-math-block>u'(x) = 3x^2, \\quad v'(x) = \\cos x</tg-math-block>\n\nStep 3: Substitute functions into the product rule formula:\n<tg-math-block>\\frac{d}{dx}(x^3\\sin x) = (3x^2)(\\sin x) + (x^3)(\\cos x)</tg-math-block>\n\nStep 4: Combine the terms:\n<tg-math-block>\\frac{d}{dx}(x^3\\sin x) = 3x^2\\sin x + x^3\\cos x</tg-math-block>",
       "poll_hint": "(uv)' = u'v + uv'"
     },
     "options_analysis": [
@@ -321,19 +321,19 @@
     "question": "What is 25% of 80?",
     "native_question": "What is 25% of 80?",
     "latex": null,
-    "options": ["15", "20", "25", "30"],
+    "options": ["<tg-math>15</tg-math>", "<tg-math>20</tg-math>", "<tg-math>25</tg-math>", "<tg-math>30</tg-math>"],
     "native_options": ["A) 15", "B) 20", "C) 25", "D) 30"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Percentage Calculation:\n\nTo find $p\\%$ of value $x$, calculate:\n\n$\\text{Result} = \\frac{p}{100} \\times x$",
-      "why": "Step 1: Convert the percentage to a simple fraction:\n$25\\% = \\frac{25}{100} = \\frac{1}{4}$\n\nStep 2: Multiply the fraction by the value 80:\n$\\text{Result} = \\frac{1}{4} \\times 80$\n\nStep 3: Solve the division:\n$\\text{Result} = 20$.",
+      "rule": "Percentage Calculation:\n\nTo find <tg-math>p\\%</tg-math> of value <tg-math>x</tg-math>, calculate:\n\n<tg-math-block>\\text{Result} = \\frac{p}{100} \\times x</tg-math-block>",
+      "why": "Step 1: Convert the percentage to a simple fraction:\n<tg-math-block>25\\% = \\frac{25}{100} = \\frac{1}{4}</tg-math-block>\n\nStep 2: Multiply the fraction by the value 80:\n<tg-math-block>\\text{Result} = \\frac{1}{4} \\times 80</tg-math-block>\n\nStep 3: Solve the division:\n<tg-math-block>\\text{Result} = 20</tg-math-block>",
       "poll_hint": "25% of 80 = 80÷4"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "15/80 = 18.75% ≠ 25%"},
-      {"why": "Correct. Evaluating standard ratio yields exactly 20.", "example": "20/80 = 1/4 = 25%"},
-      {"why": "Incorrect. Confused the percentage base value directly.", "example": "25/80 = 31.25% ≠ 25%"},
-      {"why": "Incorrect. Too large.", "example": "30/80 = 37.5% ≠ 25%"}
+      {"why": "Incorrect. Too small.", "example": "<tg-math>\\frac{15}{80} = 18.75\\% \\neq 25\\%</tg-math>"},
+      {"why": "Correct. Evaluating standard ratio yields exactly 20.", "example": "<tg-math>\\frac{20}{80} = \\frac{1}{4} = 25\\%</tg-math>"},
+      {"why": "Incorrect. Confused the percentage base value directly.", "example": "<tg-math>\\frac{25}{80} = 31.25\\% \\neq 25\\%</tg-math>"},
+      {"why": "Incorrect. Too large.", "example": "<tg-math>\\frac{30}{80} = 37.5\\% \\neq 25\\%</tg-math>"}
     ],
     "scheduled_for": "2026-07-24T08:00:00+03:00"
   },
@@ -344,22 +344,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["sequences", "arithmetic", "2026-07-24"],
-    "question": "Find the 10th term of the arithmetic sequence:\n\n$3, 7, 11, \\dots$",
+    "question": "Find the 10th term of the arithmetic sequence:\n\n<tg-math-block>3, 7, 11, \\dots</tg-math-block>",
     "native_question": "Find the 10th term of the arithmetic sequence: 3, 7, 11, ...",
     "latex": null,
-    "options": ["35", "39", "43", "47"],
+    "options": ["<tg-math>35</tg-math>", "<tg-math>39</tg-math>", "<tg-math>43</tg-math>", "<tg-math>47</tg-math>"],
     "native_options": ["A) 35", "B) 39", "C) 43", "D) 47"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Arithmetic Sequence General Term:\n\nFor a first term $a_1$ and common difference $d$:\n\n$a_n = a_1 + (n - 1)d$",
-      "why": "Step 1: Identify the key parameters of the sequence:\nFirst term $a_1 = 3$\nCommon difference $d = 7 - 3 = 4$\nTarget term index $n = 10$\n\nStep 2: Write down the arithmetic sequence formula:\n$a_n = a_1 + (n - 1)d$\n\nStep 3: Substitute parameters into the formula:\n$a_{10} = 3 + (10 - 1)(4)$\n$a_{10} = 3 + (9)(4)$\n\nStep 4: Compute the final arithmetic result:\na_{10} = 3 + 36\na_{10} = 39.",
+      "rule": "Arithmetic Sequence General Term:\n\nFor a first term <tg-math>a_1</tg-math> and common difference <tg-math>d</tg-math>:\n\n<tg-math-block>a_n = a_1 + (n - 1)d</tg-math-block>",
+      "why": "Step 1: Identify the key parameters of the sequence:\nFirst term <tg-math>a_1 = 3</tg-math>\nCommon difference <tg-math>d = 7 - 3 = 4</tg-math>\nTarget term index <tg-math>n = 10</tg-math>\n\nStep 2: Write down the arithmetic sequence formula:\n<tg-math-block>a_n = a_1 + (n - 1)d</tg-math-block>\n\nStep 3: Substitute parameters into the formula:\n<tg-math-block>a_{10} = 3 + (10 - 1)(4) = 3 + (9)(4)</tg-math-block>\n\nStep 4: Compute the final arithmetic result:\n<tg-math-block>a_{10} = 3 + 36 = 39</tg-math-block>",
       "poll_hint": "a₁₀=3+9×4=39"
     },
     "options_analysis": [
-      {"why": "Incorrect. Value represents the 9th term of the sequence.", "example": "3 + 8(4) = 35"},
-      {"why": "Correct. Sequence evaluations balance exactly to 39.", "example": "3 + 9(4) = 39"},
-      {"why": "Incorrect. Value represents the 11th term.", "example": "3 + 10(4) = 43"},
-      {"why": "Incorrect. Value represents the 12th term.", "example": "3 + 11(4) = 47"}
+      {"why": "Incorrect. Value represents the 9th term of the sequence.", "example": "<tg-math>3 + 8(4) = 35</tg-math>"},
+      {"why": "Correct. Sequence evaluations balance exactly to 39.", "example": "<tg-math>3 + 9(4) = 39</tg-math>"},
+      {"why": "Incorrect. Value represents the 11th term.", "example": "<tg-math>3 + 10(4) = 43</tg-math>"},
+      {"why": "Incorrect. Value represents the 12th term.", "example": "<tg-math>3 + 11(4) = 47</tg-math>"}
     ],
     "scheduled_for": "2026-07-24T12:00:00+03:00"
   },
@@ -370,22 +370,22 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["vectors", "magnitude", "2026-07-24"],
-    "question": "Find the magnitude $|\\vec v|$ of the 3D vector:\n\n$\\vec v=(1,2,2)$.",
+    "question": "Find the magnitude <tg-math>|\\vec v|</tg-math> of the 3D vector:\n\n<tg-math-block>\\vec v=(1,2,2)</tg-math-block>",
     "native_question": "Find the magnitude |v| of the 3D vector v = (1,2,2).",
     "latex": "\\begin{tikzpicture}[scale=0.8, x={(0.707cm,0.707cm)}, z={(0cm,1cm)}, y={(-0.866cm,0.5cm)}] \\draw[-{Stealth}] (0,0,0) -- (3,0,0) node[right] {$x$}; \\draw[-{Stealth}] (0,0,0) -- (0,3,0) node[left] {$y$}; \\draw[-{Stealth}] (0,0,0) -- (0,0,3) node[above] {$z$}; \\draw[-{Stealth[scale=1.2]}, line width=2pt, draw=blue] (0,0,0) -- (1,2,2) node[above right] {$\\vec{v}$}; \\filldraw[red] (1,2,2) circle (1.5pt) node[above] {$(1,2,2)$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["2", "3", "4", "5"],
+    "options": ["<tg-math>2</tg-math>", "<tg-math>3</tg-math>", "<tg-math>4</tg-math>", "<tg-math>5</tg-math>"],
     "native_options": ["A) |v| = 2", "B) |v| = 3", "C) |v| = 4", "D) |v| = 5"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Vector Magnitude Formula in $\\mathbb{R}^3$:\n\nFor any 3D vector $\\vec{v} = (x, y, z)$:\n\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$",
-      "why": "Step 1: Write down the components of the 3D vector $\\vec{v} = (1, 2, 2)$:\n$x = 1, y = 2, z = 2$\n\nStep 2: Recall the 3D magnitude formula:\n$\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}$\n\nStep 3: Substitute component values into the formula:\n$\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2}$\n$\\|\\vec{v}\\| = \\sqrt{1 + 4 + 4}$\n\nStep 4: Solve the arithmetic sum and root:\n$\\|\\vec{v}\\| = \\sqrt{9}$\n$\\|\\vec{v}\\| = 3$.",
+      "rule": "Vector Magnitude Formula in <tg-math>\\mathbb{R}^3</tg-math>:\n\nFor any 3D vector <tg-math>\\vec{v} = (x, y, z)</tg-math>:\n\n<tg-math-block>\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}</tg-math-block>",
+      "why": "Step 1: Write down the components of the 3D vector <tg-math>\\vec{v} = (1, 2, 2)</tg-math>:\n<tg-math-block>x = 1, \\quad y = 2, \\quad z = 2</tg-math-block>\n\nStep 2: Recall the 3D magnitude formula:\n<tg-math-block>\\|\\vec{v}\\| = \\sqrt{x^2 + y^2 + z^2}</tg-math-block>\n\nStep 3: Substitute component values into the formula:\n<tg-math-block>\\|\\vec{v}\\| = \\sqrt{1^2 + 2^2 + 2^2} = \\sqrt{1 + 4 + 4}</tg-math-block>\n\nStep 4: Solve the arithmetic sum and root:\n<tg-math-block>\\|\\vec{v}\\| = \\sqrt{9} = 3</tg-math-block>",
       "poll_hint": "v = (1,2,2) ⇒ |v| = √(1+4+4) = 3"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "2 < 3"},
-      {"why": "Correct. Coordinate expansion evaluates to exactly 3.", "example": "sqrt(1 + 4 + 4) = 3"},
-      {"why": "Incorrect. Computational estimate error.", "example": "4 ≠ 3"},
-      {"why": "Incorrect. Computational estimate error.", "example": "5 ≠ 3"}
+      {"why": "Incorrect. Too small.", "example": "<tg-math>2 < 3</tg-math>"},
+      {"why": "Correct. Coordinate expansion evaluates to exactly 3.", "example": "<tg-math>\\sqrt{1 + 4 + 4} = 3</tg-math>"},
+      {"why": "Incorrect. Computational estimate error.", "example": "<tg-math>4 \\neq 3</tg-math>"},
+      {"why": "Incorrect. Computational estimate error.", "example": "<tg-math>5 \\neq 3</tg-math>"}
     ],
     "scheduled_for": "2026-07-24T18:00:00+03:00"
   },
@@ -396,22 +396,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["fractions", "arithmetic", "2026-07-25"],
-    "question": "Compute the fraction sum:\n\n$\\frac{1}{2}+\\frac{1}{4}$.",
+    "question": "Compute the fraction sum:\n\n<tg-math-block>\\frac{1}{2}+\\frac{1}{4}</tg-math-block>",
     "native_question": "Compute 1/2 + 1/4.",
     "latex": null,
-    "options": ["1/2", "2/4", "3/4", "1"],
+    "options": ["<tg-math>\\frac{1}{2}</tg-math>", "<tg-math>\\frac{2}{4}</tg-math>", "<tg-math>\\frac{3}{4}</tg-math>", "<tg-math>1</tg-math>"],
     "native_options": ["A) 1/2", "B) 2/4", "C) 3/4", "D) 1"],
     "correct_option": 2,
     "poll_explanation": {
       "rule": "Fraction Addition Rule:\n\nFind the Least Common Multiple (LCM) of denominators to convert to identical fractions.",
-      "why": "Step 1: Find a common denominator for the two fractions. The least common multiple for 2 and 4 is 4.\\n\\nStep 2: Convert the first fraction $\\frac{1}{2}$ into an equivalent fraction with denominator 4:\\n$\\frac{1}{2} = \\frac{1 \\times 2}{2 \\times 2} = \\frac{2}{4}$\\n\\nStep 3: Add the two fractions together:\\n$\\frac{2}{4} + \\frac{1}{4} = \\frac{2+1}{4} = \\frac{3}{4}$.",
+      "why": "Step 1: Find a common denominator for the two fractions. The least common multiple for 2 and 4 is 4.\n\nStep 2: Convert the first fraction <tg-math>\\frac{1}{2}</tg-math> into an equivalent fraction with denominator 4:\n<tg-math-block>\\frac{1}{2} = \\frac{1 \\times 2}{2 \\times 2} = \\frac{2}{4}</tg-math-block>\n\nStep 3: Add the two fractions together:\n<tg-math-block>\\frac{2}{4} + \\frac{1}{4} = \\frac{2+1}{4} = \\frac{3}{4}</tg-math-block>",
       "poll_hint": "2/4 + 1/4 = 3/4"
     },
     "options_analysis": [
-      {"why": "Incorrect. Ignored the second fractional term.", "example": "1/2 < 3/4"},
-      {"why": "Incorrect. This is equivalent to 1/2.", "example": "2/4 = 1/2"},
-      {"why": "Correct. Fraction addition evaluates cleanly to 3/4.", "example": "2/4 + 1/4 = 3/4"},
-      {"why": "Incorrect. This represents a whole unit.", "example": "1 > 3/4"}
+      {"why": "Incorrect. Ignored the second fractional term.", "example": "<tg-math>\\frac{1}{2} < \\frac{3}{4}</tg-math>"},
+      {"why": "Incorrect. This is equivalent to 1/2.", "example": "<tg-math>\\frac{2}{4} = \\frac{1}{2}</tg-math>"},
+      {"why": "Correct. Fraction addition evaluates cleanly to 3/4.", "example": "<tg-math>\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}</tg-math>"},
+      {"why": "Incorrect. This represents a whole unit.", "example": "<tg-math>1 > \\frac{3}{4}</tg-math>"}
     ],
     "scheduled_for": "2026-07-25T08:00:00+03:00"
   },
@@ -422,22 +422,22 @@
     "difficulty": "medium",
     "force_image": true,
     "tags": ["trigonometry", "angles", "2026-07-25"],
-    "question": "Find the exact trigonometric value of:\n\n$\\sin 30^\\circ$.",
+    "question": "Find the exact trigonometric value of:\n\n<tg-math-block>\\sin 30^\\circ</tg-math-block>",
     "native_question": "Find sin 30°.",
     "latex": "\\begin{tikzpicture}[scale=1.5] \\draw[-{Stealth}] (-1.2,0) -- (1.2,0) node[right] {$x$}; \\draw[-{Stealth}] (0,-1.2) -- (0,1.2) node[above] {$y$}; \\draw (0,0) circle (1); \\draw[draw=blue, line width=1.5pt] (0,0) -- (0.866,0.5); \\filldraw[red] (0.866,0.5) circle (1.5pt) node[above right] {$(\\frac{\\sqrt{3}}{2}, \\frac{1}{2})$}; \\draw[draw=violet, -{Stealth}] (0.2,0) arc (0:30:0.2) node[midway, right=1pt] {$30^\\circ$}; \\path ([xshift=-7.0cm]current bounding box.center) -- ([xshift=7.0cm]current bounding box.center); \\end{tikzpicture}",
-    "options": ["0", "1/2", "$\\sqrt{2}/2$", "1"],
+    "options": ["<tg-math>0</tg-math>", "<tg-math>\\frac{1}{2}</tg-math>", "<tg-math>\\frac{\\sqrt{2}}{2}</tg-math>", "<tg-math>1</tg-math>"],
     "native_options": ["A) 0", "B) 1/2", "C) √2/2", "D) 1"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Unit Circle Trigonometric Projections:\n\nOn a unit circle of radius 1, the projection coordinates of angle $\\theta$ are defined by:\n\n$P(\\theta) = (\\cos\\theta, \\sin\\theta)$",
-      "why": "Step 1: Recall the standard coordinate projections of a unit circle at $30^\\circ$.\\n\\nStep 2: At $30^\\circ$ (or $\\frac{\\pi}{6}$ radians), the coordinate point on the circle is:\\nP(x, y) = (\\frac{\\sqrt{3}}{2}, \\frac{1}{2})\\n\\nStep 3: Since $\\sin\\theta$ represents the y-coordinate projection on the unit circle, we find:\\n\\sin 30^\\circ = \\frac{1}{2}.",
+      "rule": "Unit Circle Trigonometric Projections:\n\nOn a unit circle of radius 1, the projection coordinates of angle <tg-math>\\theta</tg-math> are defined by:\n\n<tg-math-block>P(\\theta) = (\\cos\\theta, \\sin\\theta)</tg-math-block>",
+      "why": "Step 1: Recall the standard coordinate projections of a unit circle at <tg-math>30^\\circ</tg-math>.\n\nStep 2: At <tg-math>30^\\circ</tg-math> (or <tg-math>\\frac{\\pi}{6}</tg-math> radians), the coordinate point on the circle is:\n<tg-math-block>P(x, y) = \\left(\\frac{\\sqrt{3}}{2}, \\frac{1}{2}\\right)</tg-math-block>\n\nStep 3: Since <tg-math>\\sin\\theta</tg-math> represents the y-coordinate projection on the unit circle, we find:\n<tg-math-block>\\sin 30^\\circ = \\frac{1}{2}</tg-math-block>",
       "poll_hint": "sin30° = 1/2"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents sin(0°).", "example": "sin(0°) = 0"},
-      {"why": "Correct. Projection coordinates yield exactly 1/2.", "example": "sin(30°) = 0.5"},
-      {"why": "Incorrect. This represents sin(45°).", "example": "sin(45°) = √2/2 ≈ 0.707"},
-      {"why": "Incorrect. This represents sin(90°).", "example": "sin(90°) = 1"}
+      {"why": "Incorrect. This represents sin(0°).", "example": "<tg-math>\\sin(0^\\circ) = 0</tg-math>"},
+      {"why": "Correct. Projection coordinates yield exactly 1/2.", "example": "<tg-math>\\sin(30^\\circ) = 0.5</tg-math>"},
+      {"why": "Incorrect. This represents sin(45°).", "example": "<tg-math>\\sin(45^\\circ) = \\frac{\\sqrt{2}}{2} \\approx 0.707</tg-math>"},
+      {"why": "Incorrect. This represents sin(90°).", "example": "<tg-math>\\sin(90^\\circ) = 1</tg-math>"}
     ],
     "scheduled_for": "2026-07-25T12:00:00+03:00"
   },
@@ -448,21 +448,21 @@
     "difficulty": "hard",
     "force_image": true,
     "tags": ["limits","calculus","2026-07-25"],
-    "question": "Evaluate the limit as $x$ approaches 2 of:\n\n$\\lim_{x\\to2}\\frac{x^2-4}{x-2}$",
+    "question": "Evaluate the limit as <tg-math>x</tg-math> approaches 2 of:\n\n<tg-math-block>\\lim_{x\\to2}\\frac{x^2-4}{x-2}</tg-math-block>",
     "native_question": "Evaluate the limit of (x²-4)/(x-2) as x approaches 2.",
     "latex": null,
-    "options": ["2", "3", "4", "Undefined"],
+    "options": ["<tg-math>2</tg-math>", "<tg-math>3</tg-math>", "<tg-math>4</tg-math>", "Undefined"],
     "native_options": ["A) 2", "B) 3", "C) 4", "D) Undefined"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Indeterminate Limits by Factoring:\n\nIf direct substitution yields $\\frac{0}{0}$ (indeterminate), simplify the algebraic quotient before taking limits.",
-      "why": "Step 1: Write down the limit equation:\\n\\lim_{x\\to2}\\frac{x^2-4}{x-2}\\n\\nStep 2: Attempting direct substitution of $x=2$ yields $\\frac{0}{0}$ (indeterminate form). We must simplify the fraction.\\n\\nStep 3: Factor the numerator using difference of squares $(a^2-b^2)=(a-b)(a+b)$:\\nx^2 - 4 = (x-2)(x+2)\\n\\nStep 4: Substitute and cancel the common factor $(x-2)$:\\n\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)\\n\\nStep 5: Substitute $x=2$ directly into the simplified limit:\\n\\text{Limit} = 2 + 2 = 4.",
+      "rule": "Indeterminate Limits by Factoring:\n\nIf direct substitution yields <tg-math>\\frac{0}{0}</tg-math> (indeterminate), simplify the algebraic quotient before taking limits.",
+      "why": "Step 1: Write down the limit equation:\n<tg-math-block>\\lim_{x\\to2}\\frac{x^2-4}{x-2}</tg-math-block>\n\nStep 2: Attempting direct substitution of <tg-math>x=2</tg-math> yields <tg-math>\\frac{0}{0}</tg-math> (indeterminate form). We must simplify the fraction.\n\nStep 3: Factor the numerator using difference of squares <tg-math>(a^2-b^2)=(a-b)(a+b)</tg-math>:\n<tg-math-block>x^2 - 4 = (x-2)(x+2)</tg-math-block>\n\nStep 4: Substitute and cancel the common factor <tg-math>(x-2)</tg-math>:\n<tg-math-block>\\lim_{x\\to2}\\frac{(x-2)(x+2)}{x-2} = \\lim_{x\\to2}(x+2)</tg-math-block>\n\nStep 5: Substitute <tg-math>x=2</tg-math> directly into the simplified limit:\n<tg-math-block>\\text{Limit} = 2 + 2 = 4</tg-math-block>",
       "poll_hint": "Cancel (x−2), then x+2 → 4"
     },
     "options_analysis": [
-      {"why": "Incorrect. General computational mistake.", "example": "2 + 0 = 2 ≠ 4"},
-      {"why": "Incorrect. Minor arithmetic slip.", "example": "2 + 1 = 3 ≠ 4"},
-      {"why": "Correct. Difference of squares factoring and canceling yields 4.", "example": "2 + 2 = 4"},
+      {"why": "Incorrect. General computational mistake.", "example": "<tg-math>2 + 0 = 2 \\neq 4</tg-math>"},
+      {"why": "Incorrect. Minor arithmetic slip.", "example": "<tg-math>2 + 1 = 3 \\neq 4</tg-math>"},
+      {"why": "Correct. Difference of squares factoring and canceling yields 4.", "example": "<tg-math>2 + 2 = 4</tg-math>"},
       {"why": "Incorrect. Discontinuity is removable, meaning the limit exists.", "example": "N/A"}
     ],
     "scheduled_for": "2026-07-25T18:00:00+03:00"
@@ -474,22 +474,22 @@
     "difficulty": "easy",
     "force_image": false,
     "tags": ["statistics", "mean", "2026-07-26"],
-    "question": "Find the arithmetic mean of the set:\n\n$2, 4, 6, 8$.",
+    "question": "Find the arithmetic mean of the set:\n\n<tg-math-block>2, 4, 6, 8</tg-math-block>",
     "native_question": "Find the arithmetic mean of the set: 2, 4, 6, 8.",
     "latex": null,
-    "options": ["4", "5", "6", "7"],
+    "options": ["<tg-math>4</tg-math>", "<tg-math>5</tg-math>", "<tg-math>6</tg-math>", "<tg-math>7</tg-math>"],
     "native_options": ["A) 4", "B) 5", "C) 6", "D) 7"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "The Arithmetic Mean Formula:\n\nFor any set of $n$ numbers:\n\n$\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}$",
-      "why": "Step 1: Add all the numbers in the given set together:\\n\\text{Sum} = 2 + 4 + 6 + 8 = 20\\n\\nStep 2: Count the total number of entries in the set ($n=4$).\\n\\nStep 3: Divide the sum by the count:\\n\\text{Mean} = \\frac{20}{4} = 5.",
+      "rule": "The Arithmetic Mean Formula:\n\nFor any set of <tg-math>n</tg-math> numbers:\n\n<tg-math-block>\\mu = \\frac{\\sum_{i=1}^{n} x_i}{n}</tg-math-block>",
+      "why": "Step 1: Add all the numbers in the given set together:\n<tg-math-block>\\text{Sum} = 2 + 4 + 6 + 8 = 20</tg-math-block>\n\nStep 2: Count the total number of entries in the set (<tg-math>n=4</tg-math>).\n\nStep 3: Divide the sum by the count:\n<tg-math-block>\\text{Mean} = \\frac{20}{4} = 5</tg-math-block>",
       "poll_hint": "(2+4+6+8)÷4 = 5"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too small.", "example": "4 < 5"},
-      {"why": "Correct. Quotient balances to exactly 5.", "example": "20 / 4 = 5"},
-      {"why": "Incorrect. Too large.", "example": "6 > 5"},
-      {"why": "Incorrect. Computational mistake.", "example": "7 > 5"}
+      {"why": "Incorrect. Too small.", "example": "<tg-math>4 < 5</tg-math>"},
+      {"why": "Correct. Quotient balances to exactly 5.", "example": "<tg-math>\\frac{20}{4} = 5</tg-math>"},
+      {"why": "Incorrect. Too large.", "example": "<tg-math>6 > 5</tg-math>"},
+      {"why": "Incorrect. Computational mistake.", "example": "<tg-math>7 > 5</tg-math>"}
     ],
     "scheduled_for": "2026-07-26T08:00:00+03:00"
   },
@@ -500,22 +500,22 @@
     "difficulty": "medium",
     "force_image": false,
     "tags": ["exponential","growth","2026-07-26"],
-    "question": "Solve the exponential equation:\n\n$3^{x}=81$.",
+    "question": "Solve the exponential equation:\n\n<tg-math-block>3^{x}=81</tg-math-block>",
     "native_question": "Solve the exponential equation 3^x = 81.",
     "latex": null,
-    "options": ["3", "4", "5", "6"],
+    "options": ["<tg-math>x = 3</tg-math>", "<tg-math>x = 4</tg-math>", "<tg-math>x = 5</tg-math>", "<tg-math>x = 6</tg-math>"],
     "native_options": ["A) x = 3", "B) x = 4", "C) x = 5", "D) x = 6"],
     "correct_option": 1,
     "poll_explanation": {
-      "rule": "Identical Base Exponential Equivalence:\n\nFor any base $a > 0$, if $a^x = a^y$, then $x = y$.",
-      "why": "Step 1: Write down the exponential equation:\\n3^x = 81\\n\\nStep 2: Express the right side (81) as a power with base 3:\\n81 = 3 \\times 3 \\times 3 \\times 3 = 3^4\\n\\nStep 3: Equate exponents since the bases are identical:\\n3^x = 3^4 \\implies x = 4.",
+      "rule": "Identical Base Exponential Equivalence:\n\nFor any base <tg-math>a > 0</tg-math>, if <tg-math>a^x = a^y</tg-math>, then <tg-math>x = y</tg-math>.",
+      "why": "Step 1: Write down the exponential equation:\n<tg-math-block>3^x = 81</tg-math-block>\n\nStep 2: Express the right side (81) as a power with base 3:\n<tg-math-block>81 = 3 \\times 3 \\times 3 \\times 3 = 3^4</tg-math-block>\n\nStep 3: Equate exponents since the bases are identical:\n<tg-math-block>3^x = 3^4 \\implies x = 4</tg-math-block>",
       "poll_hint": "81 = 3⁴"
     },
     "options_analysis": [
-      {"why": "Incorrect. Too low.", "example": "3^3 = 27"},
-      {"why": "Correct. Power exponent matches 4.", "example": "3^4 = 81"},
-      {"why": "Incorrect. Too high.", "example": "3^5 = 243"},
-      {"why": "Incorrect. Computational mistake.", "example": "3^6 = 729"}
+      {"why": "Incorrect. Too low.", "example": "<tg-math>3^3 = 27 \\neq 81</tg-math>"},
+      {"why": "Correct. Power exponent matches 4.", "example": "<tg-math>3^4 = 81</tg-math>"},
+      {"why": "Incorrect. Too high.", "example": "<tg-math>3^5 = 243 \\neq 81</tg-math>"},
+      {"why": "Incorrect. Computational mistake.", "example": "<tg-math>3^6 = 729 \\neq 81</tg-math>"}
     ],
     "scheduled_for": "2026-07-26T12:00:00+03:00"
   },
@@ -526,22 +526,22 @@
     "difficulty": "hard",
     "force_image": false,
     "tags": ["circles","geometry","2026-07-26"],
-    "question": "For the circle equation $x^2+y^2-6x+8y=0$, find the exact radius $r$:\n\n$r = \\sqrt{h^2+k^2-F}$.",
+    "question": "For the circle equation <tg-math>x^2+y^2-6x+8y=0</tg-math>, find the exact radius <tg-math>r</tg-math>:\n\n<tg-math-block>r = \\sqrt{h^2+k^2-F}</tg-math-block>",
     "native_question": "For the circle x² + y² - 6x + 8y = 0, find the radius r.",
     "latex": null,
-    "options": ["3", "4", "5", "6"],
+    "options": ["<tg-math>3</tg-math>", "<tg-math>4</tg-math>", "<tg-math>5</tg-math>", "<tg-math>6</tg-math>"],
     "native_options": ["A) r = 3", "B) r = 4", "C) r = 5", "D) r = 6"],
     "correct_option": 2,
     "poll_explanation": {
-      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert $x^2+y^2+Dx+Ey+F=0$ into standard form:\n\n$(x - h)^2 + (y - k)^2 = r^2$",
-      "why": "Step 1: Group x-terms and y-terms together:\n(x^2 - 6x) + (y^2 + 8y) = 0\n\nStep 2: Complete the square for the x-terms by adding (\\frac{-6}{2})^2 = 9 to both sides of the equation:\n(x-3)^2 = x^2-6x+9\n\nStep 3: Complete the square for the y-terms by adding (\\frac{8}{2})^2 = 16 to both sides of the equation:\n(y+4)^2 = y^2+8y+16\n\nStep 4: Balance the right side of the equation by adding both values:\n(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25\n\nStep 5: Identify the radius squared (r^2 = 25) to solve for the radius:\nr = \\sqrt{25} = 5.",
+      "rule": "Standard Circle Equation Formulation:\n\nComplete the square to convert <tg-math>x^2+y^2+Dx+Ey+F=0</tg-math> into standard form:\n\n<tg-math-block>(x - h)^2 + (y - k)^2 = r^2</tg-math-block>",
+      "why": "Step 1: Group x-terms and y-terms together:\n<tg-math-block>(x^2 - 6x) + (y^2 + 8y) = 0</tg-math-block>\n\nStep 2: Complete the square for the x-terms by adding <tg-math>\\left(\\frac{-6}{2}\\right)^2 = 9</tg-math> to both sides:\n<tg-math-block>(x-3)^2 = x^2-6x+9</tg-math-block>\n\nStep 3: Complete the square for the y-terms by adding <tg-math>\\left(\\frac{8}{2}\\right)^2 = 16</tg-math> to both sides:\n<tg-math-block>(y+4)^2 = y^2+8y+16</tg-math-block>\n\nStep 4: Balance the right side of the equation by adding both values:\n<tg-math-block>(x-3)^2 + (y+4)^2 = 0 + 9 + 16 = 25</tg-math-block>\n\nStep 5: Identify the radius squared (<tg-math>r^2 = 25</tg-math>) to solve for the radius:\n<tg-math-block>r = \\sqrt{25} = 5</tg-math-block>",
       "poll_hint": "(x−3)²+(y+4)²=25 ⇒ r=5"
     },
     "options_analysis": [
-      {"why": "Incorrect. This represents the x-coordinate offset center value h.", "example": "h = 3 ≠ 5"},
-      {"why": "Incorrect. This represents the y-coordinate offset center value k.", "example": "k = -4 ≠ 5"},
-      {"why": "Correct. Completing the square evaluates radius to exactly 5.", "example": "r = √25 = 5"},
-      {"why": "Incorrect. Diameter confusion or computational mistake.", "example": "d = 10 ≠ 5"}
+      {"why": "Incorrect. This represents the x-coordinate offset center value h.", "example": "<tg-math>h = 3 \\neq 5</tg-math>"},
+      {"why": "Incorrect. This represents the y-coordinate offset center value k.", "example": "<tg-math>k = -4 \\neq 5</tg-math>"},
+      {"why": "Correct. Completing the square evaluates radius to exactly 5.", "example": "<tg-math>r = \\sqrt{25} = 5</tg-math>"},
+      {"why": "Incorrect. Diameter confusion or computational mistake.", "example": "<tg-math>d = 10 \\neq 5</tg-math>"}
     ],
     "scheduled_for": "2026-07-26T18:00:00+03:00"
   }

@@ -78,6 +78,9 @@ def convert_subscripts(text):
 def clean_latex_to_unicode(text):
     if not text:
         return ""
+    text = str(text)
+    # Strip Telegram advance rich math tags for plain-text fallback (e.g. native polls)
+    text = re.sub(r'</?tg-math(?:-block)?>', '', text)
     text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
@@ -109,45 +112,38 @@ def lite_math(text):
         return ""
     return clean_latex_to_unicode(text.replace("$", ""))
 
-# src/typography.py (segment)
 def auto_wrap_math_expressions(text: str) -> str:
     """Detects and isolates mathematical expressions or standalone variables in plain text."""
     if not text:
         return ""
-    
+
     # 1. Pre-pass: Find and wrap entire raw LaTeX blocks (anything containing a backslash command)
-    # to prevent them from being split or mangled inside.
     latex_regex = r'(?<!\$)(?<!\\)(\\[a-zA-Z]+(?:_\{[^}]*\}|\^\{[^}]*\}|\{[^}]*\}|[a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]|\\[a-zA-Z]+)*)'
     text = re.sub(latex_regex, r'$\1$', text)
-    
-    # 2. Tokenize to avoid wrapping inside existing math blocks ($...$, $$...$$) and HTML tags
-    tokens = re.split(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text)
-    
-    # Mathematical words allowed in inline math
+
+    # 2. Tokenize to avoid wrapping inside existing math tags (<tg-math>...</tg-math>, <tg-math-block>...</tg-math-block>, $$...$$, $...$) and HTML tags
+    tokens = re.split(r'(<tg-math-block>.*?</tg-math-block>|<tg-math>.*?</tg-math>|\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text, flags=re.DOTALL)
+
     math_words = {"sin", "cos", "tan", "log", "ln", "det", "lim", "pi", "theta", "exp", "neq"}
-    
-    # Explicit mathematical operators
     math_operators_re = r'[+\-*/=^≠≤≥·×²³<>°]|\\times|\\neq|\\pm|\\approx'
     candidate_pattern = r'([a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]{2,})'
-    
+
     for i in range(len(tokens)):
         if tokens[i] and not (tokens[i].startswith('$') or tokens[i].startswith('<')):
             segment = tokens[i]
             matches = list(re.finditer(candidate_pattern, segment))
             offset = 0
-            
+
             for match in matches:
                 span_str = match.group(1)
                 start, end = match.start() + offset, match.end() + offset
-                
-                # Check formatting features
+
                 has_operator = bool(re.search(math_operators_re, span_str))
                 has_var_pow = bool(re.search(r'\b[a-zA-Z]\^[0-9a-zA-Z]+', span_str)) or bool(re.search(r'\b[a-zA-Z][²³]', span_str))
-                
-                # Exclude strings with plain text words
+
                 words = re.findall(r'\b[a-zA-Z]{2,}\b', span_str)
                 has_non_math_words = any(w.lower() not in math_words for w in words)
-                
+
                 if (has_operator or has_var_pow) and not has_non_math_words:
                     stripped = span_str.strip()
                     if len(stripped) >= 1:
@@ -155,15 +151,14 @@ def auto_wrap_math_expressions(text: str) -> str:
                         original_part = segment[start:end]
                         leading_spaces = original_part[:len(original_part) - len(original_part.lstrip())]
                         trailing_spaces = original_part[len(original_part) - len(original_part.rstrip()):]
-                        
+
                         replacement = f"{leading_spaces}{wrapped}{trailing_spaces}"
                         segment = segment[:start] + replacement + segment[end:]
                         offset += len(replacement) - len(original_part)
-            
-            # Wrap standalone math coordinates (x, y, z) beautifully
+
             segment = re.sub(r'\b([x-zX-Z])\b', r'$\1$', segment)
             tokens[i] = segment
-            
+
     return "".join(tokens)
 
 def beautify_markdown_math(text):
@@ -174,7 +169,6 @@ def beautify_markdown_math(text):
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
-    # Safeguard commands with word boundaries to protect natural text strings
     text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
     text = re.sub(r'\\hspace\{[^}]*\}', ' ', text)
     text = text.replace(r"\par", "\n")
@@ -183,7 +177,6 @@ def beautify_markdown_math(text):
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
 
-    # Wrap raw arithmetic text before converting brackets
     text = auto_wrap_math_expressions(text)
 
     def step_repl(match):
@@ -197,17 +190,16 @@ def beautify_markdown_math(text):
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
-            parts_block[i] = f"\n<tg-math-block>{html.escape(parts_block[i].strip())}</tg-math-block>\n"
+            parts_block[i] = f"\n<tg-math-block>{parts_block[i].strip()}</tg-math-block>\n"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
-                    parts_inline[j] = f"<tg-math>{html.escape(parts_inline[j].strip())}</tg-math>"
+                    parts_inline[j] = f"<tg-math>{parts_inline[j].strip()}</tg-math>"
                 else:
                     parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)
 
     result = "".join(parts_block)
-    # Tight spacing rules to save vertical screen real estate on mobile devices
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
