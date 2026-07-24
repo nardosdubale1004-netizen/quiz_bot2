@@ -112,6 +112,10 @@ def lite_math(text):
     return clean_latex_to_unicode(text.replace("$", ""))
 
 def sanitize_latex_for_telegram_math(expr: str) -> str:
+    """
+    Cleans and standardizes LaTeX expressions to adhere strictly to Telegram's native
+    mathematical parser, preserving matrix structures (pmatrix, bmatrix, cases, matrix).
+    """
     if not expr:
         return ""
 
@@ -121,7 +125,6 @@ def sanitize_latex_for_telegram_math(expr: str) -> str:
     expr = expr.replace(r"\,", " ")
     expr = expr.replace(r"\quad", "   ")
     expr = expr.replace(r"\qquad", "   ")
-    expr = expr.replace(r"\\", ", ")
     expr = expr.replace(r"\left", "").replace(r"\right", "")
     expr = expr.replace(r"\|", "||")
 
@@ -131,118 +134,39 @@ def sanitize_latex_for_telegram_math(expr: str) -> str:
     expr = expr.replace(r"\mathbb{Z}", "ℤ").replace(r"\mathbb{C}", "ℂ")
     expr = expr.replace(r"\mathbb{Q}", "ℚ")
 
-    for _ in range(3):
-        expr = re.sub(r'\\math[a-zA-Z]*\s*\{([^}]+)\}', r'\1', expr)
-        expr = re.sub(r'\\text[a-zA-Z]*\s*\{([^}]+)\}', r'\1', expr)
-        expr = re.sub(r'\\vec\s*\{([^}]+)\}', r'\1', expr)
-        expr = re.sub(r'\\overline\s*\{([^}]+)\}', r'\1', expr)
-        expr = re.sub(r'\\hat\s*\{([^}]+)\}', r'\1', expr)
-        expr = re.sub(r'\\bar\s*\{([^}]+)\}', r'\1', expr)
-
-    # Clean fallback for any unformatted standard mathematical matrices
-    def convert_matrices(match):
-        content = match.group(1).strip()
-        content = content.replace("&", ", ").replace("\\\\", "; ").replace("\n", " ")
-        content = re.sub(r'\s+', ' ', content)
-        return f"[{content}]"
-
-    expr = re.sub(r'\\begin\{(?:pmatrix|matrix|bmatrix|cases)\}(.*?)\\end\{(?:pmatrix|matrix|bmatrix|cases)\}', convert_matrices, expr, flags=re.DOTALL)
-    return re.sub(r'\s+', ' ', expr).strip()
-
-def convert_latex_matrix_to_unicode(text: str) -> str:
-    """
-    Converts LaTeX matrices (pmatrix, bmatrix, matrix, cases) to gorgeous,
-    perfectly-aligned 2D Unicode plain-text arrays for standard messages.
-    """
-    pattern = re.compile(r'\\begin\{(pmatrix|bmatrix|matrix|cases)\}(.*?)\\end\{\1\}', re.DOTALL)
-    
-    def repl(match):
-        env_type = match.group(1)
-        content = match.group(2).strip()
-        
-        rows_raw = re.split(r'\\\\|\\cr', content)
-        rows = []
-        for r in rows_raw:
-            r = r.strip()
-            if not r and len(rows_raw) > 1:
-                continue
-            cols = [c.strip() for c in r.split('&')]
-            rows.append(cols)
+    # Segment matrix tags so structural backslashes and ampersands are not broken
+    matrix_pattern = re.compile(
+        r'(\\begin\{(?:pmatrix|bmatrix|matrix|cases|array|align)\}.*?\\end\{(?:pmatrix|bmatrix|matrix|cases|array|align)\})',
+        re.DOTALL
+    )
+    parts = matrix_pattern.split(expr)
+    for i in range(len(parts)):
+        if i % 2 == 0:  # outside matrix
+            parts[i] = parts[i].replace(r"\\", ", ")
             
-        if not rows:
-            return ""
+            # Sanitize styling tags
+            for _ in range(3):
+                parts[i] = re.sub(r'\\math[a-zA-Z]*\s*\{([^}]+)\}', r'\1', parts[i])
+                parts[i] = re.sub(r'\\text[a-zA-Z]*\s*\{([^}]+)\}', r'\1', parts[i])
+                parts[i] = re.sub(r'\\vec\s*\{([^}]+)\}', r'\1', parts[i])
+                parts[i] = re.sub(r'\\overline\s*\{([^}]+)\}', r'\1', parts[i])
+                parts[i] = re.sub(r'\\hat\s*\{([^}]+)\}', r'\1', parts[i])
+                parts[i] = re.sub(r'\\bar\s*\{([^}]+)\}', r'\1', parts[i])
+        else:  # inside matrix
+            # Retain LaTeX double backslashes and ampersands
+            parts[i] = re.sub(r'\s+', ' ', parts[i])
             
-        num_cols = max(len(r) for r in rows)
-        col_widths = [0] * num_cols
-        for r in rows:
-            for c_idx, cell in enumerate(r):
-                clean_cell = lite_math(cell)
-                col_widths[c_idx] = max(col_widths[c_idx], len(clean_cell))
-                
-        formatted_rows = []
-        for r in rows:
-            row_cells = []
-            for c_idx in range(num_cols):
-                cell_val = r[c_idx] if c_idx < len(r) else ""
-                clean_cell = lite_math(cell_val)
-                padded = clean_cell.center(col_widths[c_idx])
-                row_cells.append(padded)
-            formatted_rows.append("  ".join(row_cells))
-            
-        n_rows = len(formatted_rows)
-        result_lines = []
-        
-        if env_type == "pmatrix":
-            if n_rows == 1:
-                result_lines.append(f"({formatted_rows[0]})")
-            elif n_rows == 2:
-                result_lines.append(f"⎛ {formatted_rows[0]} ⎞")
-                result_lines.append(f"⎝ {formatted_rows[1]} ⎠")
-            else:
-                result_lines.append(f"⎛ {formatted_rows[0]} ⎞")
-                for i in range(1, n_rows - 1):
-                    result_lines.append(f"⎜ {formatted_rows[i]} ⎟")
-                result_lines.append(f"⎝ {formatted_rows[-1]} ⎠")
-                
-        elif env_type == "bmatrix":
-            if n_rows == 1:
-                result_lines.append(f"[{formatted_rows[0]}]")
-            elif n_rows == 2:
-                result_lines.append(f"⎡ {formatted_rows[0]} ⎤")
-                result_lines.append(f"⎣ {formatted_rows[1]} ⎦")
-            else:
-                result_lines.append(f"⎡ {formatted_rows[0]} ⎤")
-                for i in range(1, n_rows - 1):
-                    result_lines.append(f"⎢ {formatted_rows[i]} ⎥")
-                result_lines.append(f"⎣ {formatted_rows[-1]} ⎦")
-                
-        elif env_type == "cases":
-            if n_rows == 1:
-                result_lines.append(f"⎧ {formatted_rows[0]}")
-            elif n_rows == 2:
-                result_lines.append(f"⎧ {formatted_rows[0]}")
-                result_lines.append(f"⎩ {formatted_rows[1]}")
-            else:
-                result_lines.append(f"⎧ {formatted_rows[0]}")
-                for i in range(1, n_rows - 1):
-                    result_lines.append(f"⎨ {formatted_rows[i]}")
-                result_lines.append(f"⎩ {formatted_rows[-1]}")
-        else:
-            result_lines = formatted_rows
-            
-        return "\n" + "\n".join(result_lines) + "\n"
-
-    return pattern.sub(repl, text)
+    return "".join(parts).strip()
 
 def auto_wrap_math_expressions(text: str) -> str:
     """
-    Intelligently scans the plain text parts of a string and wraps any mathematical 
-    equations, variables, or expressions in '$' delimiters, without touching existing HTML tags.
+    Safely wraps plain-text math expressions in '$' delimiters.
+    Uses highly secure patterns to remain immune to catastrophic backtracking.
     """
     if not text:
         return ""
 
-    # Protect existing mathematical blocks, tags, and formatting blocks
+    # Tokenize input to protect existing math environments and HTML blocks
     pattern = re.compile(
         r'(<tg-math-block>.*?</tg-math-block>|'
         r'<tg-math>.*?</tg-math>|'
@@ -259,37 +183,33 @@ def auto_wrap_math_expressions(text: str) -> str:
     parts = pattern.split(text)
     
     for i in range(len(parts)):
-        # Every even index represents plain text outside tags/blocks
-        if i % 2 == 0:
+        if i % 2 == 0:  # segment is plain text
             segment = parts[i]
             if not segment.strip():
                 continue
             
-            # Pattern A: Contiguous LaTeX commands with backslashes
-            # e.g., \lim_{x\to2}\frac{(x-2)(x+2)}{x-2} = \lim_{x\to2}(x+2)
+            # Pattern 1: Contiguous LaTeX commands with backslashes (linear complexity)
             segment = re.sub(
-                r'((?:\\[a-zA-Z]+|\d|[a-zA-Z]|[+\-*/^=<>(){}\[\]_.,\\ \t]|\\neq|\\approx|\\le|\\ge|\\to)+)',
-                lambda m: f"${m.group(1).strip()}$" if '\\' in m.group(1) else m.group(1),
+                r'(\\([a-zA-Z0-9]+|begin|end)(?:\{[^{}]*\}|\[[^\]]*\]|[a-zA-Z0-9()+\-*/^=_<>,.\\\s&])*)',
+                lambda m: f"${m.group(1).strip()}$" if m.group(1).strip() else m.group(0),
                 segment
             )
             
-            # Pattern B: Standard math equations & inequalities
-            # e.g., "x^2 - 4 = (x-2)(x+2)" or "2 + 0 = 2 \neq 4"
+            # Pattern 2: Mathematical equations and assignments containing equals/inequalities
             segment = re.sub(
-                r'((?:[a-zA-Z0-9_+*/^()-]+\s*)+(?:=|<=|>=|<|>|\\neq|\\approx|\\le|\\ge)\s*(?:[a-zA-Z0-9_+*/^()-]+\s*)+)',
-                lambda m: f"${m.group(1).strip()}$" if not m.group(1).strip().startswith('$') else m.group(1),
+                r'((?:[a-zA-Z0-9_+*/^()\-]+(?:\s+[a-zA-Z0-9_+*/^()\-]+)*)\s*(?:=|<=|>=|<|>|\\neq|\\approx|\\le|\\ge)\s*(?:[a-zA-Z0-9_+*/^()\-]+(?:\s+[a-zA-Z0-9_+*/^()\-]+)*))',
+                lambda m: f"${m.group(1).strip()}$" if not m.group(1).strip().startswith('$') else m.group(0),
                 segment
             )
             
-            # Pattern C: Standard individual variable expressions
-            # e.g., "x^2", "a^2", "f(x)"
+            # Pattern 3: Standard variables with exponents or parentheses
             segment = re.sub(
-                r'\b([a-zA-Z]\^[0-9a-zA-Z+-]+|\b[a-zA-Z]\([a-zA-Z0-9+-]\))\b',
+                r'\b([a-zA-Z]\^[0-9a-zA-Z+-]+|[a-zA-Z]_[0-9a-zA-Z+-]+|\b[a-zA-Z]\([a-zA-Z0-9+-]\))\b',
                 r'$\1$',
                 segment
             )
             
-            # Clean consecutive delimiters from replacements
+            # Normalize potential double wraps
             segment = segment.replace('$$', '$')
             parts[i] = segment
 
@@ -301,10 +221,7 @@ def beautify_markdown_math(text):
 
     text = str(text)
     
-    # First convert standard LaTeX matrices to elegant 2D plain-text Unicode alignments
-    text = convert_latex_matrix_to_unicode(text)
-    
-    # Parse and wrap remaining unformatted plain-text equations safely
+    # Safely wraps unformatted math structures (including matrices)
     text = auto_wrap_math_expressions(text)
     
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")

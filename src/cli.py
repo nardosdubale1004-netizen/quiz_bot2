@@ -52,7 +52,7 @@ async def admin_panel(app, engine: QuizEngine):
         if choice == "4":
             print(f"\n{Style.CYAN}--- DYNAMIC DATABASE QUESTIONS IMPORTER ---{Style.RESET}")
 
-            # 1. Automatically scan the questions/ directory recursively for any .json files
+            # Scan the questions/ directory recursively for JSON files
             questions_dir = Path("questions")
             json_files = []
             if questions_dir.exists():
@@ -64,7 +64,6 @@ async def admin_panel(app, engine: QuizEngine):
 
             print(f"📁 {Style.YELLOW}Detected Question Files:{Style.RESET}")
             for i, file_path in enumerate(json_files):
-                # Cleanly display relative paths, e.g. "1. questions/mathematics/math_batch_2026_07_19.json"
                 print(f"  {i+1}. {Style.WHITE}{file_path.as_posix()}{Style.RESET}")
 
             file_select = await cli.ask("<b>Select File # to Import (or Enter path manually): </b>")
@@ -187,9 +186,16 @@ async def admin_panel(app, engine: QuizEngine):
 
                     engine.db_save_track(m.message_id, q['id'], "active", last_seq, "premium", msg_type)
                     print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
+                    
+                    # Standard 1.5 second non-blocking delay to respect Telegram Flood limits
+                    await asyncio.sleep(1.5)
+                    
                 except Exception as e:
                     traceback.print_exc()
                     print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
+                    
+                    # Wait momentarily on failure to allow network clear
+                    await asyncio.sleep(2.0)
 
             local_sent_tracks = engine.load_json("logs/sent_tracks.json")
             local_sent_tracks["last_seq"] = last_seq

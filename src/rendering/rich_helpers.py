@@ -8,28 +8,44 @@ from src.typography import lite_math
 
 def convert_to_legacy_html(rich_html: str) -> str:
     """
-    Converts advanced 2026 Rich HTML tags to standard, safe legacy Telegram HTML tags
-    while preserving native <tg-math> and <tg-math-block> tags.
+    Converts advanced 2026 Rich HTML tags to standard, safe legacy Telegram HTML tags.
+    Natively maps advanced <tg-math> and <tg-math-block> tags to clean, standard
+    Unicode representations to prevent client-side HTML entity parsing crashes.
     """
     if not rich_html:
         return ""
 
-    # Keep <tg-math> and <tg-math-block> intact so Telegram renders them as native formulas!
     text = rich_html
 
-    # 3. Convert headers to bold
+    # Intercept and convert native math tags to safe HTML-compatible formatting
+    from src.typography import clean_latex_to_unicode
+    
+    def repl_block(match):
+        formula = match.group(1)
+        cleaned = clean_latex_to_unicode(formula)
+        return f"\n<pre>{cleaned}</pre>\n"
+        
+    def repl_inline(match):
+        formula = match.group(1)
+        cleaned = clean_latex_to_unicode(formula)
+        return cleaned
+
+    text = re.sub(r'<tg-math-block>(.*?)</tg-math-block>', repl_block, text, flags=re.DOTALL)
+    text = re.sub(r'<tg-math>(.*?)</tg-math>', repl_inline, text, flags=re.DOTALL)
+
+    # Convert headers to standard bold tags
     text = re.sub(r'</?h[1-6](?:\s+[^>]*)?>', lambda m: "<b>" if not m.group(0).startswith("</") else "</b>\n", text)
 
-    # 4. Convert divider to standard horizontal line
+    # Convert dividers to classic plain-text separators
     text = text.replace("<hr/>", "━━━━━━━━━━━━━━━━━━━━━━━━")
     text = text.replace("<hr>", "━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    # 5. Convert lists
+    # Convert lists to standard indented bullets
     text = re.sub(r'<li>', "  • ", text)
     text = re.sub(r'</li>', "\n", text)
     text = re.sub(r'</?u[lo](?:\s+[^>]*)?>', "", text)
 
-    # 6. Convert tables to clean plain-text key-value blocks
+    # Convert complex visual tables to aligned key-value summaries
     def table_sub(match):
         table_content = match.group(1)
         rows = re.findall(r'<tr>(.*?)</tr>', table_content, re.DOTALL)
@@ -48,11 +64,10 @@ def convert_to_legacy_html(rich_html: str) -> str:
 
     text = re.sub(r'<table>(.*?)</table>', table_sub, text, flags=re.DOTALL)
 
-    # 7. Strip any remaining unsupported HTML tags (safety guard)
+    # Safe allowed standard formatting elements supported by Telegram Bot API
     supported_legacy_tags = [
-        "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler", 
-        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
-        "tg-math", "/tg-math", "tg-math-block", "/tg-math-block"
+        "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
+        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote"
     ]
 
     def strip_unsupported(match):
@@ -65,8 +80,8 @@ def convert_to_legacy_html(rich_html: str) -> str:
         return ""
 
     text = re.sub(r'<[^>]*>', strip_unsupported, text)
-
     text = re.sub(r'\n{3,}', '\n\n', text)
+    
     return text.strip()
 
 async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, **kwargs) -> Message:

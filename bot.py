@@ -156,7 +156,7 @@ async def start_command(update: Update, context):
             user_selection = int(choice_idx_str)
 
             tracks = engine.db_get_all_tracks()
-            mid_key = next((k for k, v in tracks.items() if k.isdigit() and v.get('display_id') == display_id), None)
+            mid_key = next((k for k, v in tracks.items() if k.isdigit() and int(v.get('display_id')) == display_id), None)
 
             if not mid_key:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
@@ -170,20 +170,17 @@ async def start_command(update: Update, context):
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
                 return
 
-            # anti-cheat: check if the student has already answered this question post
             existing_response = db_get_user_response(user_id, mid_key)
 
             if existing_response:
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
-                # Delete the incoming /start text command immediately to avoid clutter
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
                 except Exception:
                     pass
 
-                # Delete the previous score cards to avoid duplicates
                 if old_private_mid:
                     try:
                         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
@@ -206,7 +203,6 @@ async def start_command(update: Update, context):
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                                # Fixed: Wrap bytes in io.BytesIO stream to prevent visual crashes
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                                 full_text = warning_notice + UIFactory.build_answered_view(question_data, str(display_id), original_selection, compact=False, perf_card=perf_card, continuation=True)
                                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=full_text, reply_to_message_id=m.message_id, reply_markup=channel_kb)
@@ -222,7 +218,6 @@ async def start_command(update: Update, context):
 
             explanation_html = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card)
 
-            # If the question originally had an active diagram, send the solution image card!
             has_tikz = UIFactory.has_real_diagram(question_data)
             if has_tikz:
                 explanation_html_compact = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=True, perf_card=perf_card)
@@ -233,7 +228,6 @@ async def start_command(update: Update, context):
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                            # Fixed: Wrap bytes in io.BytesIO stream to prevent visual crashes
                             m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
 
                             full_text = UIFactory.build_answered_view(question_data, str(display_id), user_selection, compact=False, perf_card=perf_card, continuation=True)
@@ -326,7 +320,7 @@ async def leaderboard_command(update: Update, context):
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, row in enumerate(weekly_top):
-        user_label = f"Student {row['user_id'][-4:]}"
+        user_label = f"Student {str(row['user_id'])[-4:]}"
         leaderboard_text.append(f" {medals[i]} {user_label} — <b>{row['total_score']} Marks</b>")
 
     leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -408,6 +402,9 @@ def main():
 
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
+        
+        # Start background polling updater so students can receive explanation cards
+        loop.run_until_complete(app.updater.start_polling())
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
@@ -420,6 +417,7 @@ def main():
             except KeyboardInterrupt:
                 pass
             finally:
+                loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
