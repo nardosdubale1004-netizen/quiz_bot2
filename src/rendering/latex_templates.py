@@ -21,7 +21,7 @@ def has_real_diagram(q) -> bool:
     if q.get("force_image") or q.get("force_latex", False):
         print(f"\033[92m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} forces image output (diagram: True).")
         return True
-    
+
     tikz = q.get("latex")
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:

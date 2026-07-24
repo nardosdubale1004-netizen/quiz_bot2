@@ -45,8 +45,7 @@ def escape_plain_text(text: str) -> str:
         "tg-math", "/tg-math", "tg-math-block", "/tg-math-block",
         "h1", "/h1", "h2", "/h2", "h3", "/h3", "h4", "/h4", "h5", "/h5", "h6", "/h6",
         "ul", "/ul", "ol", "/ol", "li", "/li", "table", "/table", "tr", "/tr", "td", "/td",
-        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/superscript", "details", "/details",
-        "summary", "/summary"
+        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/superscript"
     ]
     parts = re.split(r'(</?[a-zA-Z1-6-]+(?:\s+[^>]*)?/?>)', text)
     for i in range(len(parts)):
@@ -106,42 +105,6 @@ def clean_latex_to_unicode(text):
     text = text.replace("\\", "")
     return re.sub(r'[ \t]+', ' ', text).strip()
 
-def clean_to_valid_latex(formula_text: str) -> str:
-    """
-    Translates raw Unicode math symbols back to standard LaTeX commands
-    to prevent KaTeX compilation errors ('Invalid formula') on Telegram clients.
-    """
-    unicode_to_latex_map = {
-        "≠": r"\neq",
-        "π": r"\pi",
-        "θ": r"\theta",
-        "α": r"\alpha",
-        "β": r"\beta",
-        "γ": r"\gamma",
-        "Δ": r"\Delta",
-        "σ": r"\sigma",
-        "Ω": r"\Omega",
-        "√": r"\sqrt",
-        "∞": r"\infty",
-        "±": r"\pm",
-        "×": r"\times",
-        "≤": r"\le",
-        "≥": r"\ge",
-        "→": r"\rightarrow",
-        "approx": r"\approx",
-        "·": r"\cdot",
-        "⇒": r"\implies",
-        "⇔": r"\iff",
-        "°": r"^\circ",
-        "⁰": r"^0", "¹": r"^1", "²": r"^2", "³": r"^3", "⁴": r"^4",
-        "⁵": r"^5", "⁶": r"^6", "⁷": r"^7", "⁸": r"^8", "⁹": r"^9",
-        "₀": r"_0", "₁": r"_1", "₂": r"_2", "₃": r"_3", "₄": r"_4",
-        "₅": r"_5", "₆": r"_6", "₇": r"_7", "₈": r"_8", "₉": r"_9"
-    }
-    for uni, lat in unicode_to_latex_map.items():
-        formula_text = formula_text.replace(uni, lat)
-    return formula_text
-
 def lite_math(text):
     if not text:
         return ""
@@ -154,12 +117,12 @@ def auto_wrap_math_expressions(text: str) -> str:
     # Tokenize to avoid wrapping inside existing math blocks ($...$, $$...$$) and HTML tags
     tokens = re.split(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text)
 
-    # Term can be: optional opening parenthesis, optional sign, digits/letters, optional closing parenthesis, optional exponent
-    term_pattern = r'\(?[+-]?\d*[a-zA-Z]?\)?(?:[²³]|\^[a-zA-Z\d]+)?'
-    # Use negative lookarounds instead of \b to preserve parentheses at the beginning/end of formulas
-    # Optional math operator support to bind implicit multiplication terms (e.g. 5(-2)) as a single formula block
-    math_expr_pattern = rf'(?<!\w){term_pattern}(?:\s*[\+\-\*×/=≠≤≥><⇒→]?\s*{term_pattern})+(?!\w)'
+    # Define a precise math term pattern (optional parenthesis, optional sign, coefficient, variable, exponent)
+    term_pattern = r'\(?[+-]?\d*[a-zA-Z]?(?:[²³]|\^[a-zA-Z\d]+)?\)?'
+    # A math expression is a sequence of terms separated by mathematical operators
+    math_expr_pattern = rf'\b{term_pattern}(?:\s*[\+\-\*×/=≠≤≥><⇒→]\s*{term_pattern})+'
 
+    # Pattern to match raw complex LaTeX commands in plain text (e.g. \lim_{x\to2}\frac{x^2-4}{x-2})
     latex_command_pattern = r'(\\[a-zA-Z]+(?:_\{[^}]+\}|\^\{[^}]+\}|\{[^}]+\}|[a-zA-Z\d\s\+\-\*×/=≠≤≥><⇒→]|\\[a-zA-Z]+)*)'
 
     for i in range(len(tokens)):
@@ -175,6 +138,9 @@ def auto_wrap_math_expressions(text: str) -> str:
                 r'$\1$',
                 tokens[i]
             )
+            if original != tokens[i]:
+                # Dynamic terminal log tracing what math elements were wrapped
+                print(f"\033[96m[TYPOGRAPHY ENGINE]\033[0m Wrapped plain text math expression: {original.strip()} ---> {tokens[i].strip()}")
     return "".join(tokens)
 
 def beautify_markdown_math(text):
@@ -209,15 +175,13 @@ def beautify_markdown_math(text):
     for i in range(len(parts_block)):
         if i % 2 == 1:
             # Block LaTeX equation block
-            clean_formula = clean_to_valid_latex(parts_block[i].strip())
-            parts_block[i] = f"\n  <tg-math-block>{html.escape(clean_formula)}</tg-math-block>\n"
+            parts_block[i] = f"\n  <tg-math-block>{html.escape(parts_block[i].strip())}</tg-math-block>\n"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
                     # Inline mathematical expression tag
-                    clean_formula = clean_to_valid_latex(parts_inline[j].strip())
-                    parts_inline[j] = f"<tg-math>{html.escape(clean_formula)}</tg-math>"
+                    parts_inline[j] = f"<tg-math>{html.escape(parts_inline[j].strip())}</tg-math>"
                 else:
                     parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)

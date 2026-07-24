@@ -1,4 +1,3 @@
-# src/database.py
 import os
 import json
 import psycopg2
@@ -17,10 +16,12 @@ class QuizEngine:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def get_db_connection(self):
+        """Creates a fresh database connection to PostgreSQL."""
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
         return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
 
+    # --- TRACKING STATE METHODS ---
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
         try:
             conn = self.get_db_connection()
@@ -65,7 +66,9 @@ class QuizEngine:
         except Exception as e:
             print(f"{Style.RED}[DB ERROR] Failed to update track status: {e}{Style.RESET}")
 
+    # --- AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
     def db_import_questions(self, json_data):
+        """Imports an array of questions dynamically into the PostgreSQL questions table."""
         try:
             questions_list = json_data if isinstance(json_data, list) else [json_data]
             conn = self.get_db_connection()
@@ -76,6 +79,7 @@ class QuizEngine:
                 if not q.get("id") or not q.get("subject"):
                     continue
 
+                # Standardize array and JSONB representations
                 tags = q.get("tags", [])
                 options = q.get("options", [])
                 poll_explanation = json.dumps(q.get("poll_explanation", {}))
@@ -110,6 +114,7 @@ class QuizEngine:
             print(f"{Style.RED}[DB ERROR] Failed to import questions: {e}{Style.RESET}")
             return 0
 
+    # --- FILE FALLBACK SYSTEM FOR LOCAL ADMIN BACKUPS ---
     @staticmethod
     def load_json(path):
         try:
@@ -130,6 +135,7 @@ class QuizEngine:
             print(f"{Style.RED}JSON Save Error ({path}): {e}{Style.RESET}")
 
     def refresh_database(self):
+        """Loads and syncs all questions dynamically directly from the cloud PostgreSQL database."""
         self.db = {}
         if self.db_url:
             try:
@@ -142,6 +148,7 @@ class QuizEngine:
 
                 for row in rows:
                     q = dict(row)
+                    # Convert parsed database fields into the standard structure
                     subject = q.get("subject", "General").lower()
                     if subject not in self.db:
                         self.db[subject] = []
@@ -150,6 +157,7 @@ class QuizEngine:
             except Exception as e:
                 print(f"{Style.YELLOW}[DB WARNING] Cloud loading failed, falling back to local files: {e}{Style.RESET}")
 
+        # Fallback to scanning local directory files if cloud database is not connected
         return self.refresh_database_local()
 
     def refresh_database_local(self):
@@ -170,6 +178,7 @@ class QuizEngine:
                 self.db[subject].append(q)
         return self.db
 
+# --- COMPREHENSIVE OUT-OF-CLASS DB UTILITIES ---
 def db_set_user_grade(user_id, grade: int):
     engine_db = QuizEngine()
     conn = engine_db.get_db_connection()
@@ -194,6 +203,7 @@ def db_get_user_profile(user_id):
     return row
 
 def db_get_user_response(user_id, message_id):
+    """Retrieves a user's previous response to a specific question post."""
     engine_db = QuizEngine()
     try:
         conn = engine_db.get_db_connection()
@@ -211,6 +221,7 @@ def db_get_user_response(user_id, message_id):
         return None
 
 def db_update_private_message_id(user_id, message_id, private_message_id):
+    """Updates the private message ID of an existing response."""
     engine_db = QuizEngine()
     try:
         conn = engine_db.get_db_connection()
@@ -246,6 +257,7 @@ def db_get_weekly_leaderboard(grade: int):
     return rows
 
 def db_get_pending_scheduled_question():
+    """Retrieves the oldest un-sent question that is past its scheduled posting time."""
     engine_db = QuizEngine()
     try:
         conn = engine_db.get_db_connection()
@@ -267,6 +279,7 @@ def db_get_pending_scheduled_question():
         return None
 
 def db_mark_question_as_sent(q_id):
+    """Marks a question as sent to prevent duplicate re-posts on the channel."""
     engine_db = QuizEngine()
     try:
         conn = engine_db.get_db_connection()
@@ -293,33 +306,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     already_answered = cur.fetchone()['exists']
 
     if already_answered:
-        # Fetch old response details to adjust marks in user_stats
-        cur.execute("""
-            SELECT is_correct, marks_awarded FROM user_responses
-            WHERE user_id = %s AND message_id = %s;
-        """, (str(user_id), str(message_id)))
-        old_resp = cur.fetchone()
-        old_correct_inc = 1 if old_resp['is_correct'] else 0
-        old_marks = old_resp['marks_awarded']
-
-        correct_inc = 1 if is_correct else 0
-        marks_to_award = 2 if is_correct else 0
-
-        # Overwrite response
-        cur.execute("""
-            UPDATE user_responses
-            SET is_correct = %s, marks_awarded = %s, selected_option = %s
-            WHERE user_id = %s AND message_id = %s;
-        """, (is_correct, marks_to_award, int(selected_option), str(user_id), str(message_id)))
-
-        # Adjust stats
-        cur.execute("""
-            UPDATE user_stats
-            SET correct = user_stats.correct - %s + %s,
-                total_marks = user_stats.total_marks - %s + %s
-            WHERE user_id = %s;
-        """, (old_correct_inc, correct_inc, old_marks, marks_to_award, str(user_id)))
-        conn.commit()
+        first_try = False
     else:
         if is_correct:
             cur.execute("""
