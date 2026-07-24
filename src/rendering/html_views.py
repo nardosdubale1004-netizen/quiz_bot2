@@ -103,10 +103,14 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         status_icon = "🟢" if is_correct else "⚪"
 
         why_text = ""
+        example_text = ""
         if i < len(options_analysis):
             why_text = options_analysis[i].get('why', '')
+            example_text = options_analysis[i].get('example', '')
 
-        analysis_line = f"  • {status_icon} <b>Option {let}:</b> {beautify_markdown_math(why_text)}"
+        analysis_line = f"  • {status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
+        if example_text:
+            analysis_line += f"\n    {beautify_markdown_math(example_text)}"
         breakdown_parts.append(analysis_line)
     breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
@@ -118,7 +122,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     else:
         solution_block = f"{solution_title}{general_principle}{step_by_step}{breakdown_block}"
 
-    # SECTION 4 & 5: FOOTER (WATERMARK & HASHTAGS)
+    # SECTION 5: FOOTER (WATERMARK & HASHTAGS)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n\n📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
@@ -167,8 +171,11 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         f"<blockquote>\n"
         f"  🟦 <b>1. GOVERNING PRINCIPLE</b>\n\n"
         f"  <i>{beautify_markdown_math(rule_text)}</i>\n"
-        f"</blockquote>\n"
     )
+    if not compact:
+        general_principle += "</blockquote>\n"
+    else:
+        general_principle += f"\n  ⭐ <b>Correct Option: [{correct_letter}]</b>\n</blockquote>\n"
 
     step_by_step_block = (
         f"<blockquote>\n"
@@ -192,18 +199,31 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         status_icon = "🟢" if is_correct_opt else "⚪"
 
         why_text = ""
+        example_text = ""
         if i < len(options_analysis):
             why_text = options_analysis[i].get('why', '')
+            example_text = options_analysis[i].get('example', '')
 
-        analysis_line = f"  • {status_icon} <b>Option {let}:</b> {beautify_markdown_math(why_text)}"
+        analysis_line = f"  • {status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
+        if example_text:
+            analysis_line += f"\n    {beautify_markdown_math(example_text)}"
         breakdown_parts.append(analysis_line)
     breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
+    explanation_block = f"{general_principle}\n{step_by_step_block}\n{breakdown_block}"
+
+    # SECTION 3 (CONTINUATION LAYOUT)
+    if continuation:
+        connection_header = (
+            f"<b>📖 DETAILED DERIVATION (CONTINUATION) • REF <code>{display_id}</code></b>\n"
+            f"────────────────────────\n\n"
+        )
+        return f"{connection_header}{explanation_block}"
+
     if compact:
-        explanation_block = general_principle
-    else:
-        explanation_block = f"{general_principle}\n{step_by_step_block}\n{breakdown_block}"
+        # On compact views (photo caption), omit Step-by-Step and Options Breakdown to stay within character limits
+        return f"{header}{body}{opts_block}{status_block}{general_principle}{footer}"
 
     # SECTION 4: STUDY PERFORMANCE CARD (FLAT HIGH-CONTRAST MOBILE GRID)
     score_segment = ""
@@ -228,7 +248,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
-    # SECTION 5 & 6: FOOTER (WATERMARK, HASHTAGS, AND RETURN ACTION)
+    # SECTION 5 & 6: FOOTER (WATERMARK & HASHTAGS)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n\n📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
