@@ -339,6 +339,7 @@ def sanitize_tag_to_hashtag(tag):
         tag = re.sub(r'[^\w_]', '', tag)
     return f"#{tag}"
 
+# src/rendering/latex_templates.py (segment)
 def create_explanation_assets(q, user_idx, display_id):
     from src.rendering.html_views import replace_code_with_italic
     correct_idx = q['correct_option']
@@ -387,7 +388,8 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        analysis_line = f"• {color_lbl} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+        # Removed the leading bullet point "•" from this helper method as well
+        analysis_line = f"{color_lbl} <b>{let}:</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
         text_parts.append(analysis_line)

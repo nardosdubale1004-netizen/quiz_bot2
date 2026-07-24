@@ -38,7 +38,6 @@ SUBSCRIPTS = {
 }
 
 def escape_plain_text(text: str) -> str:
-    """Escapes raw XML special characters that are not part of supported formatting tags."""
     allowed_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
         "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
@@ -111,36 +110,54 @@ def lite_math(text):
     return clean_latex_to_unicode(text.replace("$", ""))
 
 def auto_wrap_math_expressions(text: str) -> str:
-    """Detects and isolates mathematical expressions or standalone variables in plain text."""
+    """Isolates math statements correctly without breaking mid-formula."""
     if not text:
         return ""
-    # Tokenize to avoid wrapping inside existing math blocks ($...$, $$...$$) and HTML tags
+    
+    # Tokenize to protect existing formulas ($...$, $$...$$) and HTML tags
     tokens = re.split(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text)
-
-    # Define a precise math term pattern (optional parenthesis, optional sign, coefficient, variable, exponent)
-    term_pattern = r'\(?[+-]?\d*[a-zA-Z]?(?:[²³]|\^[a-zA-Z\d]+)?\)?'
-    # A math expression is a sequence of terms separated by mathematical operators
-    math_expr_pattern = rf'\b{term_pattern}(?:\s*[\+\-\*×/=≠≤≥><⇒→]\s*{term_pattern})+'
-
-    # Pattern to match raw complex LaTeX commands in plain text (e.g. \lim_{x\to2}\frac{x^2-4}{x-2})
-    latex_command_pattern = r'(\\[a-zA-Z]+(?:_\{[^}]+\}|\^\{[^}]+\}|\{[^}]+\}|[a-zA-Z\d\s\+\-\*×/=≠≤≥><⇒→]|\\[a-zA-Z]+)*)'
-
+    
+    # Words allowed inside the parsed math tokens
+    math_words = {"sin", "cos", "tan", "log", "ln", "det", "lim", "pi", "theta", "exp", "neq"}
+    
+    # Mathematical character classes and explicit operators
+    math_operators_re = r'[+\-*/=^≠≤≥·×²³<>°]|\\times|\\neq|\\pm|\\approx'
+    candidate_pattern = r'([a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]{2,})'
+    
     for i in range(len(tokens)):
         if tokens[i] and not (tokens[i].startswith('$') or tokens[i].startswith('<')):
-            original = tokens[i]
-            # First, wrap raw LaTeX commands
-            tokens[i] = re.sub(latex_command_pattern, r'$\1$', tokens[i])
-            # Second, wrap standard plain math expressions
-            tokens[i] = re.sub(math_expr_pattern, r'$\g<0>$', tokens[i])
-            # Third, catch standalone variables with exponents: e.g. x^2, x², y^2
-            tokens[i] = re.sub(
-                r'\b([a-zA-Z][²³]|\b[a-zA-Z]\^[a-zA-Z\d]+)\b',
-                r'$\1$',
-                tokens[i]
-            )
-            if original != tokens[i]:
-                # Dynamic terminal log tracing what math elements were wrapped
-                print(f"\033[96m[TYPOGRAPHY ENGINE]\033[0m Wrapped plain text math expression: {original.strip()} ---> {tokens[i].strip()}")
+            segment = tokens[i]
+            matches = list(re.finditer(candidate_pattern, segment))
+            offset = 0
+            
+            for match in matches:
+                span_str = match.group(1)
+                start, end = match.start() + offset, match.end() + offset
+                
+                # Check formatting features
+                has_operator = bool(re.search(math_operators_re, span_str))
+                has_var_pow = bool(re.search(r'\b[a-zA-Z]\^[0-9a-zA-Z]+', span_str)) or bool(re.search(r'\b[a-zA-Z][²³]', span_str))
+                
+                # Exclude strings with plain text words
+                words = re.findall(r'\b[a-zA-Z]{2,}\b', span_str)
+                has_non_math_words = any(w.lower() not in math_words for w in words)
+                
+                if (has_operator or has_var_pow) and not has_non_math_words:
+                    stripped = span_str.strip()
+                    if len(stripped) >= 1:
+                        wrapped = f"${stripped}$"
+                        original_part = segment[start:end]
+                        leading_spaces = original_part[:len(original_part) - len(original_part.lstrip())]
+                        trailing_spaces = original_part[len(original_part) - len(original_part.rstrip()):]
+                        
+                        replacement = f"{leading_spaces}{wrapped}{trailing_spaces}"
+                        segment = segment[:start] + replacement + segment[end:]
+                        offset += len(replacement) - len(original_part)
+            
+            # Wrap standalone math coordinates (x, y, z) beautifully
+            segment = re.sub(r'\b([x-zX-Z])\b', r'$\1$', segment)
+            tokens[i] = segment
+            
     return "".join(tokens)
 
 def beautify_markdown_math(text):
@@ -151,41 +168,40 @@ def beautify_markdown_math(text):
     text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
+    # Safeguard commands with word boundaries to protect natural text strings
     text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
     text = re.sub(r'\\hspace\{[^}]*\}', ' ', text)
     text = text.replace(r"\par", "\n")
-    text = text.replace(r"\noindent", "")
-    text = text.replace(r"\leavevmode", "")
-    text = text.replace("oindent", "")
+    text = re.sub(r'\\noindent\b', '', text)
+    text = re.sub(r'\\leavevmode\b', '', text)
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
 
-    # Pass plain text segments through the mathematical auto-wrapper
+    # Wrap raw arithmetic text before converting brackets
     text = auto_wrap_math_expressions(text)
 
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
         emoji = emojis.get(step_num, "▪️")
-        return f"\n\n<b>{emoji} Step {step_num}:</b>\n  "
+        return f"\n<b>{emoji} Step {step_num}:</b>\n  "
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
-            # Block LaTeX equation block
-            parts_block[i] = f"\n  <tg-math-block>{html.escape(parts_block[i].strip())}</tg-math-block>\n"
+            parts_block[i] = f"\n<tg-math-block>{html.escape(parts_block[i].strip())}</tg-math-block>\n"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
-                    # Inline mathematical expression tag
                     parts_inline[j] = f"<tg-math>{html.escape(parts_inline[j].strip())}</tg-math>"
                 else:
                     parts_inline[j] = escape_plain_text(parts_inline[j])
             parts_block[i] = "".join(parts_inline)
 
     result = "".join(parts_block)
+    # Tight spacing rules to save vertical screen real estate on mobile devices
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
