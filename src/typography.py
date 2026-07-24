@@ -128,7 +128,7 @@ def clean_to_valid_latex(formula_text: str) -> str:
         "≤": r"\le",
         "≥": r"\ge",
         "→": r"\rightarrow",
-        "≈": r"\approx",
+        "approx": r"\approx",
         "·": r"\cdot",
         "⇒": r"\implies",
         "⇔": r"\iff",
@@ -154,18 +154,22 @@ def auto_wrap_math_expressions(text: str) -> str:
     # Tokenize to avoid wrapping inside existing math blocks ($...$, $$...$$) and HTML tags
     tokens = re.split(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text)
 
-    # Precise math term pattern supporting grouping boundaries without word boundaries
-    term_pattern = r'\(?[+-]?\d*[a-zA-Z]?(?:[²³]|\^[a-zA-Z\d]+)?\)?'
+    # Term can be: optional opening parenthesis, optional sign, digits/letters, optional closing parenthesis, optional exponent
+    term_pattern = r'\(?[+-]?\d*[a-zA-Z]?\)?(?:[²³]|\^[a-zA-Z\d]+)?'
     # Use negative lookarounds instead of \b to preserve parentheses at the beginning/end of formulas
-    math_expr_pattern = rf'(?<!\w){term_pattern}(?:\s*[\+\-\*×/=≠≤≥><⇒→]\s*{term_pattern})+(?!\w)'
+    # Optional math operator support to bind implicit multiplication terms (e.g. 5(-2)) as a single formula block
+    math_expr_pattern = rf'(?<!\w){term_pattern}(?:\s*[\+\-\*×/=≠≤≥><⇒→]?\s*{term_pattern})+(?!\w)'
 
     latex_command_pattern = r'(\\[a-zA-Z]+(?:_\{[^}]+\}|\^\{[^}]+\}|\{[^}]+\}|[a-zA-Z\d\s\+\-\*×/=≠≤≥><⇒→]|\\[a-zA-Z]+)*)'
 
     for i in range(len(tokens)):
         if tokens[i] and not (tokens[i].startswith('$') or tokens[i].startswith('<')):
             original = tokens[i]
+            # First, wrap raw LaTeX commands
             tokens[i] = re.sub(latex_command_pattern, r'$\1$', tokens[i])
+            # Second, wrap standard plain math expressions
             tokens[i] = re.sub(math_expr_pattern, r'$\g<0>$', tokens[i])
+            # Third, catch standalone variables with exponents: e.g. x^2, x², y^2
             tokens[i] = re.sub(
                 r'\b([a-zA-Z][²³]|\b[a-zA-Z]\^[a-zA-Z\d]+)\b',
                 r'$\1$',
@@ -190,6 +194,7 @@ def beautify_markdown_math(text):
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
 
+    # Pass plain text segments through the mathematical auto-wrapper
     text = auto_wrap_math_expressions(text)
 
     def step_repl(match):
@@ -203,12 +208,14 @@ def beautify_markdown_math(text):
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
+            # Block LaTeX equation block
             clean_formula = clean_to_valid_latex(parts_block[i].strip())
             parts_block[i] = f"\n  <tg-math-block>{html.escape(clean_formula)}</tg-math-block>\n"
         else:
             parts_inline = parts_block[i].split('$')
             for j in range(len(parts_inline)):
                 if j % 2 == 1:
+                    # Inline mathematical expression tag
                     clean_formula = clean_to_valid_latex(parts_inline[j].strip())
                     parts_inline[j] = f"<tg-math>{html.escape(clean_formula)}</tg-math>"
                 else:

@@ -45,6 +45,9 @@ def get_next_rank_info(marks: int) -> str:
     return "Maximum Mastery Level Reached! 🌌"
 
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
+    # Diagnostic live terminal logging
+    print(f"\033[92m[CORE LAYOUT ENGINE] Generating static closed view (REF: {display_id}) | compact: {compact} | continuation: {continuation}\033[0m", flush=True)
+
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
 
@@ -52,11 +55,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     why = exp.get('why', 'No detailed explanation provided.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Mathematical Concept'
 
-    # SECTION 1: HEADER
+    # SECTION 1: HEADER (No horizontal drawing dividers used)
     header = (
-        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code> • 📅 {day_str}\n"
-        f"📐 <b>Topic:</b> {q.get('topic','General')}\n"
-        f"────────────────────────\n\n"
+        f"🧭 <b>SCHOLASTIC PORTAL</b> • REF <code>{display_id}</code> • 📅 {day_str}\n"
+        f"📐 <b>Topic:</b> {q.get('topic','General')}\n\n"
     )
 
     # SECTION 2: PROBLEM PROPOSITION & OPTIONS
@@ -115,12 +117,21 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
+    explanation_block = f"{general_principle}{step_by_step}{breakdown_block}"
+
+    # CONTINUATION LAYOUT (No horizontal drawing lines)
+    if continuation:
+        connection_header = (
+            f"<b>📖 DETAILED SOLUTION (CONTINUATION) • REF <code>{display_id}</code></b>\n\n"
+        )
+        return f"{connection_header}{explanation_block}"
+
     solution_title = f"🎯 <b>CORRECT OPTION: <tg-spoiler>[{correct_letter}]</tg-spoiler></b>\n\n"
     
     if compact:
         solution_block = f"{solution_title}{general_principle}"
     else:
-        solution_block = f"{solution_title}{general_principle}{step_by_step}{breakdown_block}"
+        solution_block = f"{solution_title}{explanation_block}"
 
     # SECTION 5: FOOTER (WATERMARK & HASHTAGS)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
@@ -132,6 +143,9 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     return f"{header}{body}{opts_block}{solution_block}{footer}"
 
 def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_card=None, continuation=False) -> str:
+    # Diagnostic live terminal logging
+    print(f"\033[92m[CORE LAYOUT ENGINE] Generating answered view (REF: {display_id}) | compact: {compact} | continuation: {continuation}\033[0m", flush=True)
+
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
     user_letter = letters[user_idx] if user_idx < len(letters) else "?"
@@ -143,30 +157,7 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
     why = exp.get('why', 'No step-by-step derivation available.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Formula Concept'
 
-    # SECTION 1: HEADER
-    header = (
-        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code> • 📅 {day_str}\n"
-        f"📐 <b>Topic:</b> {q.get('topic','General')}\n"
-        f"────────────────────────\n\n"
-    )
-
-    # SECTION 2: PROBLEM PROPOSITION & SELECTION
-    body = (
-        f"<b>PROBLEM PROPOSITION</b>\n"
-        f"{beautify_markdown_math(q['question'])}\n\n"
-    )
-
-    opts_list = ["<b>📋 OPTIONS</b>"]
-    for i, o in enumerate(q['options']):
-        opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
-    opts_block = "\n".join(opts_list) + "\n\n"
-
-    status_block = (
-        f"🎯 <b>Your Selection:</b> <code>{user_letter}</code> ({user_status})\n"
-        f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
-    )
-
-    # SECTION 3: DETAILED EXPLANATION (3 ACCENTED BLOCKQUOTE SUB-CATEGORIES)
+    # --- 3 SUB-CATEGORIES BOXED INDIVIDUALLY IN COLOR-CODED ACCENTED CARDS ---
     general_principle = (
         f"<blockquote>\n"
         f"  🟦 <b>1. GOVERNING PRINCIPLE</b>\n\n"
@@ -213,19 +204,36 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
 
     explanation_block = f"{general_principle}\n{step_by_step_block}\n{breakdown_block}"
 
-    # SECTION 3 (CONTINUATION LAYOUT)
+    # --- SECTION 3 (CONTINUATION LAYOUT - No horizontal dividers) ---
     if continuation:
         connection_header = (
-            f"<b>📖 DETAILED DERIVATION (CONTINUATION) • REF <code>{display_id}</code></b>\n"
-            f"────────────────────────\n\n"
+            f"<b>📖 DETAILED DERIVATION (CONTINUATION) • REF <code>{display_id}</code></b>\n\n"
         )
         return f"{connection_header}{explanation_block}"
 
-    if compact:
-        # On compact views (photo caption), omit Step-by-Step and Options Breakdown to stay within character limits
-        return f"{header}{body}{opts_block}{status_block}{general_principle}{footer}"
+    # --- SECTION 1: HEADER ---
+    header = (
+        f"🧭 <b>SCHOLASTIC PORTAL</b> • REF <code>{display_id}</code> • 📅 {day_str}\n"
+        f"📐 <b>Topic:</b> {q.get('topic','General')}\n\n"
+    )
 
-    # SECTION 4: STUDY PERFORMANCE CARD (FLAT HIGH-CONTRAST MOBILE GRID)
+    # --- SECTION 2: PROBLEM PROPOSITION & SELECTION ---
+    body = (
+        f"<b>PROBLEM PROPOSITION</b>\n"
+        f"{beautify_markdown_math(q['question'])}\n\n"
+    )
+
+    opts_list = ["<b>📋 OPTIONS</b>"]
+    for i, o in enumerate(q['options']):
+        opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
+    opts_block = "\n".join(opts_list) + "\n\n"
+
+    status_block = (
+        f"🎯 <b>Your Selection:</b> <code>{user_letter}</code> ({user_status})\n"
+        f"⭐ <b>Correct Option:</b> <b>[{correct_letter}]</b>\n\n"
+    )
+
+    # --- SECTION 4: STUDY PERFORMANCE CARD ---
     score_segment = ""
     if perf_card:
         if perf_card['is_bonus_winner']:
@@ -248,12 +256,16 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
-    # SECTION 5 & 6: FOOTER (WATERMARK & HASHTAGS)
+    # --- SECTION 5 & 6: FOOTER (WATERMARK & HASHTAGS) ---
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n\n📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
         f"{' '.join(hashtag_list)}"
     )
+
+    if compact:
+        # On compact views, omit Step-by-Step and Options Breakdown to stay within character limits
+        return f"{header}{body}{opts_block}{status_block}{general_principle}{footer}"
 
     return f"{header}{body}{opts_block}{status_block}{explanation_block}{score_segment}{footer}"
 
