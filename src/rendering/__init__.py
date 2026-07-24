@@ -46,23 +46,19 @@ class UIFactory:
 
     @classmethod
     def create_question_assets(cls, q, display_id):
-        # Image layouts are ONLY compiled if the question contains an active diagram in its latex field
         has_tikz = cls.has_real_diagram(q)
         figure_block = cls.build_figure_block(q, add_strut=False) if has_tikz else None
 
-        # Fallback to standard rich text if there's no actual diagram code in the latex field
         if has_tikz and not figure_block:
             has_tikz = False
 
         if has_tikz:
-            # Set add_strut=False to strictly crop the image boundaries around the TikZ graphic
             img_url = cls.get_latex_url(cls.assemble_diagram_only_layout(cls.WATERMARK, display_id, figure_block))
         else:
             img_url = None
 
         from src.typography import beautify_markdown_math
 
-        # Wrapped inside a textbook callout blockquote to add margins, padding, and left vertical accent
         caption_q = (
             f"\n\n"
             f"<blockquote>"
@@ -78,9 +74,9 @@ class UIFactory:
         from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
 
-        # Minimalist modern study header with structured spacing
-        subject = q.get('subject','').upper()
-        topic = q.get('topic','General')
+        # Secure mathematical parsing for headers
+        subject = beautify_markdown_math(q.get('subject','').upper())
+        topic = beautify_markdown_math(q.get('topic','General'))
         header = (
             f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
             f"📐 <b>{topic}</b> • 📅 {day_str}\n"

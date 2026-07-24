@@ -339,9 +339,9 @@ def sanitize_tag_to_hashtag(tag):
         tag = re.sub(r'[^\w_]', '', tag)
     return f"#{tag}"
 
-# src/rendering/latex_templates.py (segment)
 def create_explanation_assets(q, user_idx, display_id):
     from src.rendering.html_views import replace_code_with_italic
+    from src.typography import beautify_markdown_math
     correct_idx = q['correct_option']
     letters = ["A", "B", "C", "D", "E"]
 
@@ -360,8 +360,8 @@ def create_explanation_assets(q, user_idx, display_id):
         else:
             has_tikz = False
 
-    subject = q.get('subject','').upper()
-    topic = q.get('topic','General')
+    subject = beautify_markdown_math(q.get('subject','').upper())
+    topic = beautify_markdown_math(q.get('topic','General'))
     day_str = get_day_from_tags(q.get('tags', []))
     header = (
         f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
@@ -388,8 +388,8 @@ def create_explanation_assets(q, user_idx, display_id):
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # Removed the leading bullet point "•" from this helper method as well
-        analysis_line = f"{color_lbl} <b>{let}:</b> {beautify_markdown_math(why_text)}"
+        # Standard option text formatted mathematically alongside its analysis explanation
+        analysis_line = f"{color_lbl} <b>{let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f" (<i>e.g., {beautify_markdown_math(example_text)}</i>)"
         text_parts.append(analysis_line)

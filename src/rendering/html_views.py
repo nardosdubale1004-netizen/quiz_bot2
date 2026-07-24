@@ -19,16 +19,16 @@ def smart_truncate_html(text: str, max_len: int) -> str:
             break
         accumulated += (sentence + " ")
     accumulated = accumulated.strip() or text[:max_len - 3].strip()
-    if accumulated.count('$') % 2 != 0: 
+    if accumulated.count('$') % 2 != 0:
         accumulated += '$'
     tag_pattern = re.compile(r'<(/?)(code|b|i|span|tg-spoiler|a)(?:\s+[^>]*?)?>')
     open_tags = []
     for match in tag_pattern.finditer(accumulated):
-        if not match.group(1): 
+        if not match.group(1):
             open_tags.append(match.group(2))
-        elif open_tags and open_tags[-1] == match.group(2): 
+        elif open_tags and open_tags[-1] == match.group(2):
             open_tags.pop()
-    for tag in reversed(open_tags): 
+    for tag in reversed(open_tags):
         accumulated += f'</{tag}>'
     return accumulated + "..."
 
@@ -90,7 +90,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # Redundant bullet point "•" removed here
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
@@ -107,9 +106,11 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         connection_header = f"<b>📖 DETAILED SOLUTION (CONTINUATION) • REF <code>{display_id}</code></b>\n<hr/>"
         return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
 
+    subject_text = beautify_markdown_math(q.get('subject','').upper())
+    topic_text = beautify_markdown_math(q.get('topic','General'))
     header = (
-        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n<hr/>"
+        f"🎓 <b>{subject_text}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic_text}</b> • 📅 {day_str}\n<hr/>"
     )
 
     body = (
@@ -141,7 +142,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     spoiler_content = replace_code_with_italic(spoiler_content)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
-    
+
     footer = (
         f"\n<hr/>\n"
         f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
@@ -196,7 +197,6 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
             why_text = options_analysis[i].get('why', '')
             example_text = options_analysis[i].get('example', '')
 
-        # Redundant bullet point "•" removed here
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
@@ -212,9 +212,11 @@ def build_answered_view(q, display_id: str, user_idx: int, compact=False, perf_c
         connection_header = f"<b>📖 DETAILED DERIVATION (CONTINUATION) • REF <code>{display_id}</code></b>\n<hr/>"
         return f"{connection_header}\n{general_principle}\n{step_by_step}\n{breakdown_block}"
 
+    subject_text = beautify_markdown_math(q.get('subject','').upper())
+    topic_text = beautify_markdown_math(q.get('topic','General'))
     header = (
-        f"🎓 <b>{q.get('subject','').upper()}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{q.get('topic','General')}</b> • 📅 {day_str}\n<hr/>"
+        f"🎓 <b>{subject_text}</b> • REF <code>{display_id}</code>\n"
+        f"📐 <b>{topic_text}</b> • 📅 {day_str}\n<hr/>"
     )
 
     body = (
@@ -332,7 +334,7 @@ def generate_poll_hint(q):
         equations = re.findall(r'([A-Za-z\d\-\[\]\(\)]+\s*=\s*[^.\n]+)', clean_why)
         if equations and len(f"{combined} | {equations[-1].strip()}") <= 195:
             return f"{combined} | {equations[-1].strip()}"
-        if len(combined) <= 195: 
+        if len(combined) <= 195:
             return combined
     for sentence in re.split(r'(?<=[.!?])\s+', clean_why):
         if len(sentence) <= 195 and any(sym in sentence for sym in ["=", "√", "∫", "π", "θ", "°"]):

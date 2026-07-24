@@ -38,13 +38,14 @@ SUBSCRIPTS = {
 }
 
 def escape_plain_text(text: str) -> str:
+    # Allowed tags are kept unescaped so Telegram renders them as entities
     allowed_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
         "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
         "tg-math", "/tg-math", "tg-math-block", "/tg-math-block",
         "h1", "/h1", "h2", "/h2", "h3", "/h3", "h4", "/h4", "h5", "/h5", "h6", "/h6",
         "ul", "/ul", "ol", "/ol", "li", "/li", "table", "/table", "tr", "/tr", "td", "/td",
-        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/superscript"
+        "br", "hr", "mark", "/mark", "sub", "/sub", "sup", "/sup"  # Fixed: corrected /superscript to /sup
     ]
     parts = re.split(r'(</?[a-zA-Z1-6-]+(?:\s+[^>]*)?/?>)', text)
     for i in range(len(parts)):
@@ -112,55 +113,6 @@ def lite_math(text):
         return ""
     return clean_latex_to_unicode(text.replace("$", ""))
 
-def auto_wrap_math_expressions(text: str) -> str:
-    """Detects and isolates mathematical expressions or standalone variables in plain text."""
-    if not text:
-        return ""
-
-    # 1. Pre-pass: Find and wrap entire raw LaTeX blocks (anything containing a backslash command)
-    latex_regex = r'(?<!\$)(?<!\\)(\\[a-zA-Z]+(?:_\{[^}]*\}|\^\{[^}]*\}|\{[^}]*\}|[a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]|\\[a-zA-Z]+)*)'
-    text = re.sub(latex_regex, r'$\1$', text)
-
-    # 2. Tokenize to avoid wrapping inside existing math tags (<tg-math>...</tg-math>, <tg-math-block>...</tg-math-block>, $$...$$, $...$) and HTML tags
-    tokens = re.split(r'(<tg-math-block>.*?</tg-math-block>|<tg-math>.*?</tg-math>|\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text, flags=re.DOTALL)
-
-    math_words = {"sin", "cos", "tan", "log", "ln", "det", "lim", "pi", "theta", "exp", "neq"}
-    math_operators_re = r'[+\-*/=^≠≤≥·×²³<>°]|\\times|\\neq|\\pm|\\approx'
-    candidate_pattern = r'([a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]{2,})'
-
-    for i in range(len(tokens)):
-        if tokens[i] and not (tokens[i].startswith('$') or tokens[i].startswith('<')):
-            segment = tokens[i]
-            matches = list(re.finditer(candidate_pattern, segment))
-            offset = 0
-
-            for match in matches:
-                span_str = match.group(1)
-                start, end = match.start() + offset, match.end() + offset
-
-                has_operator = bool(re.search(math_operators_re, span_str))
-                has_var_pow = bool(re.search(r'\b[a-zA-Z]\^[0-9a-zA-Z]+', span_str)) or bool(re.search(r'\b[a-zA-Z][²³]', span_str))
-
-                words = re.findall(r'\b[a-zA-Z]{2,}\b', span_str)
-                has_non_math_words = any(w.lower() not in math_words for w in words)
-
-                if (has_operator or has_var_pow) and not has_non_math_words:
-                    stripped = span_str.strip()
-                    if len(stripped) >= 1:
-                        wrapped = f"${stripped}$"
-                        original_part = segment[start:end]
-                        leading_spaces = original_part[:len(original_part) - len(original_part.lstrip())]
-                        trailing_spaces = original_part[len(original_part) - len(original_part.rstrip()):]
-
-                        replacement = f"{leading_spaces}{wrapped}{trailing_spaces}"
-                        segment = segment[:start] + replacement + segment[end:]
-                        offset += len(replacement) - len(original_part)
-
-            segment = re.sub(r'\b([x-zX-Z])\b', r'$\1$', segment)
-            tokens[i] = segment
-
-    return "".join(tokens)
-
 def beautify_markdown_math(text):
     if not text:
         return ""
@@ -177,8 +129,6 @@ def beautify_markdown_math(text):
     text = text.replace(r"\,", " ")
     text = text.replace(r"\quad", "   ")
 
-    text = auto_wrap_math_expressions(text)
-
     def step_repl(match):
         step_num = match.group(1)
         emojis = {"1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣", "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
@@ -187,6 +137,12 @@ def beautify_markdown_math(text):
 
     result = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
+    # --- LATEX DELIMITER NORMALIZATION BRIDGE ---
+    # Automatically map standard LaTeX bracket block styles to Markdown dollar style
+    result = result.replace(r'\[', '$$').replace(r'\]', '$$')
+    result = result.replace(r'\(', '$').replace(r'\)', '$')
+
+    # Convert dollar block/inline math delimiters to native Telegram rich tags
     parts_block = result.split('$$')
     for i in range(len(parts_block)):
         if i % 2 == 1:
