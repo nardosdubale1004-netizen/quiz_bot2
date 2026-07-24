@@ -3,28 +3,19 @@ import re
 import json
 import httpx
 from telegram import Bot, Message
-from src.config import Style
+from src.config import CONFIG, Style
 from src.typography import lite_math
 
 def convert_to_legacy_html(rich_html: str) -> str:
     """
     Converts advanced 2026 Rich HTML tags to standard, safe legacy Telegram HTML tags
-    to prevent entity parsing crashes on photo captions and fallback channels.
+    while preserving native <tg-math> and <tg-math-block> tags.
     """
     if not rich_html:
         return ""
 
-    # 1. Convert native math blocks to indented italic text rather than nested blockquotes
-    def math_block_sub(match):
-        expr = match.group(1).strip()
-        return f"\n  <b><i>{lite_math(expr)}</i></b>\n"
-    text = re.sub(r'<tg-math-block>(.*?)</tg-math-block>', math_block_sub, rich_html, flags=re.DOTALL)
-
-    # 2. Convert native inline math to italic tags (flows natively without blocky copy box widgets)
-    def math_inline_sub(match):
-        expr = match.group(1).strip()
-        return f"<i>{lite_math(expr)}</i>"
-    text = re.sub(r'<tg-math>(.*?)</tg-math>', math_inline_sub, text, flags=re.DOTALL)
+    # Keep <tg-math> and <tg-math-block> intact so Telegram renders them as native formulas!
+    text = rich_html
 
     # 3. Convert headers to bold
     text = re.sub(r'</?h[1-6](?:\s+[^>]*)?>', lambda m: "<b>" if not m.group(0).startswith("</") else "</b>\n", text)
@@ -58,7 +49,11 @@ def convert_to_legacy_html(rich_html: str) -> str:
     text = re.sub(r'<table>(.*?)</table>', table_sub, text, flags=re.DOTALL)
 
     # 7. Strip any remaining unsupported HTML tags (safety guard)
-    supported_legacy_tags = ["b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler", "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote"]
+    supported_legacy_tags = [
+        "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler", 
+        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
+        "tg-math", "/tg-math", "tg-math-block", "/tg-math-block"
+    ]
 
     def strip_unsupported(match):
         tag_full = match.group(0)
@@ -75,10 +70,6 @@ def convert_to_legacy_html(rich_html: str) -> str:
     return text.strip()
 
 async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, **kwargs) -> Message:
-    """
-    Safely delivers structured rich messages using Telegram's sendRichMessage API.
-    Falls back gracefully to raw HTTP requests or legacy sendMessage as a secondary layer.
-    """
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     has_media = media_bytes is not None
 
@@ -184,9 +175,6 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
         )
 
 async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: str, reply_markup=None, **kwargs) -> Message:
-    """
-    Safely edits structured rich messages using Telegram's editMessageText parameter overrides.
-    """
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     rich_html = normalized_content.replace("\n", "<br/>")
 

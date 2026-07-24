@@ -109,18 +109,24 @@ def lite_math(text):
         return ""
     return clean_latex_to_unicode(text.replace("$", ""))
 
+# src/typography.py (segment)
 def auto_wrap_math_expressions(text: str) -> str:
-    """Isolates math statements correctly without breaking mid-formula."""
+    """Detects and isolates mathematical expressions or standalone variables in plain text."""
     if not text:
         return ""
     
-    # Tokenize to protect existing formulas ($...$, $$...$$) and HTML tags
+    # 1. Pre-pass: Find and wrap entire raw LaTeX blocks (anything containing a backslash command)
+    # to prevent them from being split or mangled inside.
+    latex_regex = r'(?<!\$)(?<!\\)(\\[a-zA-Z]+(?:_\{[^}]*\}|\^\{[^}]*\}|\{[^}]*\}|[a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]|\\[a-zA-Z]+)*)'
+    text = re.sub(latex_regex, r'$\1$', text)
+    
+    # 2. Tokenize to avoid wrapping inside existing math blocks ($...$, $$...$$) and HTML tags
     tokens = re.split(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|<[^>]+>)', text)
     
-    # Words allowed inside the parsed math tokens
+    # Mathematical words allowed in inline math
     math_words = {"sin", "cos", "tan", "log", "ln", "det", "lim", "pi", "theta", "exp", "neq"}
     
-    # Mathematical character classes and explicit operators
+    # Explicit mathematical operators
     math_operators_re = r'[+\-*/=^≠≤≥·×²³<>°]|\\times|\\neq|\\pm|\\approx'
     candidate_pattern = r'([a-zA-Z0-9()+\-*/=^≠≤≥·×²³<>_.,\s]{2,})'
     
