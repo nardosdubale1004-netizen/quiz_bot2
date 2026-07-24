@@ -220,11 +220,13 @@ def beautify_markdown_math(text):
         return ""
 
     text = str(text)
-    
+
     # Safely wraps unformatted math structures (including matrices)
     text = auto_wrap_math_expressions(text)
-    
-    text = text.replace("\\\\n", "\n").replace("\\n", "\n").replace(r"\n", "\n")
+
+    # Safe regex replace: only replace literal escaped newlines (e.g. \n or \\n) 
+    # with actual newlines if they are not part of a LaTeX math/formatting command.
+    text = re.sub(r'\\+n(?!eq|ode|earrow|abla|eg|um|otin|ew|orm|exists|subset|i\b|ormalsize|umber)', '\n', text)
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
     text = re.sub(r'\\vspace\{[^}]*\}', '\n', text)
