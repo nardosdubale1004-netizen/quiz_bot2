@@ -185,6 +185,34 @@ def clean_latex_to_unicode(text):
         return ""
     text = str(text)
     text = re.sub(r'</?tg-math(?:-block)?>', '', text)
+    
+    # 1. Convert matrix-like environments into highly readable nested lists [[...], [...]]
+    # before any double-backslashes (which denote rows) are removed.
+    matrix_pattern = re.compile(r'\\begin\{(pmatrix|bmatrix|matrix|vmatrix|cases)\}(.*?)\\end\{\1\}', re.DOTALL)
+    def repl_matrix(m):
+        env_name = m.group(1)
+        matrix_body = m.group(2).strip()
+        # Split rows by standard LaTeX line breaks: \\, \cr, or \tabularnewline
+        raw_rows = re.split(r'\\\\|\\cr|\\tabularnewline', matrix_body)
+        cleaned_rows = []
+        for r in raw_rows:
+            r = r.strip()
+            if not r:
+                continue
+            # Split cells by &
+            cells = [c.strip() for c in r.split('&')]
+            cleaned_rows.append("[" + ", ".join(cells) + "]")
+        
+        if env_name == "cases":
+            return "{" + ", ".join(cleaned_rows) + "}"
+        return "[" + ", ".join(cleaned_rows) + "]"
+    
+    text = matrix_pattern.sub(repl_matrix, text)
+    
+    # Clean up non-matrix LaTeX environments to prevent text pollution in plain fallback views
+    text = re.sub(r'\\begin\{[a-zA-Z0-9*]+\}', '', text)
+    text = re.sub(r'\\end\{[a-zA-Z0-9*]+\}', '', text)
+
     text = text.replace(r"\par", "\n").replace(r"\quad", "   ").replace(r"\,", " ")
     text = text.replace(r"\left", "").replace(r"\right", "")
     text = text.replace(r"^\circ", "°").replace(r"\circ", "°").replace(r"^circ", "°")
