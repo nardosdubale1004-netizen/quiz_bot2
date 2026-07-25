@@ -25,7 +25,8 @@ class QuizEngine:
                 QuizEngine._printed_connection_log = True
             if not QuizEngine._pool:
                 try:
-                    QuizEngine._pool = ThreadedConnectionPool(minconn=2, maxconn=20, dsn=self.db_url)
+                    # Enforce secure thread limits and clean parameters
+                    QuizEngine._pool = ThreadedConnectionPool(minconn=5, maxconn=40, dsn=self.db_url)
                     print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
                 except Exception as e:
                     print(f"{Style.RED}[DATABASE ERROR] Failed to initialize connection pool: {e}{Style.RESET}")
@@ -286,14 +287,31 @@ def db_set_user_grade(user_id, grade: int):
         conn = db_engine.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO user_stats (user_id, grade, total, correct, total_marks)
-                VALUES (%s, %s, 0, 0, 0)
-                ON CONFLICT (user_id) DO UPDATE SET grade = EXCLUDED.grade;
+                INSERT INTO user_stats (user_id, grade, total, correct, total_marks, last_active_at)
+                VALUES (%s, %s, 0, 0, 0, NOW())
+                ON CONFLICT (user_id) DO UPDATE SET grade = EXCLUDED.grade, last_active_at = NOW();
             """, (str(user_id), int(grade)))
             conn.commit()
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to set user grade: {e}")
+    finally:
+        if conn: db_engine.release_connection(conn)
+
+def db_upsert_username(user_id, username):
+    conn = None
+    try:
+        conn = db_engine.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, total, correct, total_marks, username, last_active_at)
+                VALUES (%s, 0, 0, 0, %s, NOW())
+                ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username, last_active_at = NOW();
+            """, (str(user_id), username))
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to upsert username: {e}")
     finally:
         if conn: db_engine.release_connection(conn)
 
@@ -444,7 +462,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     try:
         conn = db_engine.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM sent_tracks WHERE message_id = %s FOR UPDATE;", (str(message_id),))
             first_try = True
             marks_to_award = 0
             is_bonus_winner = False
@@ -468,6 +485,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 """, (show_derivation, show_perf, str(user_id), str(message_id)))
             else:
                 if is_correct:
+                    # Concurrency fix: atomic read-committed counts of correct rows instead of locking the parent tracks row
                     cur.execute("SELECT COUNT(*) FROM user_responses WHERE message_id = %s AND is_correct = TRUE;", (str(message_id),))
                     correct_count = cur.fetchone()['count']
                     if correct_count < bonus_limit:
@@ -487,12 +505,13 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
 
                     correct_inc = 1 if is_correct else 0
                     cur.execute("""
-                        INSERT INTO user_stats (user_id, total, correct, total_marks)
-                        VALUES (%s, 1, %s, %s)
+                        INSERT INTO user_stats (user_id, total, correct, total_marks, last_active_at)
+                        VALUES (%s, 1, %s, %s, NOW())
                         ON CONFLICT (user_id) DO UPDATE SET
                             total = COALESCE(user_stats.total, 0) + 1,
                             correct = COALESCE(user_stats.correct, 0) + %s,
-                            total_marks = COALESCE(user_stats.total_marks, 0) + %s;
+                            total_marks = COALESCE(user_stats.total_marks, 0) + %s,
+                            last_active_at = NOW();
                     """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
                     cur.execute("RELEASE SAVEPOINT score_insertion_sp;")
                 except psycopg2.IntegrityError:

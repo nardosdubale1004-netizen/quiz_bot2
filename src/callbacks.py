@@ -97,6 +97,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         if resp and resp.status_code == 200:
                             photo_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=True)
                             legacy_caption = convert_to_legacy_html(explanation_html)
+                            
+                            # Safety cap to safeguard against API rejections for large captions
+                            if len(legacy_caption) > 1010:
+                                legacy_caption = legacy_caption[:1000] + "..."
+                                
                             media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=photo_kb)
 
@@ -110,9 +115,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                             await asyncio.to_thread(db_update_private_message_ids, user_id, mid_key, private_followup_message_id=follow_up.message_id)
                             return
                         else:
-                            await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
+                            await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html)[:1000], reply_markup=retry_kb, parse_mode="HTML")
                 else:
-                    await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
+                    await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html)[:1000], reply_markup=retry_kb, parse_mode="HTML")
             else:
                 reveal_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=False)
                 await edit_rich_message_safe(
@@ -224,6 +229,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(caption)
+                            if len(legacy_caption) > 1010:
+                                legacy_caption = legacy_caption[:1000] + "..."
                             media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=orig_kb)
                         else:

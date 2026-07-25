@@ -8,15 +8,15 @@ import traceback
 import io
 import logging
 
-# Suppress Telegram updater warnings, polling conflicts, and httpx connection logs from spamming the CLI cockpit
+# Suppress noisy library logs
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.WARNING
 )
-for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.ext._updater", "httpx"]:
+for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.ext._updater", "httpx", "uvicorn"]:
     logging.getLogger(log_name).setLevel(logging.CRITICAL)
 
-from telegram import Update
+from telegram import Update, Poll
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style, LOCKOUT_MESSAGES
@@ -29,84 +29,41 @@ from src.database import (
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
     process_user_score,
-    db_update_response_view_state
+    db_upsert_username
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
-from src.rendering.html_views import get_next_rank_info
-from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
+from src.rendering.rich_helpers import send_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
 import httpx
-from telegram import Poll
 from src.typography import lite_math
 
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
+import uvicorn
+
 engine = QuizEngine()
+app_bot_instance = None
 
-async def handle_http_request(reader, writer, app):
+async def health_check(request):
+    return JSONResponse({"status": "ok"})
+
+async def telegram_webhook(request):
+    global app_bot_instance
+    if not app_bot_instance:
+        return Response("Webhook receiver not initialized", status_code=500)
     try:
-        header_data = await reader.readuntil(b"\r\n\r\n")
-        headers = header_data.decode("utf-8")
-
-        request_line = headers.split("\r\n")[0]
-        method, path, _ = request_line.split(" ")
-
-        content_length = 0
-        for line in headers.split("\r\n"):
-            if line.lower().startswith("content-length:"):
-                content_length = int(line.split(":")[1].strip())
-                break
-
-        if method == "GET" and path == "/health":
-            response_body = '{"status": "ok"}'
-            response = (
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json\r\n"
-                f"Content-Length: {len(response_body)}\r\n"
-                "Connection: close\r\n\r\n"
-                f"{response_body}"
-            )
-            writer.write(response.encode("utf-8"))
-            await writer.drain()
-
-        elif method == "POST" and path == "/webhook":
-            try:
-                body_data = await reader.readexactly(content_length)
-                body = body_data.decode("utf-8")
-
-                update_dict = json.loads(body)
-                update = Update.de_json(update_dict, app.bot)
-
-                await app.process_update(update)
-            except Exception as update_err:
-                # Catch update errors, log details, but still return 200 OK to prevent Telegram retry loops
-                print(f"{Style.RED}[WEBHOOK UNHANDLED EXCEPTION]: Failed to process update: {update_err}{Style.RESET}", flush=True)
-                traceback.print_exc()
-
-            response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            writer.write(response.encode("utf-8"))
-            await writer.drain()
-
-        else:
-            response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            writer.write(response.encode("utf-8"))
-            await writer.drain()
-
-    except Exception as e:
-        try:
-            response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            writer.write(response.encode("utf-8"))
-            await writer.drain()
-        except Exception:
-            pass
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+        body_bytes = await request.body()
+        update_dict = json.loads(body_bytes.decode("utf-8"))
+        update = Update.de_json(update_dict, app_bot_instance.bot)
+        await app_bot_instance.process_update(update)
+    except Exception as update_err:
+        print(f"{Style.RED}[WEBHOOK UNHANDLED EXCEPTION]: {update_err}{Style.RESET}", flush=True)
+        traceback.print_exc()
+    return Response(status_code=200)
 
 async def check_and_publish_scheduled(app):
-    """Background service that continuously scans the cloud database for pending releases."""
     print(f"{Style.GREEN}[SCHEDULER] Background service started successfully.{Style.RESET}", flush=True)
     while True:
         try:
@@ -114,8 +71,6 @@ async def check_and_publish_scheduled(app):
             if q:
                 print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
                 channel = CONFIG.get("channel")
-
-                # Retrieve the next valid sequence identifier safely from database state
                 last_seq = await asyncio.to_thread(engine.db_get_max_display_id) + 1
 
                 has_tikz = UIFactory.has_real_diagram(q)
@@ -155,19 +110,21 @@ async def check_and_publish_scheduled(app):
         except Exception as e:
             traceback.print_exc()
             print(f"{Style.RED}[SCHEDULER ERROR] Failed to complete scheduling sweeps: {e}{Style.RESET}", flush=True)
-        
-        # Scan the database every 60 seconds
+
         await asyncio.sleep(60)
 
 async def start_command(update: Update, context):
     user_id = update.effective_user.id
-    args = context.args
+    username = update.effective_user.username
+    
+    if username:
+        await asyncio.to_thread(db_upsert_username, user_id, username)
 
     channel_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
     ]])
 
-    # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
+    args = context.args
     if args and args[0].startswith("ans_"):
         payload = args[0]
         try:
@@ -175,18 +132,13 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            # Targeted sub-millisecond query
             track = await asyncio.to_thread(engine.db_get_track_by_display_id, display_id)
-
             if not track:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
             mid_key = track['message_id']
-
-            # Targeted single-question query
             question_data = await asyncio.to_thread(engine.db_get_question_by_id, track['q_id'])
-
             if not question_data:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
                 return
@@ -196,8 +148,6 @@ async def start_command(update: Update, context):
             if existing_response:
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
-
-                # Dynamic state: Read collapse states directly from the database row
                 show_derivation = existing_response.get('show_derivation', False)
                 show_perf = existing_response.get('show_perf', False)
 
@@ -217,14 +167,12 @@ async def start_command(update: Update, context):
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
 
-                # Render using the database state, prepending the lockout warning
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
                 )
 
                 has_ex_diag = UIFactory.has_explanation_diagram(question_data)
                 if has_ex_diag:
-                    # Keep main caption compact, let followup handle derivations
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(
                         question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                     )
@@ -235,15 +183,15 @@ async def start_command(update: Update, context):
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
+                                # Cap telegram photo limit safely
+                                if len(legacy_caption) > 1010:
+                                    legacy_caption = legacy_caption[:1000] + "..."
                                 photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
 
-                                # Track as lockout message in-memory
                                 LOCKOUT_MESSAGES.add((user_id, m.message_id))
-
                                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
 
-                                # Restore expanded followups immediately on reload with warning notice
                                 if show_derivation or show_perf:
                                     full_text = warning_notice + UIFactory.build_answered_view(
                                         question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card, continuation=True
@@ -260,14 +208,11 @@ async def start_command(update: Update, context):
                 reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=False)
                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
 
-                # Track as lockout message in-memory
                 LOCKOUT_MESSAGES.add((user_id, f_m.message_id))
-
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                 return
 
             is_correct = (user_selection == question_data['correct_option'])
-            # Initial answer from channel starts in compact mode (False, False)
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
 
             explanation_html = UIFactory.build_answered_view(
@@ -286,6 +231,8 @@ async def start_command(update: Update, context):
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             legacy_caption = convert_to_legacy_html(explanation_html_compact)
+                            if len(legacy_caption) > 1010:
+                                legacy_caption = legacy_caption[:1000] + "..."
                             photo_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=True)
                             m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
                             await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
@@ -297,7 +244,6 @@ async def start_command(update: Update, context):
             return
         except Exception as e:
             traceback.print_exc()
-            print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
@@ -376,8 +322,10 @@ async def leaderboard_command(update: Update, context):
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, row in enumerate(weekly_top):
-        user_label = f"Student {str(row['user_id'])[-4:]}"
-        leaderboard_text.append(f" {medals[i]} {user_label} — <b>{row['total_score']} Marks</b>")
+        user_id_str = str(row['user_id'])
+        user_profile = await asyncio.to_thread(db_get_user_profile, row['user_id'])
+        display_name = f"@{user_profile['username']}" if (user_profile and user_profile.get('username')) else f"Student {user_id_str[-4:]}"
+        leaderboard_text.append(f" {medals[i]} {display_name} — <b>{row['total_score']} Marks</b>")
 
     leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
     leaderboard_text.append(
@@ -387,30 +335,28 @@ async def leaderboard_command(update: Update, context):
 
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
 
-async def run_cloud_server(app, port):
+async def run_asgi_server(app, port):
     PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
-
     await app.bot.set_webhook(
         url=f"{PUBLIC_URL}/webhook",
         drop_pending_updates=True
     )
-    print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
+    print(f"Webhook registered on {PUBLIC_URL}/webhook.", flush=True)
 
-    # Spawn the persistent scheduling sweep cycle as a background task
     asyncio.create_task(check_and_publish_scheduled(app))
 
-    server = await asyncio.start_server(
-        lambda r, w: handle_http_request(r, w, app),
-        "0.0.0.0",
-        int(port)
-    )
-    print(f"Custom light webserver is listening on port {port}.", flush=True)
+    routes = [
+        Route("/health", endpoint=health_check, methods=["GET"]),
+        Route("/webhook", endpoint=telegram_webhook, methods=["POST"]),
+    ]
+    asgi_app = Starlette(routes=routes)
 
-    async with server:
-        while True:
-            await asyncio.sleep(3600)
+    config = uvicorn.Config(asgi_app, host="0.0.0.0", port=int(port), log_level="warning")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 def main():
+    global app_bot_instance
     if not os.path.exists("logs"):
         os.makedirs("logs")
 
@@ -418,10 +364,11 @@ def main():
     token = config.get("token")
     channel = config.get("channel")
     if not token or not channel:
-        print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
+        print(f"{Style.RED}CRITICAL: Missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
         return
 
     app = Application.builder().token(token).build()
+    app_bot_instance = app
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
@@ -430,9 +377,7 @@ def main():
     RENDER_PORT = os.getenv("PORT")
 
     if RENDER_PORT:
-        print(f"Starting cloud Webhook listener on port {RENDER_PORT}...", flush=True)
-        PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
-
+        print(f"Starting ASGI Webhook interface on port {RENDER_PORT}...", flush=True)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
@@ -444,7 +389,7 @@ def main():
         print(f"Registered Bot Username: @{bot_info.username}", flush=True)
 
         try:
-            loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
+            loop.run_until_complete(run_asgi_server(app, RENDER_PORT))
         except KeyboardInterrupt:
             pass
         finally:
@@ -460,11 +405,8 @@ def main():
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
 
-        # Clean up any active webhook conflict from cloud deployments before polling
         print("Clearing active webhook to prevent polling conflict...", flush=True)
         loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
-
-        # Start background polling updater so students can receive explanation cards
         loop.run_until_complete(app.updater.start_polling())
 
         bot_info = loop.run_until_complete(app.bot.get_me())

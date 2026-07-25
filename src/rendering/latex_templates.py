@@ -149,14 +149,14 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     footer_latex = (
         f"\\begin{{minipage}}{{{content_width_cm}cm}}\n"
-        f"\\vspace{{0.3em}}\n"
+        f"\\vspace{{0.5em}}\n"
         f"\\noindent\\hrulefill \\par\n"
-        f"\\vspace{{0.4em}}\n"
+        f"\\vspace{{0.5em}}\n"
         f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\\par\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
-    body_content = "\n\\par\\vspace{0.7em}\n".join(latex_blocks)
+    body_content = "\n\\par\\vspace{1.0em}\n".join(latex_blocks)
 
     watermark_tikz = (
         f"\\begin{{tikzpicture}}[overlay]\n"
@@ -170,9 +170,9 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
-\\usepackage[paperwidth=16.0cm, paperheight=120cm, left=0.3cm, right=0.3cm, top=0.3cm, bottom=0.3cm]{geometry}
+\\usepackage[paperwidth=16.5cm, paperheight=150cm, left=0.5cm, right=0.5cm, top=0.5cm, bottom=0.5cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{4pt}
+\\setlength{\\PreviewBorder}{10pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -182,9 +182,9 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\begin{document}
 \\pagecolor{white}
 \\begin{preview}
-\\begin{minipage}{15.4cm}
+\\begin{minipage}{15.5cm}
 \\centering
-\\noindent\\rule{15.4cm}{0pt}\\par
+\\par
 __WATERMARK_TIKZ__
 __BODY_CONTENT__
 \\end{minipage}
@@ -198,9 +198,9 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
-\\usepackage[paperwidth=14.0cm, paperheight=120cm, left=0.2cm, right=0.2cm, top=0.2cm, bottom=0.2cm]{geometry}
+\\usepackage[paperwidth=14.5cm, paperheight=150cm, left=0.5cm, right=0.5cm, top=0.5cm, bottom=0.5cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{4pt}
+\\setlength{\\PreviewBorder}{10pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -210,10 +210,10 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\begin{document}
 \\pagecolor{white}
 \\begin{preview}
-\\begin{minipage}{13.6cm}
+\\begin{minipage}{13.5cm}
   \\centering
   __FIGURE_BLOCK__\\par
-  \\vspace{0.8em}
+  \\vspace{1.0em}
   {\\color{black!70}\\bfseries\\scriptsize
     \\begin{tabular}{@{}c@{}}
       Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
@@ -254,9 +254,9 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
-\\usepackage[paperwidth=16.0cm, paperheight=120cm, left=0.3cm, right=0.3cm, top=0.3cm, bottom=0.3cm]{geometry}
+\\usepackage[paperwidth=16.5cm, paperheight=150cm, left=0.5cm, right=0.5cm, top=0.5cm, bottom=0.5cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{4pt}
+\\setlength{\\PreviewBorder}{10pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -266,9 +266,9 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\begin{document}
 \\pagecolor{white}
 \\begin{preview}
-\\begin{minipage}{15.4cm}
+\\begin{minipage}{15.5cm}
 \\centering
-\\noindent\\rule{15.4cm}{0pt}\\par
+\\par
 __WATERMARK_TIKZ__
 \\begin{minipage}{14.8cm}
     \\flushleft
