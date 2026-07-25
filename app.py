@@ -1,21 +1,23 @@
 # app.py
 import os
+import sys
 import asyncio
 import threading
 import gradio as gr
 from dotenv import load_dotenv
 
-# Load environmental variables from your local .env if running tests
+# Load environmental variables
 load_dotenv()
 
 # Import the main runner loop from your bot.py
 from bot import main as run_telegram_bot
 
 def run_bot_in_background():
-    # Creates and executes the bot's asynchronous event loop in a daemon thread
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_telegram_bot())
+    """Executes the bot engine in an isolated thread wrapper."""
+    try:
+        run_telegram_bot()
+    except Exception as e:
+        print(f"[BACKGROUND ENGINE EXCEPTION]: {e}", file=sys.stderr)
 
 # Spawn the Telegram bot as a persistent background process
 threading.Thread(target=run_bot_in_background, daemon=True).start()
