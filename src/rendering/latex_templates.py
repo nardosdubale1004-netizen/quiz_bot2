@@ -127,10 +127,40 @@ def build_figure_block(q, add_strut=False):
 
     tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
     tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {$(1,2,2)$}")
+
+    # Robustly Sanitize & Merge Consecutive Optional Brackets
+    # Prevents: \begin{tikzpicture}[scale=0.75, transform shape][scale=0.8]
+    def merge_tikz_brackets(m):
+        options_str = m.group(1)
+        brackets = re.findall(r'\[([^\]]*)\]', options_str)
+        merged_opts = []
+        scale = 1.0
+        transform_shape = False
+        for b in brackets:
+            for opt in b.split(","):
+                opt = opt.strip()
+                if "scale=" in opt:
+                    try:
+                        scale *= float(opt.split("=")[1].strip())
+                    except ValueError:
+                        pass
+                elif opt == "transform shape":
+                    transform_shape = True
+                elif opt:
+                    merged_opts.append(opt)
+        
+        if scale != 1.0:
+            merged_opts.append(f"scale={scale:.3f}")
+        if transform_shape:
+            merged_opts.append("transform shape")
+        
+        return f"\\begin{{tikzpicture}}[{', '.join(merged_opts)}]"
+
+    tikz = re.sub(r'\\begin\{tikzpicture\}((?:\s*\[[^\]]*\])+)', merge_tikz_brackets, tikz)
+
     return re.sub(r'\n\s*\n', '\n', tikz)
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str, display_id: str = None) -> str:
-    # Adjusted to 15.2cm width to fit tightly inside 16.0cm paperwidth
     content_width_cm = 15.2
     latex_blocks = []
     if question_block:
@@ -148,14 +178,13 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     footer_latex = (
         f"\\begin{{minipage}}{{{content_width_cm}cm}}\n"
-        f"\\vspace{{0.3em}}\n" # Reduced padding
+        f"\\vspace{{0.3em}}\n"
         f"\\noindent\\hrulefill \\par\n"
-        f"\\vspace{{0.4em}}\n" # Reduced padding
+        f"\\vspace{{0.4em}}\n"
         f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
-    # Tightened from 1.5em to 0.7em vertical separation for mobile views
     body_content = "\n\\par\\vspace{0.7em}\n".join(latex_blocks)
 
     watermark_tikz = (
@@ -166,7 +195,6 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         f"\\end{{tikzpicture}}"
     )
 
-    # Tightened Geometry bounds (left/right=0.3cm) and minimized PreviewBorder (4pt) for mobile scaling
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -181,9 +209,9 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\sloppy
 \\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
+\\pagecolor{white}
 \\begin{preview}
 \\begin{minipage}{15.4cm}
-\\pagecolor{white}
 \\centering
 \\noindent\\rule{15.4cm}{0pt}\\par
 __WATERMARK_TIKZ__
@@ -195,7 +223,6 @@ __BODY_CONTENT__
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
-    # Custom tight dimensions for standalone diagram-only view (paperwidth=14.0cm, PreviewBorder=4pt)
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -210,9 +237,8 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\sloppy
 \\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
-\\begin{preview}
 \\pagecolor{white}
-\\centering
+\\begin{preview}
 \\begin{minipage}{13.6cm}
   \\centering
   __FIGURE_BLOCK__\\par
@@ -253,7 +279,6 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"\\end{{tikzpicture}}"
     )
 
-    # Tightened Widescreen template bounds to prevent horizontal/vertical padding issues
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -268,9 +293,9 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\openup 1em
 \\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
+\\pagecolor{white}
 \\begin{preview}
 \\begin{minipage}{15.4cm}
-\\pagecolor{white}
 \\centering
 \\noindent\\rule{15.4cm}{0pt}\\par
 __WATERMARK_TIKZ__
@@ -315,7 +340,7 @@ __DIAGRAM_BLOCK__
         \\begin{tabular}{@{}c@{}}
             Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
         \\end{tabular}
-    }
+                    }
 \\end{minipage}
 \\end{minipage}
 \\end{preview}

@@ -228,14 +228,18 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     # Render score card section dynamically if turned on
     score_segment = ""
     if show_perf and perf_card:
-        if not perf_card['first_try']:
-            marks_notice = "⚠️ <i>Practice Mode: Score locked. No marks awarded.</i>"
-        elif perf_card['is_bonus_winner']:
-            marks_notice = "⚡ <b>EARLY BIRD BONUS!</b> You solved this first! <b>(+10 Marks)</b>"
-        elif perf_card['marks_awarded'] > 0:
-            marks_notice = "🟩 <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b>"
+        is_repeat = not perf_card.get('first_try', True)
+        orig_marks = perf_card.get('marks_awarded', 0)
+        is_bonus = perf_card.get('is_bonus_winner', False) or (orig_marks == 10)
+
+        status_prefix = "⚠️ <b>Score Locked (Previously Answered):</b><br/>" if is_repeat else ""
+
+        if is_bonus:
+            marks_notice = f"{status_prefix}⚡ <b>EARLY BIRD BONUS!</b> You solved this first! <b>(+10 Marks)</b>"
+        elif orig_marks > 0:
+            marks_notice = f"{status_prefix}🟩 <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b>"
         else:
-            marks_notice = "🟥 <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
+            marks_notice = f"{status_prefix}🟥 <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
 
         mastery = get_grade_mastery_title(perf_card['total_marks'])
         next_rank_info = get_next_rank_info(perf_card['total_marks'])
@@ -265,14 +269,14 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
-    # --- Standalone Followup Continuation Responses (Unified and Combined) ---
+    # --- Standalone Followup Continuation Responses ---
     if continuation:
         parts = []
         if show_derivation:
             parts.append(f"<b>📖 DERIVATION DETAILS:</b>\n{general_principle}\n{step_by_step}\n{breakdown_block}")
         if show_perf and score_segment:
             parts.append(score_segment)
-            
+
         connection_header = f"<b>📝 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
         return f"{connection_header}\n" + "\n\n".join(parts)
 
@@ -293,7 +297,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     user_val = q['options'][user_idx] if user_idx < len(q['options']) else "Unknown"
     correct_val = q['options'][correct_idx]
 
-    # Displays selection letters alongside text values
     status_block = (
         f"<hr/>\n"
         f"🎯 <b>Your Selection:</b> {user_letter} │ {lite_math(user_val)} ({user_status})\n"
@@ -338,19 +341,19 @@ def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: boo
     """Generates a composite, binary state-driven keyboard mapping the exact on/off layout combination."""
     prefix = "toggle_photo" if is_photo else "toggle"
     buttons = []
-    
+
     # Derivation toggle button
     if show_derivation:
         buttons.append([InlineKeyboardButton("↩️ HIDE SOLUTION DETAILS", callback_data=f"{prefix}|{d_id}|{user_selection}|0|{1 if show_perf else 0}")])
     else:
         buttons.append([InlineKeyboardButton("📖 REVEAL COMPLETE DERIVATION", callback_data=f"{prefix}|{d_id}|{user_selection}|1|{1 if show_perf else 0}")])
-        
+
     # Performance card toggle button
     if show_perf:
         buttons.append([InlineKeyboardButton("↩️ HIDE PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|0")])
     else:
         buttons.append([InlineKeyboardButton("📊 VIEW PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|1")])
-        
+
     buttons.append([InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")])
     return InlineKeyboardMarkup(buttons)
 

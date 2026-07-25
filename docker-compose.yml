@@ -15,6 +15,8 @@ services:
       - kroki
     stdin_open: true
     tty: true
+    environment:
+      - KROKI_URL=http://kroki:8000
     env_file:
       - .env
     volumes:

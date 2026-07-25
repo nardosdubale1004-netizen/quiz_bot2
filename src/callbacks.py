@@ -7,9 +7,9 @@ from src.config import CONFIG, Style, LOCKOUT_MESSAGES
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.database import (
-    process_user_score, 
-    db_set_user_grade, 
-    db_update_private_message_id, 
+    process_user_score,
+    db_set_user_grade,
+    db_update_private_message_id,
     db_update_response_view_state,
     db_get_user_response
 )
@@ -51,26 +51,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-    mid_key = next((k for k, v in tracks.items() if k.isdigit() and str(v.get('display_id')) == d_id), None)
+    # Sub-millisecond targeted track lookup
+    track = await asyncio.to_thread(engine.db_get_track_by_display_id, d_id)
 
-    if not mid_key:
+    if not track:
         print(f" {Style.RED}└─ [ERROR] No message ID tracked for Ref ID: {d_id}{Style.RESET}")
         await query.answer("This quiz session has ended.", show_alert=True)
         return
 
-    track_status = tracks[mid_key].get('status')
+    mid_key = track['message_id']
+    track_status = track.get('status')
     if track_status != "active":
         print(f" {Style.YELLOW}└─ [WARNING] Blocked click: Quiz status is '{track_status}' (not active).{Style.RESET}")
         await query.answer("This quiz session has ended.", show_alert=True)
         return
 
-    await asyncio.to_thread(engine.refresh_database)
-    all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
-    question_data = all_qs.get(tracks[mid_key]['q_id'])
+    # Targeted fast question lookup
+    question_data = await asyncio.to_thread(engine.db_get_question_by_id, track['q_id'])
 
     if not question_data:
-        print(f" {Style.RED}└─ [ERROR] Question ID '{tracks[mid_key]['q_id']}' not found in active database.{Style.RESET}")
+        print(f" {Style.RED}└─ [ERROR] Question ID '{track['q_id']}' not found.{Style.RESET}")
         await query.answer("Error: Question data not found.")
         return
 
@@ -86,17 +86,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
-            # Use mid_key for state synchronization
-            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
+            
+            # Record scores with default view-state configuration in a single round-trip
+            perf_card = await asyncio.to_thread(
+                process_user_score, 
+                user_id, 
+                mid_key, 
+                question_data['id'], 
+                is_correct, 
+                user_selection, 
+                private_message_id=None, 
+                show_derivation=True, 
+                show_perf=False
+            )
 
-            active_is_photo = (tracks[mid_key].get('msg_type') == "photo")
+            # Override local state if database contains an earlier locked choice
+            if perf_card and "selected_option" in perf_card:
+                user_selection = perf_card["selected_option"]
+                is_correct = (user_selection == question_data['correct_option'])
+
+            active_is_photo = (track.get('msg_type') == "photo")
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)
             retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data=f"reset|{d_id}")]])
 
             # Check if active interface currently displays the lockout warning
             has_lockout = check_message_has_lockout(user_id, query.message)
 
-            if has_lockout:
+            if has_lockout or (perf_card and not perf_card.get("first_try", True)):
                 explanation_html = warning_notice + explanation_html
 
             if active_is_photo:
@@ -117,7 +133,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
                             # Send detailed derivation followup
                             full_text = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card, continuation=True)
-                            if has_lockout:
+                            if has_lockout or (perf_card and not perf_card.get("first_try", True)):
                                 full_text = warning_notice + full_text
 
                             follow_up = await send_rich_message_safe(
@@ -126,7 +142,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                                 html_content=full_text,
                                 reply_to_message_id=query.message.message_id
                             )
-                            await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                            await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", d_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
                             return
                         else:
                             await query.edit_message_caption(caption=convert_to_legacy_html(explanation_html), reply_markup=retry_kb, parse_mode="HTML")
@@ -150,10 +166,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             await query.answer("Updating View...")
 
-            # Use mid_key for state synchronization
-            await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
+            # Combined Call: Performs scoring check and state writing in one execution context
+            perf_card = await asyncio.to_thread(
+                process_user_score, 
+                user_id, 
+                mid_key, 
+                question_data['id'], 
+                (user_selection == question_data['correct_option']), 
+                user_selection,
+                show_derivation=show_derivation,
+                show_perf=show_perf
+            )
 
-            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
+            # Override local state if database contains an earlier locked choice
+            if perf_card and "selected_option" in perf_card:
+                user_selection = perf_card["selected_option"]
 
             explanation_html = UIFactory.build_answered_view(
                 question_data,
@@ -167,7 +194,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             # Detect lockout notice presence
             has_lockout = check_message_has_lockout(user_id, query.message)
 
-            if has_lockout:
+            if has_lockout or (perf_card and not perf_card.get("first_try", True)):
                 explanation_html = warning_notice + explanation_html
 
             kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=False)
@@ -188,21 +215,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             await query.answer("Updating Solution Card...")
 
-            # Use mid_key for state synchronization
-            await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
+            # Combined Call: Performs scoring check and state writing in one execution context
+            perf_card = await asyncio.to_thread(
+                process_user_score, 
+                user_id, 
+                mid_key, 
+                question_data['id'], 
+                (user_selection == question_data['correct_option']), 
+                user_selection,
+                show_derivation=show_derivation,
+                show_perf=show_perf
+            )
 
-            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
+            # Override local state if database contains an earlier locked choice
+            if perf_card and "selected_option" in perf_card:
+                user_selection = perf_card["selected_option"]
 
             kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=True)
             await query.message.edit_reply_markup(reply_markup=kb)
 
             if not show_derivation and not show_perf:
-                if mid_key and tracks[mid_key].get("followup_mid"):
+                if mid_key and track.get("followup_mid"):
                     try:
-                        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
+                        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=track["followup_mid"])
                     except Exception:
                         pass
-                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
+                    await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", d_id, track["type"], track["msg_type"], followup_mid=None)
             else:
                 full_text = UIFactory.build_answered_view(
                     question_data,
@@ -217,15 +255,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 # Detect lockout notice presence
                 has_lockout = check_message_has_lockout(user_id, query.message)
 
-                if has_lockout:
+                if has_lockout or (perf_card and not perf_card.get("first_try", True)):
                     full_text = warning_notice + full_text
 
-                if mid_key and tracks[mid_key].get("followup_mid"):
+                if mid_key and track.get("followup_mid"):
                     try:
                         await edit_rich_message_safe(
                             context.bot,
                             chat_id=query.message.chat_id,
-                            message_id=tracks[mid_key]["followup_mid"],
+                            message_id=track["followup_mid"],
                             html_content=full_text,
                             reply_markup=None
                         )
@@ -236,7 +274,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                             html_content=full_text,
                             reply_to_message_id=query.message.message_id
                         )
-                        await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                        await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", d_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
                 else:
                     follow_up = await send_rich_message_safe(
                         context.bot,
@@ -244,17 +282,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         html_content=full_text,
                         reply_to_message_id=query.message.message_id
                     )
-                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                    await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", d_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
             return
 
         elif action == "reset":
             await query.answer("Resetting view...")
-            if mid_key and tracks[mid_key].get("followup_mid"):
+            if mid_key and track.get("followup_mid"):
                 try:
-                    await context.bot.delete_message(chat_id=query.message.chat_id, message_id=tracks[mid_key]["followup_mid"])
+                    await context.bot.delete_message(chat_id=query.message.chat_id, message_id=track["followup_mid"])
                 except Exception:
                     pass
-                await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
+                await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", d_id, track["type"], track["msg_type"], followup_mid=None)
 
             img_url, caption = UIFactory.create_question_assets(question_data, d_id)
             orig_kb = UIFactory.build_keyboard(question_data, d_id)

@@ -108,8 +108,8 @@ async def check_and_publish_scheduled(app):
     print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
     channel = CONFIG.get("channel")
 
-    tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-    last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
+    # Replaced table scan with single scalar query
+    last_seq = await asyncio.to_thread(engine.db_get_max_display_id) + 1
 
     try:
         has_tikz = UIFactory.has_real_diagram(q)
@@ -166,16 +166,17 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-            mid_key = next((k for k, v in tracks.items() if k.isdigit() and int(v.get('display_id')) == display_id), None)
+            # Targeted sub-millisecond query
+            track = await asyncio.to_thread(engine.db_get_track_by_display_id, display_id)
 
-            if not mid_key:
+            if not track:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
-            await asyncio.to_thread(engine.refresh_database)
-            all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
-            question_data = all_qs.get(tracks[mid_key]['q_id'])
+            mid_key = track['message_id']
+
+            # Targeted single-question query
+            question_data = await asyncio.to_thread(engine.db_get_question_by_id, track['q_id'])
 
             if not question_data:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
@@ -227,10 +228,10 @@ async def start_command(update: Update, context):
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
                                 photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
-                                
+
                                 # Track as lockout message in-memory
                                 LOCKOUT_MESSAGES.add((user_id, m.message_id))
-                                
+
                                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
 
                                 # Restore expanded followups immediately on reload with warning notice
@@ -244,15 +245,15 @@ async def start_command(update: Update, context):
                                         html_content=full_text,
                                         reply_to_message_id=m.message_id
                                     )
-                                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", display_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
+                                    await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", display_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
                                 return
 
                 reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=False)
                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
-                
+
                 # Track as lockout message in-memory
                 LOCKOUT_MESSAGES.add((user_id, f_m.message_id))
-                
+
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                 return
 
