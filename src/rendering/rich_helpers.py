@@ -71,7 +71,6 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
     has_media = media_bytes is not None
 
     if CONFIG.get("disable_native_rich_messages", False):
-        print(f"{Style.YELLOW}[RICH MSG] Native rich messages disabled globally via config. Falling back directly to legacy HTML.{Style.RESET}")
         legacy_html = convert_to_legacy_html(normalized_content)
         if has_media:
             return await bot.send_photo(
@@ -83,8 +82,6 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                 chat_id=chat_id, text=legacy_html, parse_mode="HTML",
                 reply_markup=reply_markup, reply_to_message_id=reply_to_message_id, **kwargs
             )
-
-    print(f"\033[96m[RICH MESSENGER]\033[0m Attempting rich delivery to Chat: {chat_id} (media: {has_media})")
 
     for method_name in ["send_rich_message", "sendRichMessage"]:
         if hasattr(bot, method_name):
@@ -110,8 +107,8 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                     reply_to_message_id=reply_to_message_id,
                     **kwargs
                 )
-            except Exception as e:
-                print(f"{Style.YELLOW}[RICH MSG] Native client call failed: {e}. Trying HTTP raw fallback...{Style.RESET}", flush=True)
+            except Exception:
+                pass
 
     try:
         url = f"https://api.telegram.org/bot{bot.token}/sendRichMessage"
@@ -150,12 +147,9 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                 resp_json = resp.json()
                 if resp_json.get("ok"):
                     return Message.de_json(resp_json["result"], bot)
-            else:
-                print(f"[RICH MSG] sendRichMessage raw HTTP returned status {resp.status_code}: {resp.text}", flush=True)
-    except Exception as e:
-        print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
+    except Exception:
+        pass
 
-    print(f"{Style.YELLOW}[RICH MSG] Falling back to standard HTML legacy delivery.{Style.RESET}", flush=True)
     legacy_html = convert_to_legacy_html(normalized_content)
     if has_media:
         return await bot.send_photo(
@@ -179,8 +173,6 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
             reply_markup=reply_markup, **kwargs
         )
 
-    print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id}")
-
     try:
         url = f"https://api.telegram.org/bot{bot.token}/editMessageText"
         payload = {
@@ -200,18 +192,16 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
                 resp_json = resp.json()
                 if resp_json.get("ok"):
                     return Message.de_json(resp_json["result"], bot)
-            else:
-                print(f"[RICH MSG] editMessageText raw endpoint returned status {resp.status_code}: {resp.text}", flush=True)
-    except Exception as e:
-        print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
+    except Exception:
+        pass
 
     try:
         return await bot.edit_message_text(
             chat_id=chat_id, message_id=message_id, text=" ",
             api_kwargs={"rich_message": {"html": rich_html}}, reply_markup=reply_markup, **kwargs
         )
-    except Exception as e:
-        print(f"{Style.YELLOW}[RICH MSG] editMessageText with api_kwargs failed: {e}. Trying legacy HTML edit...{Style.RESET}", flush=True)
+    except Exception:
+        pass
 
     legacy_html = convert_to_legacy_html(normalized_content)
     return await bot.edit_message_text(
