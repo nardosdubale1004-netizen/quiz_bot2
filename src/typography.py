@@ -78,7 +78,7 @@ def convert_subscripts(text):
 
 def replace_fractions(text):
     """
-    Recursively replaces LaTeX fractions with readable unicode equivalents, 
+    Recursively replaces LaTeX fractions with readable unicode equivalents,
     accounting for nested braces and functions.
     """
     iterations = 0
@@ -88,7 +88,7 @@ def replace_fractions(text):
         if not match:
             break
         start_idx = match.start()
-        
+
         # Balance check numerator
         num_start = start_idx + len("\\frac{") - 1
         brace_count = 0
@@ -103,15 +103,15 @@ def replace_fractions(text):
                     break
         if num_end == -1:
             break
-            
+
         num_content = text[num_start+1:num_end]
-        
+
         # Balance check denominator
         denom_search_start = num_end + 1
         denom_match = re.match(r'\s*\{', text[denom_search_start:])
         if not denom_match:
             break
-            
+
         denom_start = denom_search_start + denom_match.end() - 1
         brace_count = 0
         denom_end = -1
@@ -125,20 +125,20 @@ def replace_fractions(text):
                     break
         if denom_end == -1:
             break
-            
+
         denom_content = text[denom_start+1:denom_end]
-        
+
         # Recursively parse internal fractions
         num_content = replace_fractions(num_content)
         denom_content = replace_fractions(denom_content)
-        
+
         if len(num_content) == 1 and len(denom_content) == 1:
             replacement = f"{num_content}/{denom_content}"
         else:
             num_str = num_content if (num_content.startswith('(') and num_content.endswith(')')) or len(num_content) == 1 else f"({num_content})"
             denom_str = denom_content if (denom_content.startswith('(') and denom_content.endswith(')')) or len(denom_content) == 1 else f"({denom_content})"
             replacement = f"{num_str}/{denom_str}"
-            
+
         text = text[:start_idx] + replacement + text[denom_end+1:]
     return text
 
@@ -153,7 +153,7 @@ def replace_sqrts(text):
         if not match:
             break
         start_idx = match.start()
-        
+
         start_brace = start_idx + len("\\sqrt{") - 1
         brace_count = 0
         end_brace = -1
@@ -167,11 +167,11 @@ def replace_sqrts(text):
                     break
         if end_brace == -1:
             break
-            
+
         content = text[start_brace+1:end_brace]
         content = replace_sqrts(content)
         content = replace_fractions(content)
-        
+
         replacement = f"√({content})"
         text = text[:start_idx] + replacement + text[end_brace+1:]
     return text

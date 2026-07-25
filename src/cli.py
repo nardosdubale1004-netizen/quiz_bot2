@@ -146,8 +146,10 @@ async def admin_panel(app, engine: QuizEngine):
                 for idx in indices:
                     if 0 <= idx < len(target_list): to_send.append(target_list[idx])
 
-            # Dynamically lookup the latest maximum sequential display identifier directly from database
-            last_seq = await asyncio.to_thread(engine.db_get_max_display_id)
+            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
+            last_seq = tracks.get("last_seq", 100)
+            if tracks:
+                last_seq = max(v.get('display_id', 100) for v in tracks.values())
 
             for q in to_send:
                 last_seq += 1
@@ -195,6 +197,10 @@ async def admin_panel(app, engine: QuizEngine):
                     traceback.print_exc()
                     print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
                     await asyncio.sleep(2.0)
+
+            local_sent_tracks = engine.load_json("logs/sent_tracks.json")
+            local_sent_tracks["last_seq"] = last_seq
+            engine.save_json("logs/sent_tracks.json", local_sent_tracks)
 
         elif choice == "3":
             while True:

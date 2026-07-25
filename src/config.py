@@ -3,6 +3,7 @@ import os
 import json
 from dotenv import load_dotenv
 
+# Load local .env variables during manual development runs
 load_dotenv()
 
 class Style:
@@ -23,13 +24,13 @@ if os.path.exists("config.json"):
     except Exception:
         pass
 
-# Read configurations with environment variables taking priority
+# Read configurations securely with local fallbacks
 CONFIG = {
     "token": os.getenv("BOT_TOKEN") or local_config.get("token"),
     "channel": os.getenv("CHANNEL_ID") or local_config.get("channel"),
     "database_url": os.getenv("DATABASE_URL") or local_config.get("database_url"),
-    "kroki_url": os.getenv("KROKI_URL") or local_config.get("kroki_url") or "https://kroki.io",
-    "disable_native_rich_messages": os.getenv("DISABLE_NATIVE_RICH_MESSAGES", "False").lower() in ("true", "1", "yes") or local_config.get("disable_native_rich_messages", False)
+    "kroki_url": os.getenv("KROKI_URL") or local_config.get("kroki_url") or "https://kroki.io"
 }
 
+# --- Shared In-Memory Tracking for Lockout States ---
 LOCKOUT_MESSAGES = set()

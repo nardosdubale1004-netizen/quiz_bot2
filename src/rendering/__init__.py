@@ -62,13 +62,24 @@ class UIFactory:
             img_url = None
 
         from src.typography import beautify_markdown_math
-        from src.rendering.latex_templates import get_day_from_tags
-        from src.rendering.rich_helpers import convert_to_legacy_html
 
+        caption_q = (
+            f"\n"
+            f"<blockquote>"
+            f"<b>PROBLEM PROPOSITION</b>\n"
+            f"{beautify_markdown_math(q['question'])}"
+            f"</blockquote>"
+            f"\n"
+        )
+
+        if has_tikz:
+            caption_q += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
+
+        from src.rendering.latex_templates import get_day_from_tags
         day_str = get_day_from_tags(q.get('tags', []))
+
         subject = beautify_markdown_math(q.get('subject','').upper())
         topic = beautify_markdown_math(q.get('topic','General'))
-        
         header = (
             f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
             f"📐 <b>{topic}</b> • 📅 {day_str}\n"
@@ -81,24 +92,6 @@ class UIFactory:
             f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
             f"{' '.join(hashtag_list)}"
         )
-
-        # Truncation logic to protect against the Telegram 1024 caption limit
-        raw_question = beautify_markdown_math(q['question'])
-        caption_q_template = "\n<blockquote><b>PROBLEM PROPOSITION</b>\n{}</blockquote>\n"
-        if has_tikz:
-            caption_q_template += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
-
-        full_caption_text = f"{header}{caption_q_template.format(raw_question)}{footer}"
-        legacy_html_len = len(convert_to_legacy_html(full_caption_text))
-
-        # Check against Telegram 1024-character photo caption limits (allowing safe padding room)
-        if legacy_html_len > 1010:
-            excess = legacy_html_len - 1010
-            allowed_question_len = max(100, len(raw_question) - excess)
-            truncated_question = cls.smart_truncate_html(raw_question, allowed_question_len)
-            caption_q = caption_q_template.format(truncated_question)
-        else:
-            caption_q = caption_q_template.format(raw_question)
-
         final_caption = f"{header}{caption_q}{footer}"
+
         return img_url, final_caption

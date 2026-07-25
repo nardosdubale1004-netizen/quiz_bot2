@@ -9,32 +9,55 @@ def is_complex(text):
     return any(t in str(text) for t in triggers)
 
 def has_real_diagram(q) -> bool:
+    """
+    Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram.
+    Guarantees math formulas use Telegram's native rich text rendering unless a graph is present.
+    """
     if not q.get("latex"):
+        print(f"\033[93m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} has no 'latex' payload. Bypassing compilation (diagram: False).")
         return False
+
     if q.get("force_image") or q.get("force_latex", False):
+        print(f"\033[92m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} forces image output (diagram: True).")
         return True
+
     tikz = q.get("latex")
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
+        print(f"\033[93m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} contains empty tikz block. Bypassing compilation (diagram: False).")
         return False
+
     drawing_triggers = [
         r"\draw", r"\fill", r"\node", r"\addplot", r"\path",
         r"\grid", r"\axis", r"\circle", r"\ellipse", r"\rectangle",
         r"tikzpicture", r"pgfplots"
     ]
-    return any(trigger in tikz for trigger in drawing_triggers)
+    has_trigger = any(trigger in tikz for trigger in drawing_triggers)
+    print(f"\033[96m[DIAGRAM SAFE-GUARD]\033[0m Checked {q.get('id')} for visual triggers ---> result: {has_trigger}")
+    return has_trigger
 
 def has_explanation_diagram(q) -> bool:
+    """
+    Determines if the explanation itself contains a dedicated diagram (e.g. TikZ code).
+    Avoids generating images for explanations that are purely text-based.
+    """
     if not q:
         return False
+
     if q.get("explanation_latex"):
         return True
+
     exp = q.get("poll_explanation", {})
     if not isinstance(exp, dict):
         return False
+
     why = exp.get("why", "")
     rule = exp.get("rule", "")
-    return "\\begin{tikzpicture}" in str(why) or "\\begin{tikzpicture}" in str(rule)
+
+    if "\\begin{tikzpicture}" in str(why) or "\\begin{tikzpicture}" in str(rule):
+        return True
+
+    return False
 
 def escape_latex(text: str) -> str:
     if not text:
@@ -81,6 +104,7 @@ def build_figure_block(q, add_strut=False):
         return None
     tikz = q["latex"].strip()
     tikz = re.sub(r'\n\s*\n', '\n', tikz)
+
     tikz = re.sub(r'\\makebox\s*(?:\[[^\]]*\])*\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\mbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\hbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
@@ -103,43 +127,18 @@ def build_figure_block(q, add_strut=False):
 
     tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
     tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {$(1,2,2)$}")
-
-    def merge_tikz_brackets(m):
-        options_str = m.group(1)
-        brackets = re.findall(r'\[([^\]]*)\]', options_str)
-        merged_opts = []
-        scale = 1.0
-        transform_shape = False
-        for b in brackets:
-            for opt in b.split(","):
-                opt = opt.strip()
-                if "scale=" in opt:
-                    try:
-                        scale *= float(opt.split("=")[1].strip())
-                    except ValueError:
-                        pass
-                elif opt == "transform shape":
-                    transform_shape = True
-                elif opt:
-                    merged_opts.append(opt)
-        if scale != 1.0:
-            merged_opts.append(f"scale={scale:.3f}")
-        if transform_shape:
-            merged_opts.append("transform shape")
-        return f"\\begin{{tikzpicture}}[{', '.join(merged_opts)}]"
-
-    tikz = re.sub(r'\\begin\{tikzpicture\}((?:\s*\[[^\]]*\])+)', merge_tikz_brackets, tikz)
     return re.sub(r'\n\s*\n', '\n', tikz)
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str, display_id: str = None) -> str:
+    # Adjusted to 15.2cm width to fit tightly inside 16.0cm paperwidth
     content_width_cm = 15.2
     latex_blocks = []
     if question_block:
-        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{question_block}\\par\n\\end{{minipage}}")
+        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{question_block}\n\\end{{minipage}}")
     if figure_block:
-        latex_blocks.append(f"\\par\\noindent\\centering\\leavevmode\\par\n{figure_block}\\par")
+        latex_blocks.append(f"\\par\\noindent\\centering\\leavevmode\\par\n{figure_block}\n\\par")
     if options_block:
-        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{options_block}\\par\n\\end{{minipage}}")
+        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{options_block}\n\\end{{minipage}}")
 
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     if display_id:
@@ -149,14 +148,15 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     footer_latex = (
         f"\\begin{{minipage}}{{{content_width_cm}cm}}\n"
-        f"\\vspace{{0.5em}}\n"
+        f"\\vspace{{0.3em}}\n" # Reduced padding
         f"\\noindent\\hrulefill \\par\n"
-        f"\\vspace{{0.5em}}\n"
-        f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\\par\n"
+        f"\\vspace{{0.4em}}\n" # Reduced padding
+        f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
-    body_content = "\n\\par\\vspace{1.0em}\n".join(latex_blocks)
+    # Tightened from 1.5em to 0.7em vertical separation for mobile views
+    body_content = "\n\\par\\vspace{0.7em}\n".join(latex_blocks)
 
     watermark_tikz = (
         f"\\begin{{tikzpicture}}[overlay]\n"
@@ -166,13 +166,14 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         f"\\end{{tikzpicture}}"
     )
 
+    # Tightened Geometry bounds (left/right=0.3cm) and minimized PreviewBorder (4pt) for mobile scaling
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
-\\usepackage[paperwidth=16.5cm, paperheight=150cm, left=0.5cm, right=0.5cm, top=0.5cm, bottom=0.5cm]{geometry}
+\\usepackage[paperwidth=16.0cm, paperheight=120cm, left=0.3cm, right=0.3cm, top=0.3cm, bottom=0.3cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{10pt}
+\\setlength{\\PreviewBorder}{4pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -180,11 +181,11 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 \\sloppy
 \\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
-\\pagecolor{white}
 \\begin{preview}
-\\begin{minipage}{15.5cm}
+\\begin{minipage}{15.4cm}
+\\pagecolor{white}
 \\centering
-\\par
+\\noindent\\rule{15.4cm}{0pt}\\par
 __WATERMARK_TIKZ__
 __BODY_CONTENT__
 \\end{minipage}
@@ -194,13 +195,14 @@ __BODY_CONTENT__
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
+    # Custom tight dimensions for standalone diagram-only view (paperwidth=14.0cm, PreviewBorder=4pt)
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox, varwidth}
-\\usepackage[paperwidth=14.5cm, paperheight=150cm, left=0.5cm, right=0.5cm, top=0.5cm, bottom=0.5cm]{geometry}
+\\usepackage[paperwidth=14.0cm, paperheight=120cm, left=0.2cm, right=0.2cm, top=0.2cm, bottom=0.2cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{10pt}
+\\setlength{\\PreviewBorder}{4pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -208,16 +210,17 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
 \\sloppy
 \\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
-\\pagecolor{white}
 \\begin{preview}
-\\begin{minipage}{13.5cm}
+\\pagecolor{white}
+\\centering
+\\begin{minipage}{13.6cm}
   \\centering
   __FIGURE_BLOCK__\\par
-  \\vspace{1.0em}
+  \\vspace{0.8em}
   {\\color{black!70}\\bfseries\\scriptsize
     \\begin{tabular}{@{}c@{}}
       Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
-    \\end{tabular}\\par
+    \\end{tabular}
   }
 \\end{minipage}
 \\end{preview}
@@ -250,13 +253,14 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"\\end{{tikzpicture}}"
     )
 
+    # Tightened Widescreen template bounds to prevent horizontal/vertical padding issues
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
 \\usepackage{amsmath, amssymb, pgfplots, enumitem, xcolor, adjustbox}
-\\usepackage[paperwidth=16.5cm, paperheight=150cm, left=0.5cm, right=0.5cm, top=0.5cm, bottom=0.5cm]{geometry}
+\\usepackage[paperwidth=16.0cm, paperheight=120cm, left=0.3cm, right=0.3cm, top=0.3cm, bottom=0.3cm]{geometry}
 \\usepackage[active, tightpage]{preview}
-\\setlength{\\PreviewBorder}{10pt}
+\\setlength{\\PreviewBorder}{4pt}
 \\pgfplotsset{compat=1.18, premium_style/.style={axis lines=middle, grid=both, grid style={line width=.3pt, draw=gray!20, dashed}, tick label style={font=\\small}, label style={font=\\small}, every axis line/.append style={-Stealth, line width=1pt, draw=black!80}, every tick/.append style={line width=0.6pt, draw=black!80}, samples=50}}
 \\usetikzlibrary{arrows.meta, calc, patterns}
 \\binoppenalty=10000
@@ -264,11 +268,11 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
 \\openup 1em
 \\newcommand{\\telegramicon}{\\scalebox{0.9}{\\color{blue!70!cyan}$\\blacktriangleright$}}
 \\begin{document}
-\\pagecolor{white}
 \\begin{preview}
-\\begin{minipage}{15.5cm}
+\\begin{minipage}{15.4cm}
+\\pagecolor{white}
 \\centering
-\\par
+\\noindent\\rule{15.4cm}{0pt}\\par
 __WATERMARK_TIKZ__
 \\begin{minipage}{14.8cm}
     \\flushleft
@@ -310,8 +314,8 @@ __DIAGRAM_BLOCK__
     \\centering {\\color{gray}\\bfseries\\scriptsize
         \\begin{tabular}{@{}c@{}}
             Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
-        \\end{tabular}\\par
-                    }
+        \\end{tabular}
+    }
 \\end{minipage}
 \\end{minipage}
 \\end{preview}
@@ -371,11 +375,13 @@ def create_explanation_assets(q, user_idx, display_id):
     correct_letter = letters[correct_idx]
 
     has_tikz = has_real_diagram(q)
+
     latex_code = None
     if has_tikz:
         figure_block = build_figure_block(q, add_strut=False)
         if figure_block:
             latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
+            print(f"\033[92m[ASSETS DEBUG]\033[0m Diagram rendering initiated for explanation canvas REF: {display_id}")
         else:
             has_tikz = False
 
