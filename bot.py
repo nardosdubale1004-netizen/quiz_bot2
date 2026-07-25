@@ -106,54 +106,58 @@ async def handle_http_request(reader, writer, app):
             pass
 
 async def check_and_publish_scheduled(app):
-    q = await asyncio.to_thread(db_get_pending_scheduled_question)
-    if not q:
-        return
+    """Background service that continuously scans the cloud database for pending releases."""
+    print(f"{Style.GREEN}[SCHEDULER] Background service started successfully.{Style.RESET}", flush=True)
+    while True:
+        try:
+            q = await asyncio.to_thread(db_get_pending_scheduled_question)
+            if q:
+                print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
+                channel = CONFIG.get("channel")
 
-    print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
-    channel = CONFIG.get("channel")
+                # Retrieve the next valid sequence identifier safely from database state
+                last_seq = await asyncio.to_thread(engine.db_get_max_display_id) + 1
 
-    # Replaced table scan with single scalar query
-    last_seq = await asyncio.to_thread(engine.db_get_max_display_id) + 1
+                has_tikz = UIFactory.has_real_diagram(q)
+                if not has_tikz:
+                    poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
+                    m = await app.bot.send_poll(
+                        chat_id=channel,
+                        question=lite_math(q['question'])[:290],
+                        options=[lite_math(o)[:90] for o in q['options']],
+                        type=Poll.QUIZ,
+                        correct_option_id=q['correct_option'],
+                        explanation=poll_hint,
+                        explanation_parse_mode="HTML"
+                    )
+                    msg_type = "poll"
+                    type_str = "native"
+                else:
+                    img_url, caption = UIFactory.create_question_assets(q, last_seq)
+                    kb = UIFactory.build_keyboard(q, last_seq)
 
-    try:
-        has_tikz = UIFactory.has_real_diagram(q)
-        if not has_tikz:
-            poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
-            m = await app.bot.send_poll(
-                chat_id=channel,
-                question=lite_math(q['question'])[:290],
-                options=[lite_math(o)[:90] for o in q['options']],
-                type=Poll.QUIZ,
-                correct_option_id=q['correct_option'],
-                explanation=poll_hint,
-                explanation_parse_mode="HTML"
-            )
-            msg_type = "poll"
-            type_str = "native"
-        else:
-            img_url, caption = UIFactory.create_question_assets(q, last_seq)
-            kb = UIFactory.build_keyboard(q, last_seq)
+                    media_bytes = None
+                    if img_url:
+                        async with httpx.AsyncClient() as client:
+                            resp = await fetch_kroki_image(client, img_url)
+                            if resp and resp.status_code == 200:
+                                media_bytes = resp.content
+                            else:
+                                raise Exception("Kroki failed to compile scheduled asset.")
 
-            media_bytes = None
-            if img_url:
-                async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url)
-                    if resp and resp.status_code == 200:
-                        media_bytes = resp.content
-                    else:
-                        raise Exception("Kroki failed to compile scheduled asset.")
+                    m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
+                    msg_type = "photo" if img_url else "text"
+                    type_str = "premium"
 
-            m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
-            msg_type = "photo" if img_url else "text"
-            type_str = "premium"
-
-        await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
-        await asyncio.to_thread(db_mark_question_as_sent, q['id'])
-        print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
-    except Exception as e:
-        traceback.print_exc()
-        print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
+                await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
+                await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"{Style.RED}[SCHEDULER ERROR] Failed to complete scheduling sweeps: {e}{Style.RESET}", flush=True)
+        
+        # Scan the database every 60 seconds
+        await asyncio.sleep(60)
 
 async def start_command(update: Update, context):
     user_id = update.effective_user.id
@@ -392,6 +396,7 @@ async def run_cloud_server(app, port):
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
+    # Spawn the persistent scheduling sweep cycle as a background task
     asyncio.create_task(check_and_publish_scheduled(app))
 
     server = await asyncio.start_server(

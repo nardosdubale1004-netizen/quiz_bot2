@@ -86,17 +86,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
-            
+
             # Record scores with default view-state configuration in a single round-trip
             perf_card = await asyncio.to_thread(
-                process_user_score, 
-                user_id, 
-                mid_key, 
-                question_data['id'], 
-                is_correct, 
-                user_selection, 
-                private_message_id=None, 
-                show_derivation=True, 
+                process_user_score,
+                user_id,
+                mid_key,
+                question_data['id'],
+                is_correct,
+                user_selection,
+                private_message_id=None,
+                show_derivation=True,
                 show_perf=False
             )
 
@@ -168,11 +168,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             # Combined Call: Performs scoring check and state writing in one execution context
             perf_card = await asyncio.to_thread(
-                process_user_score, 
-                user_id, 
-                mid_key, 
-                question_data['id'], 
-                (user_selection == question_data['correct_option']), 
+                process_user_score,
+                user_id,
+                mid_key,
+                question_data['id'],
+                (user_selection == question_data['correct_option']),
                 user_selection,
                 show_derivation=show_derivation,
                 show_perf=show_perf
@@ -217,11 +217,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             # Combined Call: Performs scoring check and state writing in one execution context
             perf_card = await asyncio.to_thread(
-                process_user_score, 
-                user_id, 
-                mid_key, 
-                question_data['id'], 
-                (user_selection == question_data['correct_option']), 
+                process_user_score,
+                user_id,
+                mid_key,
+                question_data['id'],
+                (user_selection == question_data['correct_option']),
                 user_selection,
                 show_derivation=show_derivation,
                 show_perf=show_perf
@@ -298,20 +298,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             orig_kb = UIFactory.build_keyboard(question_data, d_id)
 
             if img_url:
-                question_block = UIFactory.build_question_text_block(question_data, d_id)
-                figure_block = UIFactory.build_figure_block(question_data, add_strut=True)
-                options_block = UIFactory.build_options_block(question_data)
-
-                compiled_latex = UIFactory.assemble_layout(UIFactory.WATERMARK, question_block, figure_block, options_block, display_id=d_id)
-                img_url_kroki = UIFactory.get_latex_url(compiled_latex)
-                async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
-                    if resp and resp.status_code == 200:
-                        legacy_caption = convert_to_legacy_html(caption)
-                        media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
-                        await query.edit_message_media(media=media, reply_markup=orig_kb)
-                    else:
-                        await query.answer("Renderer Error: Reset failed.", show_alert=True)
+                # Correctly compiles the diagram using the diagram-only layout configuration
+                fig_block = UIFactory.build_figure_block(question_data, add_strut=False)
+                if fig_block:
+                    compiled_latex = UIFactory.assemble_diagram_only_layout(UIFactory.WATERMARK, d_id, fig_block)
+                    img_url_kroki = UIFactory.get_latex_url(compiled_latex)
+                    async with httpx.AsyncClient() as client:
+                        resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
+                        if resp and resp.status_code == 200:
+                            legacy_caption = convert_to_legacy_html(caption)
+                            media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
+                            await query.edit_message_media(media=media, reply_markup=orig_kb)
+                        else:
+                            await query.answer("Renderer Error: Reset failed.", show_alert=True)
+                else:
+                    await query.answer("Renderer Error: Reset failed.", show_alert=True)
             else:
                 await edit_rich_message_safe(
                     context.bot,

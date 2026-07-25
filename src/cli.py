@@ -115,7 +115,7 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"    {i+1}. {diff_color} {m_tag}[{q['id']}] {q['question'][:45]}...")
 
             range_in = await cli.ask("<b>Selection (e.g. 1, 3-5 or easy:3): </b>")
-            
+
             # Crash-resistance safety guard to handle empty, interrupted, or cancelled inputs safely
             if not range_in:
                 continue
@@ -146,10 +146,8 @@ async def admin_panel(app, engine: QuizEngine):
                 for idx in indices:
                     if 0 <= idx < len(target_list): to_send.append(target_list[idx])
 
-            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-            last_seq = tracks.get("last_seq", 100)
-            if tracks:
-                last_seq = max(v.get('display_id', 100) for v in tracks.values())
+            # Dynamically lookup the latest maximum sequential display identifier directly from database
+            last_seq = await asyncio.to_thread(engine.db_get_max_display_id)
 
             for q in to_send:
                 last_seq += 1
@@ -198,10 +196,6 @@ async def admin_panel(app, engine: QuizEngine):
                     print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
                     await asyncio.sleep(2.0)
 
-            local_sent_tracks = engine.load_json("logs/sent_tracks.json")
-            local_sent_tracks["last_seq"] = last_seq
-            engine.save_json("logs/sent_tracks.json", local_sent_tracks)
-
         elif choice == "3":
             while True:
                 await asyncio.to_thread(engine.refresh_database)
@@ -240,7 +234,7 @@ async def admin_panel(app, engine: QuizEngine):
                     print(f"{Style.YELLOW}Syncing with Telegram...{Style.RESET}")
                     for mid, v in list(tracks.items()):
                         if mid.isdigit() and v.get("status") != "deleted":
-                            try: 
+                            try:
                                 await app.bot.forward_message(bot_info.id, engine.config['channel'], int(mid))
                             except Exception:
                                 await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
@@ -255,9 +249,9 @@ async def admin_panel(app, engine: QuizEngine):
                     try:
                         if curr_stat == "active":
                             if "followup_mid" in v:
-                                try: 
+                                try:
                                     await app.bot.delete_message(engine.config['channel'], int(v["followup_mid"]))
-                                except Exception: 
+                                except Exception:
                                     pass
                                 del v["followup_mid"]
                             if v.get('type') == 'native':
