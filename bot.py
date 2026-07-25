@@ -69,13 +69,18 @@ async def handle_http_request(reader, writer, app):
             await writer.drain()
 
         elif method == "POST" and path == "/webhook":
-            body_data = await reader.readexactly(content_length)
-            body = body_data.decode("utf-8")
+            try:
+                body_data = await reader.readexactly(content_length)
+                body = body_data.decode("utf-8")
 
-            update_dict = json.loads(body)
-            update = Update.de_json(update_dict, app.bot)
+                update_dict = json.loads(body)
+                update = Update.de_json(update_dict, app.bot)
 
-            await app.process_update(update)
+                await app.process_update(update)
+            except Exception as update_err:
+                # Catch update errors, log details, but still return 200 OK to prevent Telegram retry loops
+                print(f"{Style.RED}[WEBHOOK UNHANDLED EXCEPTION]: Failed to process update: {update_err}{Style.RESET}", flush=True)
+                traceback.print_exc()
 
             response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
