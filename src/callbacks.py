@@ -11,7 +11,8 @@ from src.database import (
     db_set_user_grade,
     db_update_private_message_id,
     db_update_response_view_state,
-    db_get_user_response
+    db_get_user_response,
+    db_get_question_by_id  # Added single question direct query import
 )
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
@@ -65,9 +66,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("This quiz session has ended.", show_alert=True)
         return
 
-    await asyncio.to_thread(engine.refresh_database)
-    all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
-    question_data = all_qs.get(tracks[mid_key]['q_id'])
+    # OPTIMIZATION: Retrieve only the target question instead of executing full database scans
+    question_data = await asyncio.to_thread(db_get_question_by_id, tracks[mid_key]['q_id'])
 
     if not question_data:
         print(f" {Style.RED}└─ [ERROR] Question ID '{tracks[mid_key]['q_id']}' not found in active database.{Style.RESET}")

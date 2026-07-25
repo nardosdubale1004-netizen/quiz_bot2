@@ -533,3 +533,33 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     finally:
         if conn:
             engine_db.release_connection(conn)
+
+
+def db_get_question_by_id(q_id):
+    """Fetches a single question directly by its ID, avoiding heavy full-table scans."""
+    engine_db = QuizEngine()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM questions WHERE id = %s;", (q_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            
+            q = dict(row)
+            # Parse only this question's JSON fields
+            for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+                if field in q and isinstance(q[field], str):
+                    try:
+                        q[field] = json.loads(q[field])
+                    except Exception:
+                        pass
+            return q
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to fetch question {q_id}: {e}")
+        return None
+    finally:
+        if conn:
+            engine_db.release_connection(conn)

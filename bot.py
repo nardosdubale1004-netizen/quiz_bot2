@@ -29,7 +29,8 @@ from src.database import (
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
     process_user_score,
-    db_update_response_view_state
+    db_update_response_view_state,
+    db_get_question_by_id  # Imported helper
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info
@@ -173,9 +174,8 @@ async def start_command(update: Update, context):
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
-            await asyncio.to_thread(engine.refresh_database)
-            all_qs = {q['id']: q for subject_list in engine.db.values() for q in subject_list}
-            question_data = all_qs.get(tracks[mid_key]['q_id'])
+            # OPTIMIZATION: Retrieve only the target question instead of calling refresh_database()
+            question_data = await asyncio.to_thread(db_get_question_by_id, tracks[mid_key]['q_id'])
 
             if not question_data:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
@@ -191,17 +191,17 @@ async def start_command(update: Update, context):
                 show_derivation = existing_response.get('show_derivation', False)
                 show_perf = existing_response.get('show_perf', False)
 
-                try:
-                    await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
-                except Exception:
-                    pass
-
-                if old_private_mid:
+                # OPTIMIZATION: Non-blocking background message deletions to eliminate roundtrip latency
+                async def delete_msg_safe(chat_id, mid):
                     try:
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid + 1)
+                        await context.bot.delete_message(chat_id=chat_id, message_id=mid)
                     except Exception:
                         pass
+
+                asyncio.create_task(delete_msg_safe(update.message.chat_id, update.message.message_id))
+                if old_private_mid:
+                    asyncio.create_task(delete_msg_safe(update.message.chat_id, old_private_mid))
+                    asyncio.create_task(delete_msg_safe(update.message.chat_id, old_private_mid + 1))
 
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
