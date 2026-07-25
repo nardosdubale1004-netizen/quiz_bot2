@@ -104,12 +104,14 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
-    def db_update_track_status(self, message_id, status, followup_mid=None):
+    def db_update_track_status(self, message_id, status, followup_mid=None, clear_followup=False):
         conn = None
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
-                if followup_mid is not None:
+                if clear_followup:
+                    cur.execute("UPDATE sent_tracks SET status = %s, followup_mid = NULL WHERE message_id = %s;", (status, str(message_id)))
+                elif followup_mid is not None:
                     cur.execute("UPDATE sent_tracks SET status = %s, followup_mid = %s WHERE message_id = %s;", (status, followup_mid, str(message_id)))
                 else:
                     cur.execute("UPDATE sent_tracks SET status = %s WHERE message_id = %s;", (status, str(message_id)))
@@ -136,17 +138,17 @@ class QuizEngine:
 
                     tags = q.get("tags", [])
                     options = q.get("options", [])
-                    
+
                     # Adapt structures cleanly using psycopg2 JSON wrappers
                     poll_explanation = Json(q.get("poll_explanation", {}))
                     options_analysis = Json(q.get("options_analysis", []))
-                    
+
                     scheduled_for = q.get("scheduled_for")
                     force_image = q.get("force_image", False)
 
                     cur.execute("""
                         INSERT INTO questions (
-                            id, subject, topic, difficulty, tags, question, latex, options, 
+                            id, subject, topic, difficulty, tags, question, latex, options,
                             correct_option, poll_explanation, options_analysis, scheduled_for, force_image
                         )
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)

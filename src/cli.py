@@ -6,7 +6,7 @@ import asyncio
 import traceback
 from pathlib import Path
 from src.config import CONFIG, Style
-from src.database import QuizEngine
+from src.database import QuizEngine, db_mark_question_as_sent
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.typography import lite_math
@@ -116,7 +116,6 @@ async def admin_panel(app, engine: QuizEngine):
 
             range_in = await cli.ask("<b>Selection (e.g. 1, 3-5 or easy:3): </b>")
 
-            # Crash-resistance safety guard to handle empty, interrupted, or cancelled inputs safely
             if not range_in:
                 continue
 
@@ -189,6 +188,8 @@ async def admin_panel(app, engine: QuizEngine):
                         msg_type = "photo" if img_url else "text"
 
                     await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, "premium", msg_type)
+                    # Automatically flag as sent in Database to protect sync logic from repeating
+                    await asyncio.to_thread(db_mark_question_as_sent, q['id'])
                     print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
 
                     await asyncio.sleep(1.5)
@@ -282,14 +283,14 @@ async def admin_panel(app, engine: QuizEngine):
                                                     await asyncio.to_thread(engine.db_save_track, mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
                                             else:
                                                 await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
-                                                await asyncio.to_thread(engine.db_update_track_status, mid, "closed", followup_mid=None)
+                                                await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
                                     else:
                                         await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
-                                        await asyncio.to_thread(engine.db_update_track_status, mid, "closed", followup_mid=None)
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
                                 else:
                                     await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=UIFactory.build_closed_static_view(q, ref, compact=False), reply_markup=None)
-                                    await asyncio.to_thread(engine.db_update_track_status, mid, "closed", followup_mid=None)
-                            await asyncio.to_thread(engine.db_update_track_status, mid, "closed")
+                                    await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
+                            await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
                         else:
                             if v.get('type') == 'native': continue
                             img_url, cap = UIFactory.create_question_assets(q, ref)
