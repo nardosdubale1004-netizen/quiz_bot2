@@ -187,9 +187,12 @@ async def start_command(update: Update, context):
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
-                # Load expansion states directly from the database row dynamically
-                show_derivation = existing_response.get('show_derivation', False)
+                # Force show_derivation to True so it doesn't default to compact mode when they re-answer
+                show_derivation = True
                 show_perf = existing_response.get('show_perf', False)
+
+                # Update the database response view state to reflect the expanded state
+                await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
 
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
@@ -206,15 +209,14 @@ async def start_command(update: Update, context):
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
-                
-                # Render using the loaded state
+
+                # Render using the forced detailed state
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
                 )
 
                 has_ex_diag = UIFactory.has_explanation_diagram(question_data)
                 if has_ex_diag:
-                    # Keep main caption compact, let followup handle derivations
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(
                         question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                     )
@@ -229,9 +231,9 @@ async def start_command(update: Update, context):
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
                                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
 
-                                # Restore expanded followups immediately on reload
+                                # Restore expanded followups immediately on reload (and apply warning notice)
                                 if show_derivation or show_perf:
-                                    full_text = UIFactory.build_answered_view(
+                                    full_text = warning_notice + UIFactory.build_answered_view(
                                         question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card, continuation=True
                                     )
                                     follow_up = await send_rich_message_safe(

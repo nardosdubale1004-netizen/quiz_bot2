@@ -52,6 +52,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("Error: Question data not found.")
         return
 
+    # Warning notice template
+    warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
+                     "<i>Your original selection and score have been securely locked.</i>\n\n"
+
     try:
         if action == "ans":
             user_selection = int(data[2])
@@ -61,11 +65,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
             # Initial DM interaction choice clicks start in Detailed Mode (show_derivation=True, show_perf=False)
-            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], is_correct, user_selection, None, True, False)
+            # Use mid_key instead of query.message.message_id for consistent database lookups
+            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
 
             active_is_photo = (tracks[mid_key].get('msg_type') == "photo")
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)
             retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data=f"reset|{d_id}")]])
+
+            # Check if active interface currently displays the lockout warning
+            has_lockout = False
+            if query.message:
+                current_text = query.message.caption or query.message.text or ""
+                if "Lockout active" in current_text:
+                    has_lockout = True
+
+            if has_lockout:
+                explanation_html = warning_notice + explanation_html
 
             if active_is_photo:
                 print(f" {Style.CYAN}├─ [DEBUG] Question has diagram. Compiling widescreen Solution Sheet graphic...{Style.RESET}")
@@ -76,15 +91,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         resp = await fetch_kroki_image(client, img_url, latex_code)
                         if resp and resp.status_code == 200:
                             print(f" {Style.GREEN}├─ [SUCCESS] Solution Sheet compiled successfully. Swapping active image...{Style.RESET}")
-                            
+
                             photo_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=True)
-                            
+
                             legacy_caption = convert_to_legacy_html(explanation_html)
                             media = InputMediaPhoto(media=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML")
                             await query.edit_message_media(media=media, reply_markup=photo_kb)
 
                             # Send detailed derivation followup
                             full_text = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card, continuation=True)
+                            if has_lockout:
+                                full_text = warning_notice + full_text
+
                             follow_up = await send_rich_message_safe(
                                 context.bot,
                                 chat_id=query.message.chat_id,
@@ -115,23 +133,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             await query.answer("Updating View...")
 
-            # Save the layout state persistently in the database
-            await asyncio.to_thread(db_update_response_view_state, user_id, query.message.message_id, show_derivation, show_perf)
+            # Use mid_key (channel ID) instead of query.message.message_id for database updates
+            await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
 
-            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
-            
+            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
+
             # Displays both detailed derivations and performance table concurrently if both are active
             explanation_html = UIFactory.build_answered_view(
-                question_data, 
-                d_id, 
-                user_selection, 
-                show_derivation=show_derivation, 
-                show_perf=show_perf, 
+                question_data,
+                d_id,
+                user_selection,
+                show_derivation=show_derivation,
+                show_perf=show_perf,
                 perf_card=perf_card
             )
-            
+
+            # Detect lockout notice presence on the message
+            has_lockout = False
+            if query.message:
+                current_text = query.message.caption or query.message.text or ""
+                if "Lockout active" in current_text:
+                    has_lockout = True
+
+            if has_lockout:
+                explanation_html = warning_notice + explanation_html
+
             kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=False)
-                
+
             await edit_rich_message_safe(
                 context.bot,
                 chat_id=query.message.chat_id,
@@ -148,11 +176,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             await query.answer("Updating Solution Card...")
 
-            # Save the layout state persistently in the database
-            await asyncio.to_thread(db_update_response_view_state, user_id, query.message.message_id, show_derivation, show_perf)
+            # Use mid_key (channel ID) instead of query.message.message_id for database updates
+            await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
 
-            perf_card = await asyncio.to_thread(process_user_score, user_id, query.message.message_id, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
-            
+            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
+
             kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=True)
             await query.message.edit_reply_markup(reply_markup=kb)
 
@@ -165,14 +193,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                     await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", d_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=None)
             else:
                 full_text = UIFactory.build_answered_view(
-                    question_data, 
-                    d_id, 
-                    user_selection, 
-                    show_derivation=show_derivation, 
-                    show_perf=show_perf, 
-                    perf_card=perf_card, 
+                    question_data,
+                    d_id,
+                    user_selection,
+                    show_derivation=show_derivation,
+                    show_perf=show_perf,
+                    perf_card=perf_card,
                     continuation=True
                 )
+
+                # Detect lockout notice presence on the message
+                has_lockout = False
+                if query.message:
+                    current_text = query.message.caption or query.message.text or ""
+                    if "Lockout active" in current_text:
+                        has_lockout = True
+
+                if has_lockout:
+                    full_text = warning_notice + full_text
 
                 if mid_key and tracks[mid_key].get("followup_mid"):
                     try:
