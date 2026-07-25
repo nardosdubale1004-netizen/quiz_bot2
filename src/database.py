@@ -250,6 +250,7 @@ class QuizEngine:
                 self.db[subject].append(q)
         return self.db
 
+
 # --- OUT-OF-CLASS DB UTILITIES ---
 def db_set_user_grade(user_id, grade: int):
     engine_db = QuizEngine()
@@ -271,6 +272,7 @@ def db_set_user_grade(user_id, grade: int):
         if conn:
             engine_db.release_connection(conn)
 
+
 def db_get_user_profile(user_id):
     engine_db = QuizEngine()
     conn = None
@@ -288,6 +290,7 @@ def db_get_user_profile(user_id):
     finally:
         if conn:
             engine_db.release_connection(conn)
+
 
 def db_get_user_response(user_id, message_id):
     engine_db = QuizEngine()
@@ -310,6 +313,7 @@ def db_get_user_response(user_id, message_id):
         if conn:
             engine_db.release_connection(conn)
 
+
 def db_update_private_message_id(user_id, message_id, private_message_id):
     engine_db = QuizEngine()
     conn = None
@@ -330,6 +334,7 @@ def db_update_private_message_id(user_id, message_id, private_message_id):
         if conn:
             engine_db.release_connection(conn)
 
+
 def db_update_response_view_state(user_id, message_id, show_derivation: bool, show_perf: bool):
     engine_db = QuizEngine()
     conn = None
@@ -349,6 +354,7 @@ def db_update_response_view_state(user_id, message_id, show_derivation: bool, sh
     finally:
         if conn:
             engine_db.release_connection(conn)
+
 
 def db_get_weekly_leaderboard(grade: int):
     engine_db = QuizEngine()
@@ -377,6 +383,7 @@ def db_get_weekly_leaderboard(grade: int):
         if conn:
             engine_db.release_connection(conn)
 
+
 def db_get_pending_scheduled_question():
     engine_db = QuizEngine()
     conn = None
@@ -402,6 +409,7 @@ def db_get_pending_scheduled_question():
         if conn:
             engine_db.release_connection(conn)
 
+
 def db_mark_question_as_sent(q_id):
     engine_db = QuizEngine()
     conn = None
@@ -418,17 +426,30 @@ def db_mark_question_as_sent(q_id):
         if conn:
             engine_db.release_connection(conn)
 
+
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
+    """
+    Evaluates, writes, and computes performance variables for a user action.
+    Locks row modifications on message_id to ensure precise early bird calculation.
+    """
     engine_db = QuizEngine()
     conn = None
     try:
         conn = engine_db.get_db_connection()
         cur = conn.cursor()
 
+        # 1. Row Lock (Block parallel counting or writing for this quiz during transaction)
+        cur.execute("""
+            SELECT 1 FROM sent_tracks 
+            WHERE message_id = %s 
+            FOR UPDATE;
+        """, (str(message_id),))
+
         first_try = True
         marks_to_award = 0
         is_bonus_winner = False
 
+        # 2. Check current database state inside serialized thread
         cur.execute("""
             SELECT EXISTS(SELECT 1 FROM user_responses WHERE user_id = %s AND message_id = %s);
         """, (str(user_id), str(message_id)))
@@ -438,6 +459,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             first_try = False
         else:
             if is_correct:
+                # Count current correct responses inside our lock window
                 cur.execute("""
                     SELECT COUNT(*) FROM user_responses
                     WHERE message_id = %s AND is_correct = TRUE;
@@ -452,22 +474,36 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             else:
                 marks_to_award = 0
 
-            cur.execute("""
-                INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, show_derivation, show_perf)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-            """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, show_derivation, show_perf))
+            # 3. Secure write isolation using a PostgreSQL Transaction Savepoint
+            try:
+                cur.execute("SAVEPOINT score_insertion_sp;")
+                
+                cur.execute("""
+                    INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, show_derivation, show_perf)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, show_derivation, show_perf))
 
-            correct_inc = 1 if is_correct else 0
-            cur.execute("""
-                INSERT INTO user_stats (user_id, total, correct, total_marks)
-                VALUES (%s, 1, %s, %s)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    total = user_stats.total + 1,
-                    correct = user_stats.correct + %s,
-                    total_marks = user_stats.total_marks + %s;
-            """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
+                correct_inc = 1 if is_correct else 0
+                cur.execute("""
+                    INSERT INTO user_stats (user_id, total, correct, total_marks)
+                    VALUES (%s, 1, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        total = user_stats.total + 1,
+                        correct = user_stats.correct + %s,
+                        total_marks = user_stats.total_marks + %s;
+                """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
+                
+                cur.execute("RELEASE SAVEPOINT score_insertion_sp;")
+            except psycopg2.IntegrityError:
+                # Double-click guard triggered inside database engine: Rollback write safely
+                cur.execute("ROLLBACK TO SAVEPOINT score_insertion_sp;")
+                first_try = False
+                marks_to_award = 0
+                is_bonus_winner = False
+
             conn.commit()
 
+        # 4. Fetch the final updated user stats
         cur.execute("SELECT total, correct, total_marks, grade FROM user_stats WHERE user_id = %s;", (str(user_id),))
         stats = cur.fetchone()
         cur.close()

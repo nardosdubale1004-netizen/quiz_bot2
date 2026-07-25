@@ -3,12 +3,34 @@ import asyncio
 import traceback
 import httpx
 import io
-from src.config import CONFIG, Style
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
-from src.database import process_user_score, db_set_user_grade, db_update_private_message_id, db_update_response_view_state
+from src.database import (
+    process_user_score, 
+    db_set_user_grade, 
+    db_update_private_message_id, 
+    db_update_response_view_state,
+    db_get_user_response
+)
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
+
+def check_message_has_lockout(user_id, message) -> bool:
+    """
+    Safely determines if the message currently contains the lockout warning notice.
+    Checks both the in-memory shared set and the case-insensitive backup string.
+    This guarantees that the warning notice is never lost during minimization.
+    """
+    if not message:
+        return False
+    # 1. Primary check: check our secure in-memory lockout registration
+    if (user_id, message.message_id) in LOCKOUT_MESSAGES:
+        return True
+    # 2. Backup check: string inspection in case of container/process restart
+    current_text = message.caption or message.text or ""
+    current_text_lower = current_text.lower()
+    return any(kw in current_text_lower for kw in ["lockout active", "already answered", "securely locked"])
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
@@ -64,8 +86,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
-            # Initial DM interaction choice clicks start in Detailed Mode (show_derivation=True, show_perf=False)
-            # Use mid_key instead of query.message.message_id for consistent database lookups
+            # Use mid_key for state synchronization
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
 
             active_is_photo = (tracks[mid_key].get('msg_type') == "photo")
@@ -73,11 +94,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data=f"reset|{d_id}")]])
 
             # Check if active interface currently displays the lockout warning
-            has_lockout = False
-            if query.message:
-                current_text = query.message.caption or query.message.text or ""
-                if "Lockout active" in current_text:
-                    has_lockout = True
+            has_lockout = check_message_has_lockout(user_id, query.message)
 
             if has_lockout:
                 explanation_html = warning_notice + explanation_html
@@ -133,12 +150,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             await query.answer("Updating View...")
 
-            # Use mid_key (channel ID) instead of query.message.message_id for database updates
+            # Use mid_key for state synchronization
             await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
 
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
 
-            # Displays both detailed derivations and performance table concurrently if both are active
             explanation_html = UIFactory.build_answered_view(
                 question_data,
                 d_id,
@@ -148,12 +164,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 perf_card=perf_card
             )
 
-            # Detect lockout notice presence on the message
-            has_lockout = False
-            if query.message:
-                current_text = query.message.caption or query.message.text or ""
-                if "Lockout active" in current_text:
-                    has_lockout = True
+            # Detect lockout notice presence
+            has_lockout = check_message_has_lockout(user_id, query.message)
 
             if has_lockout:
                 explanation_html = warning_notice + explanation_html
@@ -176,7 +188,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_id = query.from_user.id
             await query.answer("Updating Solution Card...")
 
-            # Use mid_key (channel ID) instead of query.message.message_id for database updates
+            # Use mid_key for state synchronization
             await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
 
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], (user_selection == question_data['correct_option']), user_selection)
@@ -202,12 +214,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                     continuation=True
                 )
 
-                # Detect lockout notice presence on the message
-                has_lockout = False
-                if query.message:
-                    current_text = query.message.caption or query.message.text or ""
-                    if "Lockout active" in current_text:
-                        has_lockout = True
+                # Detect lockout notice presence
+                has_lockout = check_message_has_lockout(user_id, query.message)
 
                 if has_lockout:
                     full_text = warning_notice + full_text

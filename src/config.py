@@ -31,3 +31,6 @@ CONFIG = {
     "database_url": os.getenv("DATABASE_URL") or local_config.get("database_url"),
     "kroki_url": os.getenv("KROKI_URL") or local_config.get("kroki_url") or "https://kroki.io"
 }
+
+# --- Shared In-Memory Tracking for Lockout States ---
+LOCKOUT_MESSAGES = set()

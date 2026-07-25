@@ -19,7 +19,7 @@ for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.e
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from src.config import CONFIG, Style
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES
 from src.database import (
     QuizEngine,
     db_get_user_profile,
@@ -187,12 +187,9 @@ async def start_command(update: Update, context):
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
-                # Force show_derivation to True so it doesn't default to compact mode when they re-answer
-                show_derivation = True
+                # Dynamic state: Read collapse states directly from the database row
+                show_derivation = existing_response.get('show_derivation', False)
                 show_perf = existing_response.get('show_perf', False)
-
-                # Update the database response view state to reflect the expanded state
-                await asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
 
                 try:
                     await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
@@ -210,13 +207,14 @@ async def start_command(update: Update, context):
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
 
-                # Render using the forced detailed state
+                # Render using the database state, prepending the lockout warning
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
                 )
 
                 has_ex_diag = UIFactory.has_explanation_diagram(question_data)
                 if has_ex_diag:
+                    # Keep main caption compact, let followup handle derivations
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(
                         question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                     )
@@ -229,9 +227,13 @@ async def start_command(update: Update, context):
                                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
                                 photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
                                 m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                                
+                                # Track as lockout message in-memory
+                                LOCKOUT_MESSAGES.add((user_id, m.message_id))
+                                
                                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
 
-                                # Restore expanded followups immediately on reload (and apply warning notice)
+                                # Restore expanded followups immediately on reload with warning notice
                                 if show_derivation or show_perf:
                                     full_text = warning_notice + UIFactory.build_answered_view(
                                         question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card, continuation=True
@@ -247,6 +249,10 @@ async def start_command(update: Update, context):
 
                 reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=False)
                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
+                
+                # Track as lockout message in-memory
+                LOCKOUT_MESSAGES.add((user_id, f_m.message_id))
+                
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                 return
 
