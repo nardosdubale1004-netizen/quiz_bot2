@@ -258,9 +258,11 @@ def db_set_user_grade(user_id, grade: int):
     try:
         conn = engine_db.get_db_connection()
         cur = conn.cursor()
+        # Explicitly set numerical variables to 0 on database insertion
+        # to guarantee safe arithmetic performance.
         cur.execute("""
-            INSERT INTO user_stats (user_id, grade)
-            VALUES (%s, %s)
+            INSERT INTO user_stats (user_id, grade, total, correct, total_marks)
+            VALUES (%s, %s, 0, 0, 0)
             ON CONFLICT (user_id) DO UPDATE SET grade = EXCLUDED.grade;
         """, (str(user_id), int(grade)))
         conn.commit()
@@ -440,8 +442,8 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
 
         # 1. Row Lock (Block parallel counting or writing for this quiz during transaction)
         cur.execute("""
-            SELECT 1 FROM sent_tracks 
-            WHERE message_id = %s 
+            SELECT 1 FROM sent_tracks
+            WHERE message_id = %s
             FOR UPDATE;
         """, (str(message_id),))
 
@@ -477,22 +479,24 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             # 3. Secure write isolation using a PostgreSQL Transaction Savepoint
             try:
                 cur.execute("SAVEPOINT score_insertion_sp;")
-                
+
                 cur.execute("""
                     INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, show_derivation, show_perf)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
                 """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, show_derivation, show_perf))
 
                 correct_inc = 1 if is_correct else 0
+                
+                # COALESCE acts as a safety guard to shield scoring increments from NULL addition outcomes.
                 cur.execute("""
                     INSERT INTO user_stats (user_id, total, correct, total_marks)
                     VALUES (%s, 1, %s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
-                        total = user_stats.total + 1,
-                        correct = user_stats.correct + %s,
-                        total_marks = user_stats.total_marks + %s;
+                        total = COALESCE(user_stats.total, 0) + 1,
+                        correct = COALESCE(user_stats.correct, 0) + %s,
+                        total_marks = COALESCE(user_stats.total_marks, 0) + %s;
                 """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
-                
+
                 cur.execute("RELEASE SAVEPOINT score_insertion_sp;")
             except psycopg2.IntegrityError:
                 # Double-click guard triggered inside database engine: Rollback write safely
