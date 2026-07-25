@@ -17,19 +17,15 @@ class QuizEngine:
         self.config = CONFIG
         self.db = {}
         self.last_refresh = 0
-        self.refresh_interval = 30  # 30 seconds caching TTL
+        self.refresh_interval = 30
         self.db_url = self.config.get("database_url")
         if self.db_url:
             if not QuizEngine._printed_connection_log:
-                print(f"{Style.GREEN}[DATABASE] PostgreSQL detected in environment.{Style.RESET}")
+                print(f"{Style.GREEN}[DATABASE] PostgreSQL detected.{Style.RESET}")
                 QuizEngine._printed_connection_log = True
             if not QuizEngine._pool:
                 try:
-                    QuizEngine._pool = ThreadedConnectionPool(
-                        minconn=2,
-                        maxconn=20,
-                        dsn=self.db_url
-                    )
+                    QuizEngine._pool = ThreadedConnectionPool(minconn=2, maxconn=20, dsn=self.db_url)
                     print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
                 except Exception as e:
                     print(f"{Style.RED}[DATABASE ERROR] Failed to initialize connection pool: {e}{Style.RESET}")
@@ -37,25 +33,18 @@ class QuizEngine:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def get_db_connection(self):
-        """Retrieves a connection from the pool or opens a direct connection fallback."""
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
-
         if QuizEngine._pool:
             try:
                 conn = QuizEngine._pool.getconn()
                 conn.cursor_factory = RealDictCursor
                 return conn
             except Exception as e:
-                print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool getconn failed, falling back to direct connection: {e}{Style.RESET}")
-
-        return psycopg2.connect(
-            self.db_url,
-            cursor_factory=RealDictCursor
-        )
+                print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool failed, falling back to direct connection: {e}{Style.RESET}")
+        return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
 
     def release_connection(self, conn):
-        """Safely returns a connection to the pool or closes it, avoiding leaks."""
         if not conn:
             return
         if QuizEngine._pool:
@@ -70,10 +59,7 @@ class QuizEngine:
         except Exception:
             pass
 
-    # --- TARGETED OPTIMIZED LOOKUPS ---
-
     def db_get_track_by_display_id(self, display_id):
-        """Fetches a single tracking row by display_id in sub-milliseconds."""
         conn = None
         try:
             conn = self.get_db_connection()
@@ -86,11 +72,9 @@ class QuizEngine:
             print(f"{Style.RED}[DB ERROR] Failed to fetch track by display_id {display_id}: {e}{Style.RESET}")
             return None
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
     def db_get_max_display_id(self):
-        """Finds the maximum display_id in a single query instead of downloading the table."""
         conn = None
         try:
             conn = self.get_db_connection()
@@ -103,11 +87,9 @@ class QuizEngine:
             print(f"{Style.RED}[DB ERROR] Failed to fetch max display_id: {e}{Style.RESET}")
             return 100
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
     def db_get_question_by_id(self, q_id):
-        """Fetches a single question by id directly, bypassing local table sync."""
         conn = None
         try:
             conn = self.get_db_connection()
@@ -129,10 +111,8 @@ class QuizEngine:
             print(f"{Style.RED}[DB ERROR] Failed to fetch question by ID {q_id}: {e}{Style.RESET}")
             return None
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
-    # --- TRACKING STATE METHODS ---
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
         conn = None
         try:
@@ -150,8 +130,7 @@ class QuizEngine:
             if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to save track: {e}{Style.RESET}")
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
     def db_get_all_tracks(self):
         conn = None
@@ -166,8 +145,7 @@ class QuizEngine:
             print(f"{Style.RED}[DB ERROR] Failed to retrieve tracks: {e}{Style.RESET}")
             return {}
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
     def db_update_track_status(self, message_id, status, followup_mid=None):
         conn = None
@@ -183,10 +161,8 @@ class QuizEngine:
             if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to update track status: {e}{Style.RESET}")
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
-    # --- AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
     def db_import_questions(self, json_data):
         conn = None
         try:
@@ -194,11 +170,9 @@ class QuizEngine:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
                 imported_count = 0
-
                 for q in questions_list:
                     if not q.get("id") or not q.get("subject"):
                         continue
-
                     tags = q.get("tags", [])
                     options = q.get("options", [])
                     poll_explanation = json.dumps(q.get("poll_explanation", {}))
@@ -224,7 +198,6 @@ class QuizEngine:
                         poll_explanation, options_analysis
                     ))
                     imported_count += 1
-
                 conn.commit()
                 return imported_count
         except Exception as e:
@@ -232,8 +205,7 @@ class QuizEngine:
             print(f"{Style.RED}[DB ERROR] Failed to import questions: {e}{Style.RESET}")
             return 0
         finally:
-            if conn:
-                self.release_connection(conn)
+            if conn: self.release_connection(conn)
 
     @staticmethod
     def load_json(path):
@@ -269,7 +241,6 @@ class QuizEngine:
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM questions;")
                     rows = cur.fetchall()
-
                     for row in rows:
                         q = dict(row)
                         for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
@@ -278,7 +249,6 @@ class QuizEngine:
                                     q[field] = json.loads(q[field])
                                 except Exception:
                                     pass
-
                         subject = q.get("subject", "General").lower()
                         if subject not in self.db:
                             self.db[subject] = []
@@ -287,8 +257,7 @@ class QuizEngine:
             except Exception as e:
                 print(f"{Style.YELLOW}[DB WARNING] Cloud loading failed, falling back to local files: {e}{Style.RESET}")
             finally:
-                if conn:
-                    self.release_connection(conn)
+                if conn: self.release_connection(conn)
 
         return self.refresh_database_local()
 
@@ -297,7 +266,6 @@ class QuizEngine:
         questions_dir = Path("questions")
         if not questions_dir.exists():
             questions_dir.mkdir(exist_ok=True)
-
         for file_path in questions_dir.rglob("*.json"):
             data = self.load_json(str(file_path))
             questions_list = data if isinstance(data, list) else [data]
@@ -310,10 +278,7 @@ class QuizEngine:
                 self.db[subject].append(q)
         return self.db
 
-
-# --- MODULE-LEVEL ENGINE SINGLETON ---
 db_engine = QuizEngine()
-
 
 def db_set_user_grade(user_id, grade: int):
     conn = None
@@ -330,9 +295,7 @@ def db_set_user_grade(user_id, grade: int):
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to set user grade: {e}")
     finally:
-        if conn:
-            db_engine.release_connection(conn)
-
+        if conn: db_engine.release_connection(conn)
 
 def db_get_user_profile(user_id):
     conn = None
@@ -347,9 +310,7 @@ def db_get_user_profile(user_id):
         print(f"[DB ERROR] Failed to fetch user profile: {e}")
         return None
     finally:
-        if conn:
-            db_engine.release_connection(conn)
-
+        if conn: db_engine.release_connection(conn)
 
 def db_get_user_response(user_id, message_id):
     conn = None
@@ -367,28 +328,40 @@ def db_get_user_response(user_id, message_id):
         print(f"[DB ERROR] Failed to fetch user response: {e}")
         return None
     finally:
-        if conn:
-            db_engine.release_connection(conn)
+        if conn: db_engine.release_connection(conn)
 
-
-def db_update_private_message_id(user_id, message_id, private_message_id):
+def db_update_private_message_ids(user_id, message_id, private_message_id=None, private_followup_message_id=None):
     conn = None
     try:
         conn = db_engine.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE user_responses
-                SET private_message_id = %s
-                WHERE user_id = %s AND message_id = %s;
-            """, (int(private_message_id), str(user_id), str(message_id)))
+            if private_message_id is not None and private_followup_message_id is not None:
+                cur.execute("""
+                    UPDATE user_responses
+                    SET private_message_id = %s, private_followup_message_id = %s
+                    WHERE user_id = %s AND message_id = %s;
+                """, (int(private_message_id), int(private_followup_message_id), str(user_id), str(message_id)))
+            elif private_message_id is not None:
+                cur.execute("""
+                    UPDATE user_responses
+                    SET private_message_id = %s
+                    WHERE user_id = %s AND message_id = %s;
+                """, (int(private_message_id), str(user_id), str(message_id)))
+            elif private_followup_message_id is not None:
+                cur.execute("""
+                    UPDATE user_responses
+                    SET private_followup_message_id = %s
+                    WHERE user_id = %s AND message_id = %s;
+                """, (int(private_followup_message_id), str(user_id), str(message_id)))
             conn.commit()
     except Exception as e:
         if conn: conn.rollback()
-        print(f"[DB ERROR] Failed to update private message ID: {e}")
+        print(f"[DB ERROR] Failed to update private message IDs: {e}")
     finally:
-        if conn:
-            db_engine.release_connection(conn)
+        if conn: db_engine.release_connection(conn)
 
+def db_update_private_message_id(user_id, message_id, private_message_id):
+    db_update_private_message_ids(user_id, message_id, private_message_id=private_message_id)
 
 def db_update_response_view_state(user_id, message_id, show_derivation: bool, show_perf: bool):
     conn = None
@@ -405,9 +378,7 @@ def db_update_response_view_state(user_id, message_id, show_derivation: bool, sh
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to update response view state: {e}")
     finally:
-        if conn:
-            db_engine.release_connection(conn)
-
+        if conn: db_engine.release_connection(conn)
 
 def db_get_weekly_leaderboard(grade: int):
     conn = None
@@ -431,9 +402,7 @@ def db_get_weekly_leaderboard(grade: int):
         print(f"[DB ERROR] Failed to fetch weekly leaderboard: {e}")
         return []
     finally:
-        if conn:
-            db_engine.release_connection(conn)
-
+        if conn: db_engine.release_connection(conn)
 
 def db_get_pending_scheduled_question():
     conn = None
@@ -455,9 +424,7 @@ def db_get_pending_scheduled_question():
         print(f"[DB ERROR] Failed to fetch scheduled question: {e}")
         return None
     finally:
-        if conn:
-            db_engine.release_connection(conn)
-
+        if conn: db_engine.release_connection(conn)
 
 def db_mark_question_as_sent(q_id):
     conn = None
@@ -470,31 +437,18 @@ def db_mark_question_as_sent(q_id):
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to mark question as sent: {e}")
     finally:
-        if conn:
-            db_engine.release_connection(conn)
-
+        if conn: db_engine.release_connection(conn)
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
-    """
-    Evaluates, writes, and computes performance variables for a user action.
-    This consolidated version updates view-state flags concurrently inside the same connection lifecycle.
-    """
     conn = None
     try:
         conn = db_engine.get_db_connection()
         with conn.cursor() as cur:
-            # 1. Row Lock on display sequence to preserve exact transactional placement for early birds
-            cur.execute("""
-                SELECT 1 FROM sent_tracks
-                WHERE message_id = %s
-                FOR UPDATE;
-            """, (str(message_id),))
-
+            cur.execute("SELECT 1 FROM sent_tracks WHERE message_id = %s FOR UPDATE;", (str(message_id),))
             first_try = True
             marks_to_award = 0
             is_bonus_winner = False
 
-            # 2. Check current response records in a single database connection call
             cur.execute("""
                 SELECT is_correct, marks_awarded, selected_option FROM user_responses
                 WHERE user_id = %s AND message_id = %s;
@@ -505,9 +459,8 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 first_try = False
                 marks_to_award = existing_response['marks_awarded']
                 is_bonus_winner = (marks_to_award == 10)
-                selected_option = existing_response['selected_option'] # Enforce first locked choice
+                selected_option = existing_response['selected_option']
 
-                # Consolidated View State Update within the existing connection
                 cur.execute("""
                     UPDATE user_responses
                     SET show_derivation = %s, show_perf = %s
@@ -515,12 +468,8 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 """, (show_derivation, show_perf, str(user_id), str(message_id)))
             else:
                 if is_correct:
-                    cur.execute("""
-                        SELECT COUNT(*) FROM user_responses
-                        WHERE message_id = %s AND is_correct = TRUE;
-                    """, (str(message_id),))
+                    cur.execute("SELECT COUNT(*) FROM user_responses WHERE message_id = %s AND is_correct = TRUE;", (str(message_id),))
                     correct_count = cur.fetchone()['count']
-
                     if correct_count < bonus_limit:
                         marks_to_award = 10
                         is_bonus_winner = True
@@ -529,17 +478,14 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 else:
                     marks_to_award = 0
 
-                # 3. Secure write isolation via Transaction Savepoint protection
                 try:
                     cur.execute("SAVEPOINT score_insertion_sp;")
-
                     cur.execute("""
-                        INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, show_derivation, show_perf)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-                    """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, show_derivation, show_perf))
+                        INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, private_followup_message_id, show_derivation, show_perf)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, None, show_derivation, show_perf))
 
                     correct_inc = 1 if is_correct else 0
-
                     cur.execute("""
                         INSERT INTO user_stats (user_id, total, correct, total_marks)
                         VALUES (%s, 1, %s, %s)
@@ -548,10 +494,8 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                             correct = COALESCE(user_stats.correct, 0) + %s,
                             total_marks = COALESCE(user_stats.total_marks, 0) + %s;
                     """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
-
                     cur.execute("RELEASE SAVEPOINT score_insertion_sp;")
                 except psycopg2.IntegrityError:
-                    # Fallback guard against high-concurrency double-clicks
                     cur.execute("ROLLBACK TO SAVEPOINT score_insertion_sp;")
                     cur.execute("""
                         SELECT is_correct, marks_awarded, selected_option FROM user_responses
@@ -568,7 +512,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                         marks_to_award = 0
                         is_bonus_winner = False
 
-            # 4. Fetch the final updated stats securely
             cur.execute("SELECT total, correct, total_marks, grade FROM user_stats WHERE user_id = %s;", (str(user_id),))
             stats = cur.fetchone()
             conn.commit()
@@ -592,5 +535,4 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         print(f"[DB ERROR] Error in process_user_score: {e}")
         return None
     finally:
-        if conn:
-            db_engine.release_connection(conn)
+        if conn: db_engine.release_connection(conn)

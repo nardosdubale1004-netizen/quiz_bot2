@@ -9,55 +9,32 @@ def is_complex(text):
     return any(t in str(text) for t in triggers)
 
 def has_real_diagram(q) -> bool:
-    """
-    Determines if a question contains a genuine, non-trivial TikZ/axis drawing diagram.
-    Guarantees math formulas use Telegram's native rich text rendering unless a graph is present.
-    """
     if not q.get("latex"):
-        print(f"\033[93m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} has no 'latex' payload. Bypassing compilation (diagram: False).")
         return False
-
     if q.get("force_image") or q.get("force_latex", False):
-        print(f"\033[92m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} forces image output (diagram: True).")
         return True
-
     tikz = q.get("latex")
     tikz_clean = tikz.strip().replace(" ", "").replace("\n", "").replace("\r", "")
     if tikz_clean in ["", "\\begin{tikzpicture}\\end{tikzpicture}", "\\begin{tikzpicture}%\\end{tikzpicture}"]:
-        print(f"\033[93m[DIAGRAM SAFE-GUARD]\033[0m Question {q.get('id')} contains empty tikz block. Bypassing compilation (diagram: False).")
         return False
-
     drawing_triggers = [
         r"\draw", r"\fill", r"\node", r"\addplot", r"\path",
         r"\grid", r"\axis", r"\circle", r"\ellipse", r"\rectangle",
         r"tikzpicture", r"pgfplots"
     ]
-    has_trigger = any(trigger in tikz for trigger in drawing_triggers)
-    print(f"\033[96m[DIAGRAM SAFE-GUARD]\033[0m Checked {q.get('id')} for visual triggers ---> result: {has_trigger}")
-    return has_trigger
+    return any(trigger in tikz for trigger in drawing_triggers)
 
 def has_explanation_diagram(q) -> bool:
-    """
-    Determines if the explanation itself contains a dedicated diagram (e.g. TikZ code).
-    Avoids generating images for explanations that are purely text-based.
-    """
     if not q:
         return False
-
     if q.get("explanation_latex"):
         return True
-
     exp = q.get("poll_explanation", {})
     if not isinstance(exp, dict):
         return False
-
     why = exp.get("why", "")
     rule = exp.get("rule", "")
-
-    if "\\begin{tikzpicture}" in str(why) or "\\begin{tikzpicture}" in str(rule):
-        return True
-
-    return False
+    return "\\begin{tikzpicture}" in str(why) or "\\begin{tikzpicture}" in str(rule)
 
 def escape_latex(text: str) -> str:
     if not text:
@@ -104,7 +81,6 @@ def build_figure_block(q, add_strut=False):
         return None
     tikz = q["latex"].strip()
     tikz = re.sub(r'\n\s*\n', '\n', tikz)
-
     tikz = re.sub(r'\\makebox\s*(?:\[[^\]]*\])*\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\mbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
     tikz = re.sub(r'\\hbox\s*\{%?\s*(.*?)\s*%?\}', r'\1', tikz, flags=re.DOTALL)
@@ -128,8 +104,6 @@ def build_figure_block(q, add_strut=False):
     tikz = tikz.replace("node[above] {$(1,2,2)$}", "node[above left=2pt] {$(1,2,2)$}")
     tikz = tikz.replace("node[above] {(1,2,2)}", "node[above left=2pt] {$(1,2,2)$}")
 
-    # Robustly Sanitize & Merge Consecutive Optional Brackets
-    # Prevents: \begin{tikzpicture}[scale=0.75, transform shape][scale=0.8]
     def merge_tikz_brackets(m):
         options_str = m.group(1)
         brackets = re.findall(r'\[([^\]]*)\]', options_str)
@@ -148,27 +122,24 @@ def build_figure_block(q, add_strut=False):
                     transform_shape = True
                 elif opt:
                     merged_opts.append(opt)
-        
         if scale != 1.0:
             merged_opts.append(f"scale={scale:.3f}")
         if transform_shape:
             merged_opts.append("transform shape")
-        
         return f"\\begin{{tikzpicture}}[{', '.join(merged_opts)}]"
 
     tikz = re.sub(r'\\begin\{tikzpicture\}((?:\s*\[[^\]]*\])+)', merge_tikz_brackets, tikz)
-
     return re.sub(r'\n\s*\n', '\n', tikz)
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str, display_id: str = None) -> str:
     content_width_cm = 15.2
     latex_blocks = []
     if question_block:
-        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{question_block}\n\\end{{minipage}}")
+        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{question_block}\\par\n\\end{{minipage}}")
     if figure_block:
-        latex_blocks.append(f"\\par\\noindent\\centering\\leavevmode\\par\n{figure_block}\n\\par")
+        latex_blocks.append(f"\\par\\noindent\\centering\\leavevmode\\par\n{figure_block}\\par")
     if options_block:
-        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{options_block}\n\\end{{minipage}}")
+        latex_blocks.append(f"\\begin{{minipage}}{{{content_width_cm}cm}}\n{options_block}\\par\n\\end{{minipage}}")
 
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
     if display_id:
@@ -181,7 +152,7 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         f"\\vspace{{0.3em}}\n"
         f"\\noindent\\hrulefill \\par\n"
         f"\\vspace{{0.4em}}\n"
-        f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\n"
+        f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\\par\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
@@ -246,7 +217,7 @@ def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: 
   {\\color{black!70}\\bfseries\\scriptsize
     \\begin{tabular}{@{}c@{}}
       Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
-    \\end{tabular}
+    \\end{tabular}\\par
   }
 \\end{minipage}
 \\end{preview}
@@ -339,7 +310,7 @@ __DIAGRAM_BLOCK__
     \\centering {\\color{gray}\\bfseries\\scriptsize
         \\begin{tabular}{@{}c@{}}
             Q.REF: __DISPLAY_ID__ \\enskip $\\bullet$ \\enskip \\telegramicon \\enskip __WATERMARK__
-        \\end{tabular}
+        \\end{tabular}\\par
                     }
 \\end{minipage}
 \\end{minipage}
@@ -400,13 +371,11 @@ def create_explanation_assets(q, user_idx, display_id):
     correct_letter = letters[correct_idx]
 
     has_tikz = has_real_diagram(q)
-
     latex_code = None
     if has_tikz:
         figure_block = build_figure_block(q, add_strut=False)
         if figure_block:
             latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
-            print(f"\033[92m[ASSETS DEBUG]\033[0m Diagram rendering initiated for explanation canvas REF: {display_id}")
         else:
             has_tikz = False
 
