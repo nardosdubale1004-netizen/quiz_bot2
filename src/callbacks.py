@@ -12,8 +12,7 @@ from src.database import (
     db_update_private_message_id,
     db_update_response_view_state,
     db_get_user_response,
-    db_get_question_by_id,
-    db_get_track_by_display_id,
+    db_get_track_and_question,  # OPTIMIZATION: Use unified JOIN fetch
     db_get_cached_file_id,
     db_save_cached_file_id
 )
@@ -54,10 +53,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    # OPTIMIZATION: Query the single track row directly instead of pulling the entire sent_tracks table
-    track = await asyncio.to_thread(db_get_track_by_display_id, int(d_id))
+    # OPTIMIZATION: Retrieve both status metrics and questions inside one database call
+    track, question_data = await asyncio.to_thread(db_get_track_and_question, int(d_id))
 
-    if not track:
+    if not track or not question_data:
         print(f" {Style.RED}└─ [ERROR] No track record located for Ref ID: {d_id}{Style.RESET}")
         await query.answer("This quiz session has ended.", show_alert=True)
         return
@@ -69,14 +68,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     mid_key = track['message_id']
-    question_data = await asyncio.to_thread(db_get_question_by_id, track['q_id'])
-
-    if not question_data:
-        print(f" {Style.RED}└─ [ERROR] Question ID '{track['q_id']}' not found in active database.{Style.RESET}")
-        await query.answer("Error: Question data not found.")
-        return
-
-    # Warning notice template
     warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                      "<i>Your original selection and score have been securely locked.</i>\n\n"
 

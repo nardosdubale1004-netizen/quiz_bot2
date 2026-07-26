@@ -7,6 +7,7 @@ import threading
 import traceback
 import io
 import logging
+from datetime import datetime, timezone
 
 # Suppress Telegram updater warnings, polling conflicts, and httpx connection logs from spamming the CLI cockpit
 logging.basicConfig(
@@ -30,8 +31,7 @@ from src.database import (
     db_mark_question_as_sent,
     process_user_score,
     db_update_response_view_state,
-    db_get_question_by_id,
-    db_get_track_by_display_id,
+    db_get_track_and_question,  # OPTIMIZATION: Use unified JOIN fetch
     db_get_cached_file_id,
     db_save_cached_file_id
 )
@@ -105,61 +105,80 @@ async def handle_http_request(reader, writer, app):
             pass
 
 async def check_and_publish_scheduled(app):
-    q = await asyncio.to_thread(db_get_pending_scheduled_question)
-    if not q:
-        return
+    """Periodically queries the database for scheduled questions and publishes them."""
+    while True:
+        try:
+            q = await asyncio.to_thread(db_get_pending_scheduled_question)
+            if q:
+                # Parse scheduled date safely (handles strings and standard datetime classes)
+                scheduled_val = q['scheduled_for']
+                if isinstance(scheduled_val, str):
+                    scheduled_dt = datetime.fromisoformat(scheduled_val)
+                else:
+                    scheduled_dt = scheduled_val
 
-    print(f"{Style.YELLOW}[SCHEDULER] Found pending scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
-    channel = CONFIG.get("channel")
+                now_dt = datetime.now(timezone.utc)
+                scheduled_dt_utc = scheduled_dt.astimezone(timezone.utc)
+                time_diff = now_dt - scheduled_dt_utc
 
-    tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-    last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
+                # Safeguard: If the scheduled post is over 1 hour old, skip and archive it
+                if time_diff.total_seconds() > 3600:
+                    print(f"{Style.YELLOW}[SCHEDULER] Skipping question {q['id']} (scheduled for {q['scheduled_for']} in the past). Archiving.{Style.RESET}", flush=True)
+                    await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                    continue
 
-    try:
-        has_tikz = UIFactory.has_real_diagram(q)
-        if not has_tikz:
-            poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
-            m = await app.bot.send_poll(
-                chat_id=channel,
-                question=lite_math(q['question'])[:290],
-                options=[lite_math(o)[:90] for o in q['options']],
-                type=Poll.QUIZ,
-                correct_option_id=q['correct_option'],
-                explanation=poll_hint,
-                explanation_parse_mode="HTML"
-            )
-            msg_type = "poll"
-            type_str = "native"
-        else:
-            img_url, caption = UIFactory.create_question_assets(q, last_seq)
-            kb = UIFactory.build_keyboard(q, last_seq)
+                print(f"{Style.YELLOW}[SCHEDULER] Found scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
+                channel = CONFIG.get("channel")
 
-            cache_key = f"q:{q['id']}:diagram"
-            cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+                tracks = await asyncio.to_thread(engine.db_get_all_tracks)
+                last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
 
-            media_bytes = None
-            if img_url and not cached_file_id:
-                async with httpx.AsyncClient() as client:
-                    resp = await fetch_kroki_image(client, img_url)
-                    if resp and resp.status_code == 200:
-                        media_bytes = resp.content
-                    else:
-                        raise Exception("Kroki failed to compile scheduled asset.")
+                has_tikz = UIFactory.has_real_diagram(q)
+                if not has_tikz:
+                    poll_hint = UIFactory.replace_code_with_italic(UIFactory.generate_poll_hint(q))
+                    m = await app.bot.send_poll(
+                        chat_id=channel,
+                        question=lite_math(q['question'])[:290],
+                        options=[lite_math(o)[:90] for o in q['options']],
+                        type=Poll.QUIZ,
+                        correct_option_id=q['correct_option'],
+                        explanation=poll_hint,
+                        explanation_parse_mode="HTML"
+                    )
+                    msg_type = "poll"
+                    type_str = "native"
+                else:
+                    img_url, caption = UIFactory.create_question_assets(q, last_seq)
+                    kb = UIFactory.build_keyboard(q, last_seq)
 
-            m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id)
-            msg_type = "photo" if img_url else "text"
-            type_str = "premium"
+                    cache_key = f"q:{q['id']}:diagram"
+                    cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
-            # Save successfully compiled file ID to cache for subsequent renders
-            if img_url and not cached_file_id and m.photo:
-                await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+                    media_bytes = None
+                    if img_url and not cached_file_id:
+                        async with httpx.AsyncClient() as client:
+                            resp = await fetch_kroki_image(client, img_url)
+                            if resp and resp.status_code == 200:
+                                media_bytes = resp.content
+                            else:
+                                raise Exception("Kroki failed to compile scheduled asset.")
 
-        await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
-        await asyncio.to_thread(db_mark_question_as_sent, q['id'])
-        print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
-    except Exception as e:
-        traceback.print_exc()
-        print(f"{Style.RED}[SCHEDULER ERROR] Failed to post scheduled question {q['id']}: {e}{Style.RESET}", flush=True)
+                    m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id)
+                    msg_type = "photo" if img_url else "text"
+                    type_str = "premium"
+
+                    if img_url and not cached_file_id and m.photo:
+                        await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+
+                await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
+                await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"{Style.RED}[SCHEDULER ERROR] Failed to process scheduler tick: {e}{Style.RESET}", flush=True)
+
+        # Query database every 60 seconds
+        await asyncio.sleep(60)
 
 async def start_command(update: Update, context):
     user_id = update.effective_user.id
@@ -177,20 +196,14 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            # OPTIMIZATION: Query specific display_id directly instead of scanning the full tracks dictionary in memory
-            track = await asyncio.to_thread(db_get_track_by_display_id, display_id)
+            # OPTIMIZATION: Fetch both track metadata and question settings in a single SQL JOIN roundtrip
+            track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
 
-            if not track:
+            if not track or not question_data:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
             mid_key = track['message_id']
-            question_data = await asyncio.to_thread(db_get_question_by_id, track['q_id'])
-
-            if not question_data:
-                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
-                return
-
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
 
             if existing_response:
@@ -225,7 +238,6 @@ async def start_command(update: Update, context):
                         question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                     )
 
-                    # OPTIMIZATION: Check if the explanation diagram file_id is cached
                     cache_key = f"q:{question_data['id']}:exp:{original_selection}"
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
@@ -416,6 +428,7 @@ async def run_cloud_server(app, port):
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
+    # Convert the check to run in the background periodic check loop
     asyncio.create_task(check_and_publish_scheduled(app))
 
     server = await asyncio.start_server(
@@ -485,6 +498,9 @@ def main():
 
         # Start background polling updater so students can receive explanation cards
         loop.run_until_complete(app.updater.start_polling())
+
+        # Start background periodic task for scheduled questions under polling mode as well
+        asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username

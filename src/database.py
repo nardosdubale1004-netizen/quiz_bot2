@@ -273,14 +273,70 @@ class QuizEngine:
         return self.db
 
 
-# --- OUT-OF-CLASS DB UTILITIES ---
+# --- GLOBAL SINGLETON ENGINE INSTANCE ---
+# Eliminates redundant creation of QuizEngine and connections throughout runtime
+GLOBAL_ENGINE = QuizEngine()
+
+
+# --- OUT-OF-CLASS HIGH PERFORMANCE DB UTILITIES ---
+
+def db_get_track_and_question(display_id: int):
+    """Retrieves both track record and question data in a single SQL JOIN to minimize roundtrips."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    t.message_id AS track_message_id, 
+                    t.status AS track_status, 
+                    t.display_id AS track_display_id, 
+                    t.type AS track_type, 
+                    t.msg_type AS track_msg_type, 
+                    t.followup_mid AS track_followup_mid,
+                    q.*
+                FROM sent_tracks t
+                JOIN questions q ON t.q_id = q.id
+                WHERE t.display_id = %s;
+            """, (int(display_id),))
+            row = cur.fetchone()
+            if not row:
+                return None, None
+            
+            row_dict = dict(row)
+            
+            # Reconstruct the track dictionary
+            track = {
+                "message_id": row_dict.pop("track_message_id"),
+                "status": row_dict.pop("track_status"),
+                "display_id": row_dict.pop("track_display_id"),
+                "type": row_dict.pop("track_type"),
+                "msg_type": row_dict.pop("track_msg_type"),
+                "followup_mid": row_dict.pop("track_followup_mid"),
+                "q_id": row_dict["id"]
+            }
+            
+            # Parse only the question JSON fields
+            for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+                if field in row_dict and isinstance(row_dict[field], str):
+                    try:
+                        row_dict[field] = json.loads(row_dict[field])
+                    except Exception:
+                        pass
+            return track, row_dict
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch track and question together for display_id {display_id}: {e}")
+        return None, None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
 
 def db_get_cached_file_id(cache_key: str):
     """Retrieves cached Telegram file ID to bypass Kroki compilation."""
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT file_id FROM compiled_assets_cache WHERE cache_key = %s;", (cache_key,))
             row = cur.fetchone()
@@ -290,15 +346,14 @@ def db_get_cached_file_id(cache_key: str):
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_save_cached_file_id(cache_key: str, file_id: str):
     """Stores generated Telegram file ID in cache."""
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO compiled_assets_cache (cache_key, file_id)
@@ -311,15 +366,14 @@ def db_save_cached_file_id(cache_key: str, file_id: str):
         print(f"[DB ERROR] Failed to save file_id cache: {e}")
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_track_by_message_id(message_id: str):
     """Retrieves a single track directly by message ID to prevent full table scans."""
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
             row = cur.fetchone()
@@ -329,15 +383,14 @@ def db_get_track_by_message_id(message_id: str):
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_track_by_display_id(display_id: int):
     """Retrieves a single track directly by display ID to prevent full table scans."""
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM sent_tracks WHERE display_id = %s;", (int(display_id),))
             row = cur.fetchone()
@@ -347,14 +400,13 @@ def db_get_track_by_display_id(display_id: int):
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_set_user_grade(user_id, grade: int):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO user_stats (user_id, grade, total, correct, total_marks)
@@ -367,32 +419,29 @@ def db_set_user_grade(user_id, grade: int):
         print(f"[DB ERROR] Failed to set user grade: {e}")
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_user_profile(user_id):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM user_stats WHERE user_id = %s;", (str(user_id),))
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:
-        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch user profile: {e}")
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_user_response(user_id, message_id):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT * FROM user_responses
@@ -401,19 +450,17 @@ def db_get_user_response(user_id, message_id):
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:
-        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch user response: {e}")
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_update_private_message_id(user_id, message_id, private_message_id):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE user_responses
@@ -426,14 +473,13 @@ def db_update_private_message_id(user_id, message_id, private_message_id):
         print(f"[DB ERROR] Failed to update private message ID: {e}")
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_update_response_view_state(user_id, message_id, show_derivation: bool, show_perf: bool):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE user_responses
@@ -446,14 +492,13 @@ def db_update_response_view_state(user_id, message_id, show_derivation: bool, sh
         print(f"[DB ERROR] Failed to update response view state: {e}")
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_weekly_leaderboard(grade: int):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT ur.user_id, SUM(ur.marks_awarded) as total_score
@@ -468,19 +513,17 @@ def db_get_weekly_leaderboard(grade: int):
             rows = cur.fetchall()
             return rows
     except Exception as e:
-        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch weekly leaderboard: {e}")
         return []
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_pending_scheduled_question():
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT * FROM questions
@@ -493,19 +536,17 @@ def db_get_pending_scheduled_question():
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:
-        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch scheduled question: {e}")
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_mark_question_as_sent(q_id):
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("UPDATE questions SET is_sent = TRUE WHERE id = %s;", (q_id,))
             conn.commit()
@@ -514,7 +555,7 @@ def db_mark_question_as_sent(q_id):
         print(f"[DB ERROR] Failed to mark question as sent: {e}")
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
@@ -522,12 +563,10 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     Evaluates, writes, and computes performance variables for a user action.
     Locks row modifications on message_id securely inside standard transaction bounds.
     """
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # Removed the slow, heavy "FOR UPDATE" sent_tracks row lock to resolve high-concurrency connection pooling wait delays.
             first_try = True
             marks_to_award = 0
             is_bonus_winner = False
@@ -618,15 +657,14 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
 
 
 def db_get_question_by_id(q_id):
     """Fetches a single question directly by its ID, avoiding heavy full-table scans."""
-    engine_db = QuizEngine()
     conn = None
     try:
-        conn = engine_db.get_db_connection()
+        conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM questions WHERE id = %s;", (q_id,))
             row = cur.fetchone()
@@ -643,9 +681,8 @@ def db_get_question_by_id(q_id):
                         pass
             return q
     except Exception as e:
-        if conn: conn.rollback()
         print(f"[DB ERROR] Failed to fetch question {q_id}: {e}")
         return None
     finally:
         if conn:
-            engine_db.release_connection(conn)
+            GLOBAL_ENGINE.release_connection(conn)
