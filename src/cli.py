@@ -277,7 +277,8 @@ async def admin_panel(app, engine: QuizEngine):
                                     print(f" {Style.CYAN}├─ [CLOSE] Rendering cropped diagram graphic for REF: {ref}...{Style.RESET}")
                                     fig_block = UIFactory.build_figure_block(q, add_strut=False)
                                     if fig_block:
-                                        sol_latex = UIFactory.assemble_diagram_only_layout("@grade12EntranceExam", ref, fig_block)
+                                        channel_id = CONFIG.get("channel") or "@QuizOva"
+                                        sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, ref, fig_block)
                                         sol_img_url = UIFactory.get_latex_url(sol_latex)
                                         async with httpx.AsyncClient() as client:
                                             resp = await fetch_kroki_image(client, sol_img_url, sol_latex)

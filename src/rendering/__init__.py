@@ -24,9 +24,15 @@ from src.rendering.html_views import (
     build_interactive_keyboard,
     build_answered_keyboard
 )
+from src.config import CONFIG
 
-class UIFactory:
-    WATERMARK = "@grade12EntranceExam"
+class UIFactoryMeta(type):
+    @property
+    def WATERMARK(cls):
+        # Dynamically pulls from environment or config.json
+        return CONFIG.get("channel") or "@QuizOva"
+
+class UIFactory(metaclass=UIFactoryMeta):
     escape_latex = staticmethod(escape_latex)
     build_figure_block = staticmethod(build_figure_block)
     scale_tikz_block = staticmethod(scale_tikz_block)
@@ -87,9 +93,13 @@ class UIFactory:
         )
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+        
+        # Dynamically build the channel link from configuration
+        channel_name = cls.WATERMARK
+        channel_username = channel_name.lstrip('@')
         footer = (
             f"\n<hr/>\n"
-            f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+            f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
             f"{' '.join(hashtag_list)}"
         )
         final_caption = f"{header}{caption_q}{footer}"

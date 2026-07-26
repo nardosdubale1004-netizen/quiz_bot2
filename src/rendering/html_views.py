@@ -137,10 +137,12 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     spoiler_content = replace_code_with_italic(spoiler_content)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    channel_name = CONFIG.get("channel", "@QuizOva")
+    channel_username = channel_name.lstrip('@')
 
     footer = (
         f"\n<hr/>\n"
-        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
         f"{' '.join(hashtag_list)}{footer_note}"
     )
 
@@ -153,7 +155,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     return "\n".join(components)
 
 def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
-    # Defensively support legacy configuration states for backward compatibility
     if compact is not None:
         show_derivation = not compact
         show_perf = False
@@ -225,7 +226,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     step_by_step = replace_code_with_italic(step_by_step)
     breakdown_block = replace_code_with_italic(breakdown_block)
 
-    # Render score card section dynamically if turned on
     score_segment = ""
     if show_perf and perf_card:
         is_repeat = not perf_card.get('first_try', True)
@@ -269,7 +269,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
-    # --- Standalone Followup Continuation Responses ---
     if continuation:
         parts = []
         if show_derivation:
@@ -317,9 +316,13 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         analysis_block = f"\n{breakdown_block}"
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    # Dynamically build footer channel text and URL
+    channel_name = CONFIG.get("channel", "@QuizOva")
+    channel_username = channel_name.lstrip('@')
+
     footer = (
         f"\n<hr/>\n"
-        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
         f"{' '.join(hashtag_list)}"
     )
 
@@ -337,29 +340,33 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
 
     return "\n".join(components)
 
-def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: bool, show_perf: bool, is_photo=False) -> InlineKeyboardMarkup:
+def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: bool, show_perf: bool, is_photo=False, message_id: str = None) -> InlineKeyboardMarkup:
     """Generates a composite, binary state-driven keyboard mapping the exact on/off layout combination."""
     prefix = "toggle_photo" if is_photo else "toggle"
     buttons = []
 
-    # Derivation toggle button
     if show_derivation:
         buttons.append([InlineKeyboardButton("↩️ HIDE SOLUTION DETAILS", callback_data=f"{prefix}|{d_id}|{user_selection}|0|{1 if show_perf else 0}")])
     else:
         buttons.append([InlineKeyboardButton("📖 REVEAL COMPLETE DERIVATION", callback_data=f"{prefix}|{d_id}|{user_selection}|1|{1 if show_perf else 0}")])
 
-    # Performance card toggle button
     if show_perf:
         buttons.append([InlineKeyboardButton("↩️ HIDE PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|0")])
     else:
         buttons.append([InlineKeyboardButton("📊 VIEW PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|1")])
 
-    buttons.append([InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")])
+    channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
+    if message_id:
+        return_url = f"https://t.me/{channel_username}/{message_id}"
+    else:
+        return_url = f"https://t.me/{channel_username}"
+
+    buttons.append([InlineKeyboardButton("📣 RETURN TO CHANNEL", url=return_url)])
     return InlineKeyboardMarkup(buttons)
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:
     letters = ["𝗔", "𝗕", "𝗖", "𝗗", "𝗘"]
-    bot_user = CONFIG.get("bot_username", "EthiopiaEntranceExamBot")
+    bot_user = CONFIG.get("bot_username", "QuizOvaBot")
     buttons = []
     for i, opt in enumerate(q['options']):
         clean_opt = lite_math(opt)

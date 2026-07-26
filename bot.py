@@ -9,7 +9,6 @@ import io
 import logging
 from datetime import datetime, timezone
 
-# Suppress Telegram updater warnings, polling conflicts, and httpx connection logs from spamming the CLI cockpit
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.WARNING
@@ -31,7 +30,7 @@ from src.database import (
     db_mark_question_as_sent,
     process_user_score,
     db_update_response_view_state,
-    db_get_track_and_question,  # OPTIMIZATION: Use unified JOIN fetch
+    db_get_track_and_question,
     db_get_cached_file_id,
     db_save_cached_file_id
 )
@@ -105,12 +104,10 @@ async def handle_http_request(reader, writer, app):
             pass
 
 async def check_and_publish_scheduled(app):
-    """Periodically queries the database for scheduled questions and publishes them."""
     while True:
         try:
             q = await asyncio.to_thread(db_get_pending_scheduled_question)
             if q:
-                # Parse scheduled date safely (handles strings and standard datetime classes)
                 scheduled_val = q['scheduled_for']
                 if isinstance(scheduled_val, str):
                     scheduled_dt = datetime.fromisoformat(scheduled_val)
@@ -121,7 +118,6 @@ async def check_and_publish_scheduled(app):
                 scheduled_dt_utc = scheduled_dt.astimezone(timezone.utc)
                 time_diff = now_dt - scheduled_dt_utc
 
-                # Safeguard: If the scheduled post is over 1 hour old, skip and archive it
                 if time_diff.total_seconds() > 3600:
                     print(f"{Style.YELLOW}[SCHEDULER] Skipping question {q['id']} (scheduled for {q['scheduled_for']} in the past). Archiving.{Style.RESET}", flush=True)
                     await asyncio.to_thread(db_mark_question_as_sent, q['id'])
@@ -177,18 +173,17 @@ async def check_and_publish_scheduled(app):
             traceback.print_exc()
             print(f"{Style.RED}[SCHEDULER ERROR] Failed to process scheduler tick: {e}{Style.RESET}", flush=True)
 
-        # Query database every 60 seconds
         await asyncio.sleep(60)
 
 async def start_command(update: Update, context):
     user_id = update.effective_user.id
     args = context.args
 
+    channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
     channel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")
     ]])
 
-    # --- DEEP-LINKED QUIZ ANSWER PROCESSING ---
     if args and args[0].startswith("ans_"):
         payload = args[0]
         try:
@@ -196,12 +191,15 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            # OPTIMIZATION: Fetch both track metadata and question settings in a single SQL JOIN roundtrip
             track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
 
             if not track or not question_data:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
+
+            channel_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")
+            ]])
 
             mid_key = track['message_id']
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
@@ -241,7 +239,7 @@ async def start_command(update: Update, context):
                     cache_key = f"q:{question_data['id']}:exp:{original_selection}"
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
-                    photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
+                    photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation, show_perf, is_photo=True, message_id=track['message_id'])
                     legacy_caption = convert_to_legacy_html(explanation_html_compact)
 
                     if cached_file_id:
@@ -277,7 +275,7 @@ async def start_command(update: Update, context):
                         await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", display_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
                     return
 
-                reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=False)
+                reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation, show_perf, is_photo=False, message_id=track['message_id'])
                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
 
                 LOCKOUT_MESSAGES.add((user_id, f_m.message_id))
@@ -300,7 +298,7 @@ async def start_command(update: Update, context):
                 cache_key = f"q:{question_data['id']}:exp:{user_selection}"
                 cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
-                photo_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=True)
+                photo_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=True, message_id=track['message_id'])
                 legacy_caption = convert_to_legacy_html(explanation_html_compact)
 
                 if cached_file_id:
@@ -323,7 +321,7 @@ async def start_command(update: Update, context):
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                 return
 
-            reveal_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=False)
+            reveal_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=False, message_id=track['message_id'])
             f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
             await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
             return
@@ -364,7 +362,7 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
-        [InlineKeyboardButton("📢 VISIT CHANNEL", url="https://t.me/grade12EntranceExam")]
+        [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await send_rich_message_safe(
@@ -392,8 +390,9 @@ async def leaderboard_command(update: Update, context):
 
     weekly_top = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
 
+    channel_username = CONFIG.get("channel", "grade12EntranceExam").lstrip('@')
     channel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 RETURN TO CHANNEL", url="https://t.me/grade12EntranceExam")
+        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")
     ]])
 
     leaderboard_text = [
@@ -428,7 +427,6 @@ async def run_cloud_server(app, port):
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
-    # Convert the check to run in the background periodic check loop
     asyncio.create_task(check_and_publish_scheduled(app))
 
     server = await asyncio.start_server(
@@ -492,14 +490,11 @@ def main():
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
 
-        # Clean up any active webhook conflict from cloud deployments before polling
         print("Clearing active webhook to prevent polling conflict...", flush=True)
         loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
 
-        # Start background polling updater so students can receive explanation cards
         loop.run_until_complete(app.updater.start_polling())
 
-        # Start background periodic task for scheduled questions under polling mode as well
         asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
 
         bot_info = loop.run_until_complete(app.bot.get_me())

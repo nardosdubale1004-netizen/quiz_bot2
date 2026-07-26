@@ -376,11 +376,15 @@ def create_explanation_assets(q, user_idx, display_id):
 
     has_tikz = has_real_diagram(q)
 
+    # Use CONFIG dynamic channel value
+    channel_name = CONFIG.get("channel", "@QuizOva")
+    channel_username = channel_name.lstrip('@')
+
     latex_code = None
     if has_tikz:
         figure_block = build_figure_block(q, add_strut=False)
         if figure_block:
-            latex_code = assemble_diagram_only_layout("@grade12EntranceExam", display_id, figure_block)
+            latex_code = assemble_diagram_only_layout(channel_name, display_id, figure_block)
             print(f"\033[92m[ASSETS DEBUG]\033[0m Diagram rendering initiated for explanation canvas REF: {display_id}")
         else:
             has_tikz = False
@@ -421,7 +425,7 @@ def create_explanation_assets(q, user_idx, display_id):
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     footer = (
         f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📢 <b>Channel:</b> <a href='https://t.me/grade12EntranceExam'>@grade12EntranceExam</a>\n"
+        f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
         f"{' '.join(hashtag_list)}"
     )
     text_parts.append(footer)

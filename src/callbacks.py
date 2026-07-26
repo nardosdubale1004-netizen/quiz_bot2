@@ -12,7 +12,7 @@ from src.database import (
     db_update_private_message_id,
     db_update_response_view_state,
     db_get_user_response,
-    db_get_track_and_question,  # OPTIMIZATION: Use unified JOIN fetch
+    db_get_track_and_question,
     db_get_cached_file_id,
     db_save_cached_file_id
 )
@@ -26,10 +26,8 @@ def check_message_has_lockout(user_id, message) -> bool:
     """
     if not message:
         return False
-    # 1. Primary check: check our secure in-memory lockout registration
     if (user_id, message.message_id) in LOCKOUT_MESSAGES:
         return True
-    # 2. Backup check: string inspection in case of container/process restart
     current_text = message.caption or message.text or ""
     current_text_lower = current_text.lower()
     return any(kw in current_text_lower for kw in ["lockout active", "already answered", "securely locked"])
@@ -53,7 +51,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    # OPTIMIZATION: Retrieve both status metrics and questions inside one database call
     track, question_data = await asyncio.to_thread(db_get_track_and_question, int(d_id))
 
     if not track or not question_data:
@@ -85,18 +82,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)
             retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data=f"reset|{d_id}")]])
 
-            # Check if active interface currently displays the lockout warning
             has_lockout = check_message_has_lockout(user_id, query.message)
 
             if has_lockout:
                 explanation_html = warning_notice + explanation_html
 
             if active_is_photo:
-                # OPTIMIZATION: Check if solution sheet image is already compiled and cached in DB
                 cache_key = f"q:{question_data['id']}:exp:{user_selection}"
                 cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
-                photo_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=True)
+                photo_kb = UIFactory.build_answered_keyboard(d_id, user_selection, True, False, is_photo=True, message_id=track['message_id'])
                 legacy_caption = convert_to_legacy_html(explanation_html)
 
                 if cached_file_id:
@@ -121,7 +116,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                     else:
                         await query.edit_message_caption(caption=legacy_caption, reply_markup=retry_kb, parse_mode="HTML")
 
-                # Send detailed derivation followup
                 full_text = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card, continuation=True)
                 if has_lockout:
                     full_text = warning_notice + full_text
@@ -135,7 +129,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", d_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
                 return
             else:
-                reveal_kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation=True, show_perf=False, is_photo=False)
+                reveal_kb = UIFactory.build_answered_keyboard(d_id, user_selection, True, False, is_photo=False, message_id=track['message_id'])
                 await edit_rich_message_safe(
                     context.bot,
                     chat_id=query.message.chat_id,
@@ -173,7 +167,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             if has_lockout:
                 explanation_html = warning_notice + explanation_html
 
-            kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=False)
+            kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=False, message_id=track['message_id'])
 
             await edit_rich_message_safe(
                 context.bot,
@@ -198,7 +192,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
             _, perf_card = await asyncio.gather(state_task, score_task)
 
-            kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=True)
+            kb = UIFactory.build_answered_keyboard(d_id, user_selection, show_derivation, show_perf, is_photo=True, message_id=track['message_id'])
             await query.message.edit_reply_markup(reply_markup=kb)
 
             if not show_derivation and not show_perf:
