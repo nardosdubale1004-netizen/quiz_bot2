@@ -84,11 +84,11 @@ def convert_to_legacy_html(rich_html: str) -> str:
 
     return text.strip()
 
-async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, **kwargs) -> Message:
+async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, file_id=None, **kwargs) -> Message:
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
-    has_media = media_bytes is not None
+    has_media = (media_bytes is not None) or (file_id is not None)
 
-    print(f"\033[96m[RICH MESSENGER]\033[0m Attempting rich delivery to Chat: {chat_id} (media present: {has_media})")
+    print(f"\033[96m[RICH MESSENGER]\033[0m Attempting rich delivery to Chat: {chat_id} (media present: {has_media}, file_id cached: {file_id is not None})")
 
     # 1. Attempt native python-telegram-bot library helper if available
     for method_name in ["send_rich_message", "sendRichMessage"]:
@@ -102,7 +102,7 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                         "id": "quiz_diagram",
                         "media": {
                             "type": "photo",
-                            "media": "attach://quiz_diagram"
+                            "media": file_id if file_id else "attach://quiz_diagram"
                         }
                     })
                 return await method(
@@ -132,7 +132,7 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                     "id": "quiz_diagram",
                     "media": {
                         "type": "photo",
-                        "media": "attach://quiz_diagram"
+                        "media": file_id if file_id else "attach://quiz_diagram"
                     }
                 }
             ]
@@ -151,11 +151,11 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
             data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
 
         files_payload = {}
-        if has_media:
+        if has_media and not file_id:
             files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
 
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, data=data_payload, files=files_payload if has_media else None, timeout=30.0)
+            resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
             if resp.status_code == 200:
                 resp_json = resp.json()
                 if resp_json.get("ok"):
@@ -172,7 +172,7 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
     if has_media:
         return await bot.send_photo(
             chat_id=chat_id,
-            photo=media_bytes,
+            photo=file_id if file_id else media_bytes,
             caption=legacy_html,
             parse_mode="HTML",
             reply_markup=reply_markup,

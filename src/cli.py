@@ -6,7 +6,7 @@ import asyncio
 import traceback
 from pathlib import Path
 from src.config import CONFIG, Style
-from src.database import QuizEngine, db_mark_question_as_sent
+from src.database import QuizEngine, db_mark_question_as_sent, db_get_cached_file_id, db_save_cached_file_id
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.typography import lite_math
@@ -175,8 +175,12 @@ async def admin_panel(app, engine: QuizEngine):
                         img_url, caption = UIFactory.create_question_assets(q, last_seq)
                         kb = UIFactory.build_keyboard(q, last_seq)
 
+                        # Check if diagram image is cached
+                        cache_key = f"q:{q['id']}:diagram"
+                        cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+
                         media_bytes = None
-                        if img_url:
+                        if img_url and not cached_file_id:
                             async with httpx.AsyncClient() as client:
                                 resp = await fetch_kroki_image(client, img_url)
                                 if resp and resp.status_code == 200:
@@ -184,8 +188,12 @@ async def admin_panel(app, engine: QuizEngine):
                                 else:
                                     raise Exception("Kroki rendering failure.")
 
-                        m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb, media_bytes=media_bytes)
+                        m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id)
                         msg_type = "photo" if img_url else "text"
+
+                        # Save standard diagram file_id to cache if just compiled
+                        if img_url and not cached_file_id and m.photo:
+                            await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
                     await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, "premium", msg_type)
                     # Automatically flag as sent in Database to protect sync logic from repeating

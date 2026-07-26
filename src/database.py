@@ -11,6 +11,9 @@ from src.config import CONFIG, Style
 
 class QuizEngine:
     _pool = None
+    _warned_detected = False
+    _tracks_cache = {}
+    _tracks_cache_time = 0
 
     def __init__(self):
         self.config = CONFIG
@@ -19,7 +22,6 @@ class QuizEngine:
         self.refresh_interval = 30  # 30 seconds caching TTL
         self.db_url = self.config.get("database_url")
         if self.db_url:
-            print(f"{Style.GREEN}[DATABASE] PostgreSQL detected in environment.{Style.RESET}")
             if not QuizEngine._pool:
                 try:
                     QuizEngine._pool = ThreadedConnectionPool(
@@ -27,7 +29,9 @@ class QuizEngine:
                         maxconn=20,
                         dsn=self.db_url
                     )
-                    print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
+                    if not QuizEngine._warned_detected:
+                        print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
+                        QuizEngine._warned_detected = True
                 except Exception as e:
                     print(f"{Style.RED}[DATABASE ERROR] Failed to initialize connection pool: {e}{Style.RESET}")
         else:
@@ -69,6 +73,8 @@ class QuizEngine:
 
     # --- TRACKING STATE METHODS ---
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
+        # Invalidate cache when state is modified
+        QuizEngine._tracks_cache_time = 0
         conn = None
         try:
             conn = self.get_db_connection()
@@ -89,13 +95,20 @@ class QuizEngine:
                 self.release_connection(conn)
 
     def db_get_all_tracks(self):
+        # 5-second cache to prevent rapid button-clicking from spamming DB queries
+        now = time.time()
+        if QuizEngine._tracks_cache and (now - QuizEngine._tracks_cache_time < 5):
+            return QuizEngine._tracks_cache
+
         conn = None
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM sent_tracks;")
                 rows = cur.fetchall()
-                return {r['message_id']: dict(r) for r in rows}
+                QuizEngine._tracks_cache = {r['message_id']: dict(r) for r in rows}
+                QuizEngine._tracks_cache_time = now
+                return QuizEngine._tracks_cache
         except Exception as e:
             if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to retrieve tracks: {e}{Style.RESET}")
@@ -105,6 +118,8 @@ class QuizEngine:
                 self.release_connection(conn)
 
     def db_update_track_status(self, message_id, status, followup_mid=None, clear_followup=False):
+        # Invalidate cache on modification
+        QuizEngine._tracks_cache_time = 0
         conn = None
         try:
             conn = self.get_db_connection()
@@ -259,6 +274,82 @@ class QuizEngine:
 
 
 # --- OUT-OF-CLASS DB UTILITIES ---
+
+def db_get_cached_file_id(cache_key: str):
+    """Retrieves cached Telegram file ID to bypass Kroki compilation."""
+    engine_db = QuizEngine()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT file_id FROM compiled_assets_cache WHERE cache_key = %s;", (cache_key,))
+            row = cur.fetchone()
+            return row['file_id'] if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch cached file_id for key {cache_key}: {e}")
+        return None
+    finally:
+        if conn:
+            engine_db.release_connection(conn)
+
+
+def db_save_cached_file_id(cache_key: str, file_id: str):
+    """Stores generated Telegram file ID in cache."""
+    engine_db = QuizEngine()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO compiled_assets_cache (cache_key, file_id)
+                VALUES (%s, %s)
+                ON CONFLICT (cache_key) DO UPDATE SET file_id = EXCLUDED.file_id;
+            """, (cache_key, file_id))
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to save file_id cache: {e}")
+    finally:
+        if conn:
+            engine_db.release_connection(conn)
+
+
+def db_get_track_by_message_id(message_id: str):
+    """Retrieves a single track directly by message ID to prevent full table scans."""
+    engine_db = QuizEngine()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch track by message_id {message_id}: {e}")
+        return None
+    finally:
+        if conn:
+            engine_db.release_connection(conn)
+
+
+def db_get_track_by_display_id(display_id: int):
+    """Retrieves a single track directly by display ID to prevent full table scans."""
+    engine_db = QuizEngine()
+    conn = None
+    try:
+        conn = engine_db.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM sent_tracks WHERE display_id = %s;", (int(display_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch track by display_id {display_id}: {e}")
+        return None
+    finally:
+        if conn:
+            engine_db.release_connection(conn)
+
+
 def db_set_user_grade(user_id, grade: int):
     engine_db = QuizEngine()
     conn = None
@@ -429,19 +520,14 @@ def db_mark_question_as_sent(q_id):
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
     """
     Evaluates, writes, and computes performance variables for a user action.
-    Locks row modifications on message_id to ensure precise early bird calculation.
+    Locks row modifications on message_id securely inside standard transaction bounds.
     """
     engine_db = QuizEngine()
     conn = None
     try:
         conn = engine_db.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 1 FROM sent_tracks
-                WHERE message_id = %s
-                FOR UPDATE;
-            """, (str(message_id),))
-
+            # Removed the slow, heavy "FOR UPDATE" sent_tracks row lock to resolve high-concurrency connection pooling wait delays.
             first_try = True
             marks_to_award = 0
             is_bonus_winner = False
@@ -546,7 +632,7 @@ def db_get_question_by_id(q_id):
             row = cur.fetchone()
             if not row:
                 return None
-            
+
             q = dict(row)
             # Parse only this question's JSON fields
             for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:

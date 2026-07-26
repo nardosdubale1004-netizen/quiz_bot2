@@ -30,7 +30,10 @@ from src.database import (
     db_mark_question_as_sent,
     process_user_score,
     db_update_response_view_state,
-    db_get_question_by_id  # Imported helper
+    db_get_question_by_id,
+    db_get_track_by_display_id,
+    db_get_cached_file_id,
+    db_save_cached_file_id
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info
@@ -131,8 +134,11 @@ async def check_and_publish_scheduled(app):
             img_url, caption = UIFactory.create_question_assets(q, last_seq)
             kb = UIFactory.build_keyboard(q, last_seq)
 
+            cache_key = f"q:{q['id']}:diagram"
+            cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+
             media_bytes = None
-            if img_url:
+            if img_url and not cached_file_id:
                 async with httpx.AsyncClient() as client:
                     resp = await fetch_kroki_image(client, img_url)
                     if resp and resp.status_code == 200:
@@ -140,9 +146,13 @@ async def check_and_publish_scheduled(app):
                     else:
                         raise Exception("Kroki failed to compile scheduled asset.")
 
-            m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes)
+            m = await send_rich_message_safe(app.bot, chat_id=channel, html_content=caption, reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id)
             msg_type = "photo" if img_url else "text"
             type_str = "premium"
+
+            # Save successfully compiled file ID to cache for subsequent renders
+            if img_url and not cached_file_id and m.photo:
+                await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
         await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
         await asyncio.to_thread(db_mark_question_as_sent, q['id'])
@@ -167,15 +177,15 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-            mid_key = next((k for k, v in tracks.items() if k.isdigit() and int(v.get('display_id')) == display_id), None)
+            # OPTIMIZATION: Query specific display_id directly instead of scanning the full tracks dictionary in memory
+            track = await asyncio.to_thread(db_get_track_by_display_id, display_id)
 
-            if not mid_key:
+            if not track:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
-            # OPTIMIZATION: Retrieve only the target question instead of calling refresh_database()
-            question_data = await asyncio.to_thread(db_get_question_by_id, tracks[mid_key]['q_id'])
+            mid_key = track['message_id']
+            question_data = await asyncio.to_thread(db_get_question_by_id, track['q_id'])
 
             if not question_data:
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="Error: Question data not found.", reply_markup=channel_kb)
@@ -187,11 +197,9 @@ async def start_command(update: Update, context):
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
-                # Dynamic state: Read collapse states directly from the database row
                 show_derivation = existing_response.get('show_derivation', False)
                 show_perf = existing_response.get('show_perf', False)
 
-                # OPTIMIZATION: Non-blocking background message deletions to eliminate roundtrip latency
                 async def delete_msg_safe(chat_id, mid):
                     try:
                         await context.bot.delete_message(chat_id=chat_id, message_id=mid)
@@ -207,57 +215,64 @@ async def start_command(update: Update, context):
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
 
-                # Render using the database state, prepending the lockout warning
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
                 )
 
                 has_ex_diag = UIFactory.has_explanation_diagram(question_data)
                 if has_ex_diag:
-                    # Keep main caption compact, let followup handle derivations
                     explanation_html_compact = warning_notice + UIFactory.build_answered_view(
                         question_data, str(display_id), original_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                     )
-                    latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
-                    if latex_code:
-                        img_url = UIFactory.get_latex_url(latex_code)
-                        async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, img_url, latex_code)
-                            if resp and resp.status_code == 200:
-                                legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                                photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
-                                m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
 
-                                # Track as lockout message in-memory
-                                LOCKOUT_MESSAGES.add((user_id, m.message_id))
+                    # OPTIMIZATION: Check if the explanation diagram file_id is cached
+                    cache_key = f"q:{question_data['id']}:exp:{original_selection}"
+                    cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
-                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                    photo_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=True)
+                    legacy_caption = convert_to_legacy_html(explanation_html_compact)
 
-                                # Restore expanded followups immediately on reload with warning notice
-                                if show_derivation or show_perf:
-                                    full_text = warning_notice + UIFactory.build_answered_view(
-                                        question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card, continuation=True
-                                    )
-                                    follow_up = await send_rich_message_safe(
-                                        context.bot,
-                                        chat_id=update.message.chat_id,
-                                        html_content=full_text,
-                                        reply_to_message_id=m.message_id
-                                    )
-                                    await asyncio.to_thread(engine.db_save_track, mid_key, tracks[mid_key]["q_id"], "active", display_id, tracks[mid_key]["type"], tracks[mid_key]["msg_type"], followup_mid=follow_up.message_id)
-                                return
+                    if cached_file_id:
+                        print(f" {Style.GREEN}├─ [CACHE HIT] Direct DM delivery using cached file ID. Bypassing Kroki...{Style.RESET}")
+                        m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=cached_file_id, caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                    else:
+                        print(f" {Style.YELLOW}├─ [CACHE MISS] Solution diagram not cached. Rendering via Kroki...{Style.RESET}")
+                        latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
+                        if latex_code:
+                            img_url = UIFactory.get_latex_url(latex_code)
+                            async with httpx.AsyncClient() as client:
+                                resp = await fetch_kroki_image(client, img_url, latex_code)
+                                if resp and resp.status_code == 200:
+                                    m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                                    if m.photo:
+                                        await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+                                else:
+                                    m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=photo_kb)
+
+                    LOCKOUT_MESSAGES.add((user_id, m.message_id))
+                    await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+
+                    if show_derivation or show_perf:
+                        full_text = warning_notice + UIFactory.build_answered_view(
+                            question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card, continuation=True
+                        )
+                        follow_up = await send_rich_message_safe(
+                            context.bot,
+                            chat_id=update.message.chat_id,
+                            html_content=full_text,
+                            reply_to_message_id=m.message_id
+                        )
+                        await asyncio.to_thread(engine.db_save_track, mid_key, track["q_id"], "active", display_id, track["type"], track["msg_type"], followup_mid=follow_up.message_id)
+                    return
 
                 reveal_kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation=show_derivation, show_perf=show_perf, is_photo=False)
                 f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
 
-                # Track as lockout message in-memory
                 LOCKOUT_MESSAGES.add((user_id, f_m.message_id))
-
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, f_m.message_id)
                 return
 
             is_correct = (user_selection == question_data['correct_option'])
-            # Initial answer from channel starts in compact mode (False, False)
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
 
             explanation_html = UIFactory.build_answered_view(
@@ -269,17 +284,32 @@ async def start_command(update: Update, context):
                 explanation_html_compact = UIFactory.build_answered_view(
                     question_data, str(display_id), user_selection, show_derivation=False, show_perf=False, perf_card=perf_card
                 )
-                latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
-                if latex_code:
-                    img_url = UIFactory.get_latex_url(latex_code)
-                    async with httpx.AsyncClient() as client:
-                        resp = await fetch_kroki_image(client, img_url, latex_code)
-                        if resp and resp.status_code == 200:
-                            legacy_caption = convert_to_legacy_html(explanation_html_compact)
-                            photo_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=True)
-                            m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
-                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
-                            return
+
+                cache_key = f"q:{question_data['id']}:exp:{user_selection}"
+                cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+
+                photo_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=True)
+                legacy_caption = convert_to_legacy_html(explanation_html_compact)
+
+                if cached_file_id:
+                    print(f" {Style.GREEN}├─ [CACHE HIT] Direct DM delivery using cached file ID. Bypassing Kroki...{Style.RESET}")
+                    m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=cached_file_id, caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                else:
+                    print(f" {Style.YELLOW}├─ [CACHE MISS] Solution diagram not cached. Rendering via Kroki...{Style.RESET}")
+                    latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
+                    if latex_code:
+                        img_url = UIFactory.get_latex_url(latex_code)
+                        async with httpx.AsyncClient() as client:
+                            resp = await fetch_kroki_image(client, img_url, latex_code)
+                            if resp and resp.status_code == 200:
+                                m = await context.bot.send_photo(chat_id=update.message.chat_id, photo=io.BytesIO(resp.content), caption=legacy_caption, parse_mode="HTML", reply_markup=photo_kb)
+                                if m.photo:
+                                    await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+                            else:
+                                m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=photo_kb)
+
+                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                return
 
             reveal_kb = UIFactory.build_answered_keyboard(display_id, user_selection, show_derivation=False, show_perf=False, is_photo=False)
             f_m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=reveal_kb)
