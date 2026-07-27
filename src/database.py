@@ -38,18 +38,45 @@ class QuizEngine:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def get_db_connection(self):
-        """Retrieves a connection from the pool or opens a direct connection fallback."""
+        """
+        Retrieves a verified, healthy connection from the pool.
+        Prunes dead sockets automatically to handle serverless database scale-downs.
+        """
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
 
         if QuizEngine._pool:
-            try:
-                conn = QuizEngine._pool.getconn()
-                conn.cursor_factory = RealDictCursor
-                return conn
-            except Exception as e:
-                print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool getconn failed, falling back to direct connection: {e}{Style.RESET}")
+            # Attempt to checkout and verify up to 3 times to drain any stale connections
+            for _ in range(3):
+                try:
+                    conn = QuizEngine._pool.getconn()
+                    conn.cursor_factory = RealDictCursor
+                    
+                    # Connection must be structurally open
+                    if conn.closed == 0:
+                        try:
+                            # Lightweight roundtrip test to verify connection is alive
+                            with conn.cursor() as cur:
+                                cur.execute("SELECT 1;")
+                            return conn
+                        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                            # Found a stale/closed socket. Discard it from the pool
+                            print(f"{Style.YELLOW}[DATABASE] Discarding stale connection from pool: {e}{Style.RESET}")
+                            try:
+                                QuizEngine._pool.putconn(conn, close=True)
+                            except Exception:
+                                pass
+                    else:
+                        # Already closed socket. Discard it
+                        try:
+                            QuizEngine._pool.putconn(conn, close=True)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool checkout failed: {e}{Style.RESET}")
+                    break
 
+        # Fallback: Open a direct connection if pool is empty or entirely stale
         return psycopg2.connect(
             self.db_url,
             cursor_factory=RealDictCursor
@@ -61,8 +88,17 @@ class QuizEngine:
             return
         if QuizEngine._pool:
             try:
-                conn.rollback()
-                QuizEngine._pool.putconn(conn)
+                # Rollback any unfinished transactions to prevent pool contamination
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                
+                # Check if connection was closed or broken during execution
+                if conn.closed != 0:
+                    QuizEngine._pool.putconn(conn, close=True)
+                else:
+                    QuizEngine._pool.putconn(conn)
                 return
             except Exception:
                 pass
@@ -274,7 +310,6 @@ class QuizEngine:
 
 
 # --- GLOBAL SINGLETON ENGINE INSTANCE ---
-# Eliminates redundant creation of QuizEngine and connections throughout runtime
 GLOBAL_ENGINE = QuizEngine()
 
 
@@ -287,12 +322,12 @@ def db_get_track_and_question(display_id: int):
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT 
-                    t.message_id AS track_message_id, 
-                    t.status AS track_status, 
-                    t.display_id AS track_display_id, 
-                    t.type AS track_type, 
-                    t.msg_type AS track_msg_type, 
+                SELECT
+                    t.message_id AS track_message_id,
+                    t.status AS track_status,
+                    t.display_id AS track_display_id,
+                    t.type AS track_type,
+                    t.msg_type AS track_msg_type,
                     t.followup_mid AS track_followup_mid,
                     q.*
                 FROM sent_tracks t
@@ -302,9 +337,9 @@ def db_get_track_and_question(display_id: int):
             row = cur.fetchone()
             if not row:
                 return None, None
-            
+
             row_dict = dict(row)
-            
+
             # Reconstruct the track dictionary
             track = {
                 "message_id": row_dict.pop("track_message_id"),
@@ -315,7 +350,7 @@ def db_get_track_and_question(display_id: int):
                 "followup_mid": row_dict.pop("track_followup_mid"),
                 "q_id": row_dict["id"]
             }
-            
+
             # Parse only the question JSON fields
             for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
                 if field in row_dict and isinstance(row_dict[field], str):
