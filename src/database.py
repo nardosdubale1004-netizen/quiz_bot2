@@ -7,6 +7,7 @@ import psycopg2.extensions
 from psycopg2.extras import RealDictCursor, Json
 from psycopg2.pool import ThreadedConnectionPool
 from pathlib import Path
+from datetime import datetime, timezone, date
 from src.config import CONFIG, Style
 
 class QuizEngine:
@@ -38,36 +39,27 @@ class QuizEngine:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def get_db_connection(self):
-        """
-        Retrieves a verified, healthy connection from the pool.
-        Prunes dead sockets automatically to handle serverless database scale-downs.
-        """
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
 
         if QuizEngine._pool:
-            # Attempt to checkout and verify up to 3 times to drain any stale connections
             for _ in range(3):
                 try:
                     conn = QuizEngine._pool.getconn()
                     conn.cursor_factory = RealDictCursor
-                    
-                    # Connection must be structurally open
+
                     if conn.closed == 0:
                         try:
-                            # Lightweight roundtrip test to verify connection is alive
                             with conn.cursor() as cur:
                                 cur.execute("SELECT 1;")
                             return conn
                         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-                            # Found a stale/closed socket. Discard it from the pool
                             print(f"{Style.YELLOW}[DATABASE] Discarding stale connection from pool: {e}{Style.RESET}")
                             try:
                                 QuizEngine._pool.putconn(conn, close=True)
                             except Exception:
                                 pass
                     else:
-                        # Already closed socket. Discard it
                         try:
                             QuizEngine._pool.putconn(conn, close=True)
                         except Exception:
@@ -76,25 +68,21 @@ class QuizEngine:
                     print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool checkout failed: {e}{Style.RESET}")
                     break
 
-        # Fallback: Open a direct connection if pool is empty or entirely stale
         return psycopg2.connect(
             self.db_url,
             cursor_factory=RealDictCursor
         )
 
     def release_connection(self, conn):
-        """Safely returns a connection to the pool or closes it, avoiding leaks."""
         if not conn:
             return
         if QuizEngine._pool:
             try:
-                # Rollback any unfinished transactions to prevent pool contamination
                 try:
                     conn.rollback()
                 except Exception:
                     pass
-                
-                # Check if connection was closed or broken during execution
+
                 if conn.closed != 0:
                     QuizEngine._pool.putconn(conn, close=True)
                 else:
@@ -109,7 +97,6 @@ class QuizEngine:
 
     # --- TRACKING STATE METHODS ---
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
-        # Invalidate cache when state is modified
         QuizEngine._tracks_cache_time = 0
         conn = None
         try:
@@ -131,7 +118,6 @@ class QuizEngine:
                 self.release_connection(conn)
 
     def db_get_all_tracks(self):
-        # 5-second cache to prevent rapid button-clicking from spamming DB queries
         now = time.time()
         if QuizEngine._tracks_cache and (now - QuizEngine._tracks_cache_time < 5):
             return QuizEngine._tracks_cache
@@ -154,7 +140,6 @@ class QuizEngine:
                 self.release_connection(conn)
 
     def db_update_track_status(self, message_id, status, followup_mid=None, clear_followup=False):
-        # Invalidate cache on modification
         QuizEngine._tracks_cache_time = 0
         conn = None
         try:
@@ -174,7 +159,6 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
-    # --- AI QUESTIONS DYNAMIC DATABASE IMPORTER ---
     def db_import_questions(self, json_data):
         conn = None
         try:
@@ -189,20 +173,20 @@ class QuizEngine:
 
                     tags = q.get("tags", [])
                     options = q.get("options", [])
-
-                    # Adapt structures cleanly using psycopg2 JSON wrappers
                     poll_explanation = Json(q.get("poll_explanation", {}))
                     options_analysis = Json(q.get("options_analysis", []))
-
                     scheduled_for = q.get("scheduled_for")
                     force_image = q.get("force_image", False)
+                    native_question = q.get("native_question")
+                    native_options = q.get("native_options")
 
                     cur.execute("""
                         INSERT INTO questions (
                             id, subject, topic, difficulty, tags, question, latex, options,
-                            correct_option, poll_explanation, options_analysis, scheduled_for, force_image
+                            correct_option, poll_explanation, options_analysis, scheduled_for, force_image,
+                            native_question, native_options
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (id) DO UPDATE SET
                             subject = EXCLUDED.subject,
                             topic = EXCLUDED.topic,
@@ -215,11 +199,14 @@ class QuizEngine:
                             poll_explanation = EXCLUDED.poll_explanation,
                             options_analysis = EXCLUDED.options_analysis,
                             scheduled_for = EXCLUDED.scheduled_for,
-                            force_image = EXCLUDED.force_image;
+                            force_image = EXCLUDED.force_image,
+                            native_question = EXCLUDED.native_question,
+                            native_options = EXCLUDED.native_options;
                     """, (
                         q["id"], q["subject"], q["topic"], q.get("difficulty", "medium"),
                         tags, q["question"], q.get("latex"), options, int(q["correct_option"]),
-                        poll_explanation, options_analysis, scheduled_for, force_image
+                        poll_explanation, options_analysis, scheduled_for, force_image,
+                        native_question, native_options
                     ))
                     imported_count += 1
 
@@ -308,15 +295,79 @@ class QuizEngine:
                 self.db[subject].append(q)
         return self.db
 
-
 # --- GLOBAL SINGLETON ENGINE INSTANCE ---
 GLOBAL_ENGINE = QuizEngine()
 
+# --- HIGH PERFORMANCE GROUPING & GAMIFICATION DB UTILITIES ---
 
-# --- OUT-OF-CLASS HIGH PERFORMANCE DB UTILITIES ---
+def db_set_user_alliance(user_id, alliance_tag: str):
+    """Registers and normalizes school/clan hashtags."""
+    clean_tag = alliance_tag.strip().replace("#", "").upper()
+    clean_tag = "".join(c for c in clean_tag if c.isalnum() or c == "_")
+    if not clean_tag:
+        return False
+
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, alliance_tag, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET alliance_tag = EXCLUDED.alliance_tag;
+            """, (str(user_id), clean_tag))
+            conn.commit()
+            return clean_tag
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set user alliance: {e}")
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_alliance_leaderboard():
+    """Aggregates scores across school/alliance groups."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT alliance_tag, SUM(total_marks) as total_score, COUNT(user_id) as active_members
+                FROM user_stats
+                WHERE alliance_tag IS NOT NULL
+                GROUP BY alliance_tag
+                ORDER BY total_score DESC
+                LIMIT 10;
+            """)
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch alliance leaderboard: {e}")
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_responses_for_message(message_id: str):
+    """Fetches all users who answered this question during the tournament showdown."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, private_message_id, selected_option, is_correct
+                FROM user_responses
+                WHERE message_id = %s;
+            """, (str(message_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch responses for message {message_id}: {e}")
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_track_and_question(display_id: int):
-    """Retrieves both track record and question data in a single SQL JOIN to minimize roundtrips."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -339,8 +390,6 @@ def db_get_track_and_question(display_id: int):
                 return None, None
 
             row_dict = dict(row)
-
-            # Reconstruct the track dictionary
             track = {
                 "message_id": row_dict.pop("track_message_id"),
                 "status": row_dict.pop("track_status"),
@@ -351,7 +400,6 @@ def db_get_track_and_question(display_id: int):
                 "q_id": row_dict["id"]
             }
 
-            # Parse only the question JSON fields
             for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
                 if field in row_dict and isinstance(row_dict[field], str):
                     try:
@@ -360,15 +408,13 @@ def db_get_track_and_question(display_id: int):
                         pass
             return track, row_dict
     except Exception as e:
-        print(f"[DB ERROR] Failed to fetch track and question together for display_id {display_id}: {e}")
+        print(f"[DB ERROR] Failed to fetch track and question: {e}")
         return None, None
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_get_cached_file_id(cache_key: str):
-    """Retrieves cached Telegram file ID to bypass Kroki compilation."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -377,15 +423,13 @@ def db_get_cached_file_id(cache_key: str):
             row = cur.fetchone()
             return row['file_id'] if row else None
     except Exception as e:
-        print(f"[DB ERROR] Failed to fetch cached file_id for key {cache_key}: {e}")
+        print(f"[DB ERROR] Failed to fetch cached file_id: {e}")
         return None
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_save_cached_file_id(cache_key: str, file_id: str):
-    """Stores generated Telegram file ID in cache."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -402,41 +446,6 @@ def db_save_cached_file_id(cache_key: str, file_id: str):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_get_track_by_message_id(message_id: str):
-    """Retrieves a single track directly by message ID to prevent full table scans."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
-            row = cur.fetchone()
-            return dict(row) if row else None
-    except Exception as e:
-        print(f"[DB ERROR] Failed to fetch track by message_id {message_id}: {e}")
-        return None
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_get_track_by_display_id(display_id: int):
-    """Retrieves a single track directly by display ID to prevent full table scans."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM sent_tracks WHERE display_id = %s;", (int(display_id),))
-            row = cur.fetchone()
-            return dict(row) if row else None
-    except Exception as e:
-        print(f"[DB ERROR] Failed to fetch track by display_id {display_id}: {e}")
-        return None
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_set_user_grade(user_id, grade: int):
     conn = None
@@ -456,7 +465,6 @@ def db_set_user_grade(user_id, grade: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_get_user_profile(user_id):
     conn = None
     try:
@@ -471,7 +479,6 @@ def db_get_user_profile(user_id):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_get_user_response(user_id, message_id):
     conn = None
@@ -491,7 +498,6 @@ def db_get_user_response(user_id, message_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_update_private_message_id(user_id, message_id, private_message_id):
     conn = None
     try:
@@ -510,7 +516,6 @@ def db_update_private_message_id(user_id, message_id, private_message_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_update_response_view_state(user_id, message_id, show_derivation: bool, show_perf: bool):
     conn = None
     try:
@@ -528,7 +533,6 @@ def db_update_response_view_state(user_id, message_id, show_derivation: bool, sh
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_get_weekly_leaderboard(grade: int):
     conn = None
@@ -554,7 +558,6 @@ def db_get_weekly_leaderboard(grade: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_get_pending_scheduled_question():
     conn = None
     try:
@@ -577,7 +580,6 @@ def db_get_pending_scheduled_question():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_mark_question_as_sent(q_id):
     conn = None
     try:
@@ -592,12 +594,8 @@ def db_mark_question_as_sent(q_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
-    """
-    Evaluates, writes, and computes performance variables for a user action.
-    Locks row modifications on message_id securely inside standard transaction bounds.
-    """
+    """Evaluates user scores and updates the daily streak using 'last_active_at' from your schema."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -615,8 +613,49 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             if existing_response:
                 first_try = False
                 marks_to_award = existing_response['marks_awarded']
-                is_bonus_winner = (marks_to_award == 10)
+                is_bonus_winner = (marks_to_award >= 10)
+                cur.execute("SELECT total, correct, total_marks, grade, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
+                stats = cur.fetchone()
             else:
+                # --- DAILY STREAK EVALUATION ---
+                streak_multiplier = 1.0
+                cur.execute("SELECT last_active_at, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
+                user_meta = cur.fetchone()
+
+                current_streak = 0
+                today = datetime.now(timezone.utc).date()
+
+                if user_meta:
+                    last_date = user_meta.get('last_active_at')
+                    current_streak = user_meta.get('current_streak', 0) or 0
+
+                    if last_date:
+                        # Extract the .date() component safely regardless of raw timestamp or string conversion
+                        if isinstance(last_date, (datetime, date)):
+                            last_active_date = last_date.date() if isinstance(last_date, datetime) else last_date
+                        elif isinstance(last_date, str):
+                            try:
+                                last_active_date = datetime.fromisoformat(last_date.replace('Z', '+00:00')).date()
+                            except Exception:
+                                last_active_date = today
+                        else:
+                            last_active_date = today
+
+                        days_diff = (today - last_active_date).days
+                        if days_diff == 1:
+                            current_streak += 1
+                        elif days_diff > 1:
+                            current_streak = 1
+                    else:
+                        current_streak = 1
+                else:
+                    current_streak = 1
+
+                if current_streak >= 7:
+                    streak_multiplier = 1.5
+                elif current_streak >= 3:
+                    streak_multiplier = 1.2
+
                 if is_correct:
                     cur.execute("""
                         SELECT COUNT(*) FROM user_responses
@@ -625,10 +664,12 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                     correct_count = cur.fetchone()['count']
 
                     if correct_count < bonus_limit:
-                        marks_to_award = 10
+                        base_marks = 10
                         is_bonus_winner = True
                     else:
-                        marks_to_award = 2
+                        base_marks = 2
+
+                    marks_to_award = int(base_marks * streak_multiplier)
                 else:
                     marks_to_award = 0
 
@@ -643,13 +684,15 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                     correct_inc = 1 if is_correct else 0
 
                     cur.execute("""
-                        INSERT INTO user_stats (user_id, total, correct, total_marks)
-                        VALUES (%s, 1, %s, %s)
+                        INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
+                        VALUES (%s, 1, %s, %s, %s, NOW())
                         ON CONFLICT (user_id) DO UPDATE SET
                             total = COALESCE(user_stats.total, 0) + 1,
                             correct = COALESCE(user_stats.correct, 0) + %s,
-                            total_marks = COALESCE(user_stats.total_marks, 0) + %s;
-                    """, (str(user_id), correct_inc, marks_to_award, correct_inc, marks_to_award))
+                            total_marks = COALESCE(user_stats.total_marks, 0) + %s,
+                            current_streak = %s,
+                            last_active_at = NOW();
+                    """, (str(user_id), correct_inc, marks_to_award, current_streak, correct_inc, marks_to_award, current_streak))
 
                     cur.execute("RELEASE SAVEPOINT score_insertion_sp;")
                 except psycopg2.IntegrityError:
@@ -662,7 +705,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                     if existing_response_retry:
                         first_try = False
                         marks_to_award = existing_response_retry['marks_awarded']
-                        is_bonus_winner = (marks_to_award == 10)
+                        is_bonus_winner = (marks_to_award >= 10)
                     else:
                         first_try = False
                         marks_to_award = 0
@@ -670,8 +713,8 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
 
                 conn.commit()
 
-            cur.execute("SELECT total, correct, total_marks, grade FROM user_stats WHERE user_id = %s;", (str(user_id),))
-            stats = cur.fetchone()
+                cur.execute("SELECT total, correct, total_marks, grade, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
+                stats = cur.fetchone()
 
         if stats:
             accuracy = int((stats['correct'] / stats['total']) * 100) if stats['total'] > 0 else 0
@@ -683,40 +726,13 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 "marks_awarded": marks_to_award,
                 "first_try": first_try,
                 "is_bonus_winner": is_bonus_winner,
-                "grade": stats['grade']
+                "grade": stats['grade'],
+                "current_streak": stats.get('current_streak', 0)
             }
         return None
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Error in process_user_score: {e}")
-        return None
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_get_question_by_id(q_id):
-    """Fetches a single question directly by its ID, avoiding heavy full-table scans."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM questions WHERE id = %s;", (q_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-
-            q = dict(row)
-            # Parse only this question's JSON fields
-            for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
-                if field in q and isinstance(q[field], str):
-                    try:
-                        q[field] = json.loads(q[field])
-                    except Exception:
-                        pass
-            return q
-    except Exception as e:
-        print(f"[DB ERROR] Failed to fetch question {q_id}: {e}")
         return None
     finally:
         if conn:

@@ -20,10 +20,6 @@ from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboa
 from telegram.ext import ContextTypes
 
 def check_message_has_lockout(user_id, message) -> bool:
-    """
-    Safely determines if the message currently contains the lockout warning notice.
-    Checks both the in-memory shared set and the case-insensitive backup string.
-    """
     if not message:
         return False
     if (user_id, message.message_id) in LOCKOUT_MESSAGES:
@@ -51,6 +47,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
+    if action == "prompt_alliance":
+        await query.answer()
+        await query.edit_message_text(
+            "✍️ <b>Type and send your School or Alliance Tag</b> directly as a message in this chat!\n\n"
+            "<i>Example: If your school is Abyssinia Academy, reply with:</i>\n"
+            "<code>/school ABYSSINIA</code>\n\n"
+            "Your correct answers will immediately start scoring points for your school!",
+            parse_mode="HTML"
+        )
+        return
+
     track, question_data = await asyncio.to_thread(db_get_track_and_question, int(d_id))
 
     if not track or not question_data:
@@ -59,17 +66,43 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     track_status = track.get('status')
-    if track_status != "active":
-        print(f" {Style.YELLOW}└─ [WARNING] Blocked click: Quiz status is '{track_status}' (not active).{Style.RESET}")
-        await query.answer("This quiz session has ended.", show_alert=True)
-        return
-
     mid_key = track['message_id']
-    warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
-                     "<i>Your original selection and score have been securely locked.</i>\n\n"
 
     try:
+        # --- SUBMISSION INTERCEPTORS (ONLY FOR ACTIVE ROUNDS) ---
         if action == "ans":
+            if track_status == "tournament_closed":
+                await query.answer("This round is closed. Submissions are no longer accepted!", show_alert=True)
+                return
+
+            if track_status == "tournament_active":
+                user_id = query.from_user.id
+                existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
+                if existing_response:
+                    await query.answer("Lockout active! Your response has already been submitted.", show_alert=True)
+                    return
+
+                user_selection = int(data[2])
+                is_correct = (user_selection == question_data['correct_option'])
+                await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
+
+                await query.answer("Response recorded!")
+                await query.edit_message_text(
+                    "✅ <b>Response Recorded!</b>\n\n"
+                    "Your selection has been securely logged. The correct answer and step-by-step "
+                    "explanation card will be automatically delivered here in your DMs once the round ends!",
+                    parse_mode="HTML"
+                )
+                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, query.message.message_id)
+                return
+
+            # Check status lock for standard channel submissions
+            if track_status != "active":
+                print(f" {Style.YELLOW}└─ [WARNING] Blocked submission: Quiz status is '{track_status}' (not active).{Style.RESET}")
+                await query.answer("This quiz session has ended. Submissions are closed!", show_alert=True)
+                return
+
+            # Standard Answer Logic...
             user_selection = int(data[2])
             print(f" {Style.CYAN}├─ [DEBUG] Generating Answer Summary Sheet for REF: {d_id}{Style.RESET}")
             await query.answer("Generating Answer Sheet...")
@@ -139,6 +172,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 )
             return
 
+        # --- VIEW TOGGLES (ALWAYS UNLOCKED FOR COMPLETED USERS) ---
         elif action == "toggle":
             user_selection = int(data[2])
             show_derivation = (int(data[3]) == 1)

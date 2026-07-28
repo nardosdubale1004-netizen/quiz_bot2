@@ -26,6 +26,8 @@ from src.database import (
     db_get_user_response,
     db_update_private_message_id,
     db_get_weekly_leaderboard,
+    db_get_alliance_leaderboard,
+    db_set_user_alliance,
     db_get_pending_scheduled_question,
     db_mark_question_as_sent,
     process_user_score,
@@ -201,7 +203,49 @@ async def start_command(update: Update, context):
                 InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")
             ]])
 
+            track_status = track.get('status')
             mid_key = track['message_id']
+
+            # --- TOURNAMENT ANTI-CHEAT CHECKS ---
+            if track_status == "tournament_closed":
+                await send_rich_message_safe(
+                    context.bot,
+                    chat_id=update.message.chat_id,
+                    html_content="⚠️ <b>Round Closed!</b>\n\nSubmissions are no longer accepted for this tournament question.",
+                    reply_markup=channel_kb
+                )
+                return
+
+            if track_status == "tournament_active":
+                existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
+                if existing_response:
+                    await send_rich_message_safe(
+                        context.bot,
+                        chat_id=update.message.chat_id,
+                        html_content="⚠️ <b>Lockout active!</b>\n\nYou have already submitted your response for this live tournament question. Your selection is locked.",
+                        reply_markup=channel_kb
+                    )
+                    return
+
+                # Record score silently in DB
+                is_correct = (user_selection == question_data['correct_option'])
+                await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+
+                # Send confirmation message and CAPTURE the message_id to allow updates later
+                confirmation_msg = await send_rich_message_safe(
+                    context.bot,
+                    chat_id=update.message.chat_id,
+                    html_content=(
+                        "✅ <b>Response Recorded!</b>\n\n"
+                        "Your selection has been securely logged. The correct answer and step-by-step "
+                        "explanation card will be automatically delivered here in your DMs once the round ends!"
+                    ),
+                    reply_markup=channel_kb
+                )
+                if confirmation_msg:
+                    await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, confirmation_msg.message_id)
+                return
+
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
 
             if existing_response:
@@ -337,6 +381,9 @@ async def start_command(update: Update, context):
         user_marks = profile['total_marks']
         mastery = get_grade_mastery_title(user_marks)
         accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
+        streak = profile.get('current_streak', 0)
+
+        alliance_info = f"├─ Study Alliance:  <b>#{profile['alliance_tag']}</b>\n" if profile.get('alliance_tag') else ""
 
         await send_rich_message_safe(
             context.bot,
@@ -346,12 +393,14 @@ async def start_command(update: Update, context):
                 f"Your academic profile is active and fully synchronized.\n\n"
                 f"📊 <b>YOUR STUDY METRICS:</b>\n"
                 f"├─ Registered Level: <b>Grade {grade}</b>\n"
+                f"{alliance_info}"
                 f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
+                f"├─ Active Streak:   <b>🔥 {streak} Days</b>\n"
                 f"├─ Mastery Level:   <b>{mastery}</b>\n"
                 f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
                 f"💬 <b>STUDY CHANNELS:</b>\n"
                 f"• Check the main channel for active scheduled questions!\n"
-                f"• Use the /leaderboard command here to view your rank standings!"
+                f"• Type /leaderboard to view your individual rank, or <code>/leaderboard school</code> to check group rankings!"
             ),
             reply_markup=channel_kb
         )
@@ -362,6 +411,7 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
+        [InlineKeyboardButton("🏷️ SET SCHOOL / ALLIANCE TAG", callback_data="prompt_alliance|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -371,13 +421,58 @@ async def start_command(update: Update, context):
         html_content=(
             "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
             "To customize your study experience, unlock early bird rewards, and compare "
-            "scores inside fair rank tables, select your academic grade level below:"
+            "scores inside fair rank tables, select your academic grade level below:\n\n"
+            "💡 <i>Tip: Tap the Alliance button to join or create a school group to participate in group challenges!</i>"
         ),
         reply_markup=reply_markup
     )
 
+async def school_command(update: Update, context):
+    """Saves user's alliance registration."""
+    user_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("⚠️ Please specify your school name. Example: <code>/school ABYSSINIA</code>", parse_mode="HTML")
+        return
+
+    school_name = "_".join(context.args)
+    saved_tag = await asyncio.to_thread(db_set_user_alliance, user_id, school_name)
+
+    if saved_tag:
+        await update.message.reply_text(
+            f"✅ <b>Success!</b> You are now registered under the study alliance: <b>#{saved_tag}</b>.\n"
+            f"Your correct answers will now earn points for your school's global leaderboard!",
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text("⚠️ Invalid tag format. Please use alphanumeric characters only.")
+
 async def leaderboard_command(update: Update, context):
     user_id = update.effective_user.id
+    args = context.args
+
+    # Check for school filter parameter
+    if args and args[0].lower() == "school":
+        alliance_top = await asyncio.to_thread(db_get_alliance_leaderboard)
+        leaderboard_text = [
+            "🏆 <b>GLOBAL STUDY ALLIANCE STANDINGS</b> 🏆\n",
+            "🔥 <b>TOP 10 SCHOOLS & CLANS:</b>\n"
+        ]
+
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        if not alliance_top:
+            leaderboard_text.append("<i>No schools have registered points yet. Be the first by typing /school school_name!</i>")
+        else:
+            for i, row in enumerate(alliance_top):
+                leaderboard_text.append(
+                    f" {medals[i]} <b>#{row['alliance_tag']}</b> — <b>{row['total_score']} Marks</b> "
+                    f"({row['active_members']} members)"
+                )
+
+        leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
+        leaderboard_text.append("💡 <i>Encourage your classmates to join and represent your school!</i>")
+        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text))
+        return
+
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
 
     if not profile:
@@ -400,6 +495,7 @@ async def leaderboard_command(update: Update, context):
         f"🏅 <b>Your Rank Status:</b>",
         f"├─ Mastery Level: <b>{mastery}</b>",
         f"├─ Practice Score: <b>{user_marks} Marks</b>",
+        f"├─ Daily Streak:   <b>🔥 {profile.get('current_streak', 0)} Days</b>",
         f"└─ Accuracy: <b>{int((profile['correct']/profile['total'])*100) if profile['total'] > 0 else 0}%</b>\n",
         "━━━━━━━━━━━━━━━━━━━━━━━━",
         "🔥 <b>TOP 10 THIS WEEK:</b>"
@@ -454,6 +550,7 @@ def main():
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("school", school_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
@@ -513,9 +610,20 @@ def main():
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
         else:
-            import time
-            while True:
-                time.sleep(3600)
+            # --- CRITICAL NON-BLOCKING EVENT LOOP KEEPALIVE ---
+            # Using async loop sleep prevents thread freeze on daemon runs
+            async def keep_alive():
+                while True:
+                    await asyncio.sleep(3600)
+            try:
+                loop.run_until_complete(keep_alive())
+            except (KeyboardInterrupt, SystemExit):
+                pass
+            finally:
+                loop.run_until_complete(app.updater.stop())
+                loop.run_until_complete(app.stop())
+                loop.run_until_complete(app.shutdown())
+                print(f"System successfully shut down.", flush=True)
 
 if __name__ == "__main__":
     main()

@@ -108,13 +108,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         connection_header = f"<b>📖 DETAILED SOLUTION (CONTINUATION) • REF <code>{display_id}</code></b>\n<hr/>"
         return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
 
-    subject_text = beautify_markdown_math(q.get('subject','').upper())
-    topic_text = beautify_markdown_math(q.get('topic','General'))
-    header = (
-        f"🎓 <b>{subject_text}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{topic_text}</b> • 📅 {day_str}\n<hr/>"
-    )
-
     body = (
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b><br/>"
@@ -125,7 +118,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     if compact:
         opts_block = ""
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
-        footer_note = ""
     else:
         opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
         for i, o in enumerate(q['options']):
@@ -133,7 +125,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         opts_list.append("</ul>")
         opts_block = "\n" + "\n".join(opts_list)
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-        footer_note = ""
 
     spoiler_content = replace_code_with_italic(spoiler_content)
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
@@ -142,17 +133,18 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     footer = (
         f"\n<hr/>\n"
-        f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
-        f"{' '.join(hashtag_list)}{footer_note}"
+        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+        f"{' '.join(hashtag_list)}"
     )
 
-    components = [header, body]
+    components = [body]
     if opts_block:
         components.append(opts_block)
     components.append(f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>")
     components.append(footer)
 
     return "\n".join(components)
+
 
 def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
     if compact is not None:
@@ -173,7 +165,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     user_letter = letters[user_idx] if user_idx < len(letters) else "?"
     user_status = "🟩 CORRECT" if user_idx == correct_idx else "🟥 INCORRECT"
     correct_letter = letters[correct_idx]
-    day_str = get_day_from_tags(q.get('tags', []))
 
     exp = q.get("poll_explanation", {})
     why = exp.get('why', 'No step-by-step derivation available.')
@@ -279,13 +270,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         connection_header = f"<b>📝 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
         return f"{connection_header}\n" + "\n\n".join(parts)
 
-    subject_text = beautify_markdown_math(q.get('subject','').upper())
-    topic_text = beautify_markdown_math(q.get('topic','General'))
-    header = (
-        f"🎓 <b>{subject_text}</b> • REF <code>{display_id}</code>\n"
-        f"📐 <b>{topic_text}</b> • 📅 {day_str}\n<hr/>"
-    )
-
     body = (
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b><br/>"
@@ -316,17 +300,16 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         analysis_block = f"\n{breakdown_block}"
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
-    # Dynamically build footer channel text and URL
     channel_name = CONFIG.get("channel", "@QuizOva")
     channel_username = channel_name.lstrip('@')
 
     footer = (
         f"\n<hr/>\n"
-        f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
         f"{' '.join(hashtag_list)}"
     )
 
-    components = [header, body]
+    components = [body]
     if opts_block:
         components.append(opts_block)
     components.append(status_block)
@@ -339,7 +322,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     components.append(footer)
 
     return "\n".join(components)
-
 def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: bool, show_perf: bool, is_photo=False, message_id: str = None) -> InlineKeyboardMarkup:
     """Generates a composite, binary state-driven keyboard mapping the exact on/off layout combination."""
     prefix = "toggle_photo" if is_photo else "toggle"

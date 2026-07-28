@@ -70,38 +70,25 @@ class UIFactory(metaclass=UIFactoryMeta):
         from src.typography import beautify_markdown_math
 
         caption_q = (
-            f"\n"
             f"<blockquote>"
             f"<b>PROBLEM PROPOSITION</b>\n"
             f"{beautify_markdown_math(q['question'])}"
             f"</blockquote>"
-            f"\n"
         )
 
         if has_tikz:
             caption_q += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
-        from src.rendering.latex_templates import get_day_from_tags
-        day_str = get_day_from_tags(q.get('tags', []))
-
-        subject = beautify_markdown_math(q.get('subject','').upper())
-        topic = beautify_markdown_math(q.get('topic','General'))
-        header = (
-            f"🎓 <b>{subject}</b> • REF <code>{display_id}</code>\n"
-            f"📐 <b>{topic}</b> • 📅 {day_str}\n"
-            f"<hr/>\n"
-        )
-
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
-        
-        # Dynamically build the channel link from configuration
         channel_name = cls.WATERMARK
         channel_username = channel_name.lstrip('@')
+
+        # Minimalist footer combining REF and Channel Link
         footer = (
             f"\n<hr/>\n"
-            f"📢 <b>Channel:</b> <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+            f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
             f"{' '.join(hashtag_list)}"
         )
-        final_caption = f"{header}{caption_q}{footer}"
+        final_caption = f"{caption_q}{footer}"
 
         return img_url, final_caption
