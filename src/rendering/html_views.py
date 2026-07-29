@@ -12,25 +12,39 @@ def replace_code_with_italic(text: str) -> str:
 def smart_truncate_html(text: str, max_len: int) -> str:
     if not text or len(text) <= max_len:
         return text or ""
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+        
+    tokens = re.split(r'(<[^>]+>)', text)
     accumulated = ""
-    for sentence in sentences:
-        if len(accumulated) + len(sentence) + 4 > max_len:
-            break
-        accumulated += (sentence + " ")
-    accumulated = accumulated.strip() or text[:max_len - 3].strip()
-    if accumulated.count('$') % 2 != 0:
-        accumulated += '$'
-    tag_pattern = re.compile(r'<(/?)(code|b|i|span|tg-spoiler|a)(?:\s+[^>]*?)?>')
+    char_count = 0
     open_tags = []
-    for match in tag_pattern.finditer(accumulated):
-        if not match.group(1):
-            open_tags.append(match.group(2))
-        elif open_tags and open_tags[-1] == match.group(2):
-            open_tags.pop()
+    
+    for token in tokens:
+        if token.startswith("<") and token.endswith(">"):
+            tag_match = re.match(r'</?([a-zA-Z1-6-]+)', token)
+            if tag_match:
+                tag_name = tag_match.group(1).lower()
+                if token.startswith("</"):
+                    if open_tags and open_tags[-1] == tag_name:
+                        open_tags.pop()
+                else:
+                    if not token.endswith("/>") and tag_name != "hr" and tag_name != "br":
+                        open_tags.append(tag_name)
+            accumulated += token
+        else:
+            if char_count + len(token) > max_len:
+                remaining = max_len - char_count
+                accumulated += token[:remaining] + "..."
+                break
+            accumulated += token
+            char_count += len(token)
+            
     for tag in reversed(open_tags):
         accumulated += f'</{tag}>'
-    return accumulated + "..."
+        
+    if accumulated.count('$') % 2 != 0:
+        accumulated += '$'
+        
+    return accumulated
 
 def get_grade_mastery_title(marks: int) -> str:
     if marks == 0: return "🌱 Candidate (Practice)"
@@ -52,54 +66,75 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
 
-    # Construct the question body (kept unhidden)
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    channel_name = CONFIG.get("channel", "@QuizOva")
+    channel_username = channel_name.lstrip('@')
+
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+        f"{' '.join(hashtag_list)}"
+    )
+
+    from src.rendering.latex_templates import has_real_diagram
+    has_tikz = has_real_diagram(q)
+
+    # Compact View: Fits within Telegram's 1024-character photo caption limits
+    if compact:
+        raw_question = beautify_markdown_math(q['question'])
+        body_plain = f"<b>PROBLEM PROPOSITION</b>\n{raw_question}"
+        
+        opts_list = []
+        for i, o in enumerate(q['options']):
+            opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
+        opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list)
+        
+        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
+        spoiler_block = f"🎯 <b>TAP TO REVEAL KEY ANSWER:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
+        
+        components = [body_plain, opts_block, spoiler_block, footer]
+        caption_text = "\n\n".join(components)
+        
+        from src.rendering.rich_helpers import convert_to_legacy_html
+        legacy_text = convert_to_legacy_html(caption_text)
+        
+        if len(legacy_text) > 1000:
+            excess = len(legacy_text) - 980
+            allowed_question_len = max(150, len(raw_question) - excess)
+            
+            truncated_question = smart_truncate_html(raw_question, allowed_question_len)
+            body_plain = f"<b>PROBLEM PROPOSITION</b>\n{truncated_question}"
+            
+            components = [body_plain, opts_block, spoiler_block, footer]
+            caption_text = "\n\n".join(components)
+            
+        return caption_text
+
+    # Full View: (Used for text-only questions or DM sheets where size limit is 4096)
     body = (
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b><br/>"
         f"{beautify_markdown_math(q['question'])}"
         f"</blockquote>"
     )
+    if has_tikz:
+        body += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
-    # Construct the options block (kept unhidden)
     opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
     for i, o in enumerate(q['options']):
         opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
     opts_list.append("</ul>")
     opts_block = "\n".join(opts_list)
 
-    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
-    channel_name = CONFIG.get("channel", "@QuizOva")
-    channel_username = channel_name.lstrip('@')
-
-    footer = (
-        f"\n<hr/>\n"
-        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
-        f"{' '.join(hashtag_list)}"
-    )
-
-    # Compact View: Fits within Telegram's 1024-character photo caption limits
-    if compact:
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
-        components = [
-            body,
-            opts_block,
-            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>",
-            footer
-        ]
-        return "\n\n".join(components)
-
-    # Full View: Eliminates all block-level blockquotes inside the spoiler to ensure hides work
     exp = q.get("poll_explanation", {})
     why = exp.get('why', 'No detailed explanation provided.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
-    # Flatten general principle block
     general_principle = (
         f"🏛️ <b>GENERAL PRINCIPLE:</b>\n"
         f"<i>{beautify_markdown_math(rule_text)}</i>\n"
     )
 
-    # Flatten step-by-step derivation blocks
     step_by_step_parts = [
         f"🔢 <b>STEP-BY-STEP DERIVATION:</b>\n"
         f"{beautify_markdown_math(why)}"
@@ -111,7 +146,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     step_by_step = "\n\n".join(step_by_step_parts)
 
-    # Flatten option breakdowns
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
         f"🔍 <b>OPTION BREAKDOWN:</b>\n"
@@ -129,9 +163,6 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
-            # We append ' .' (a space and a period) to the end of the example block.
-            # This places standard plain text at the boundaries of the spoiler,
-            # avoiding the client-side parsing bug with trailing math tags.
             analysis_line += f"\n  {beautify_markdown_math(example_text)} ."
         breakdown_parts.append(analysis_line)
 
@@ -141,11 +172,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     step_by_step = replace_code_with_italic(step_by_step)
     breakdown_block = replace_code_with_italic(breakdown_block)
 
-    # Join the explanations
     spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-
-    # Replace block-level math tags in the spoiler with inline tags
-    # to maintain compatibility inside rich inline containers.
     spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
     spoiler_content = replace_code_with_italic(spoiler_content)
 
@@ -296,6 +323,9 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         f"{beautify_markdown_math(q['question'])}"
         f"</blockquote>"
     )
+    from src.rendering.latex_templates import has_real_diagram
+    if has_real_diagram(q):
+        body += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
     user_val = q['options'][user_idx] if user_idx < len(q['options']) else "Unknown"
     correct_val = q['options'][correct_idx]

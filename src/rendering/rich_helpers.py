@@ -8,30 +8,17 @@ from src.typography import lite_math
 
 def convert_to_legacy_html(rich_html: str) -> str:
     """
-    Converts advanced 2026 Rich HTML tags to standard, safe legacy Telegram HTML tags.
-    Natively maps advanced <tg-math> and <tg-math-block> tags to clean, standard
-    Unicode representations to prevent client-side HTML entity parsing crashes.
+    Converts advanced Rich HTML tags to standard, safe legacy Telegram HTML tags.
+    Preserves <tg-math> tags and maps <tg-math-block> tags to <tg-math> to prevent
+    unsupported tag parsing errors on standard Telegram HTML fallbacks.
     """
     if not rich_html:
         return ""
 
     text = rich_html
 
-    # Intercept and convert native math tags to safe HTML-compatible formatting
-    from src.typography import clean_latex_to_unicode
-
-    def repl_block(match):
-        formula = match.group(1)
-        cleaned = clean_latex_to_unicode(formula)
-        return f"\n<pre>{cleaned}</pre>\n"
-
-    def repl_inline(match):
-        formula = match.group(1)
-        cleaned = clean_latex_to_unicode(formula)
-        return cleaned
-
-    text = re.sub(r'<tg-math-block>(.*?)</tg-math-block>', repl_block, text, flags=re.DOTALL)
-    text = re.sub(r'<tg-math>(.*?)</tg-math>', repl_inline, text, flags=re.DOTALL)
+    # Map tg-math-block to standard tg-math with custom spacing for legacy parse fallback
+    text = text.replace("<tg-math-block>", "\n<tg-math>").replace("</tg-math-block>", "</tg-math>\n")
 
     # Convert headers to standard bold tags
     text = re.sub(r'</?h[1-6](?:\s+[^>]*)?>', lambda m: "<b>" if not m.group(0).startswith("</") else "</b>\n", text)
@@ -58,16 +45,17 @@ def convert_to_legacy_html(rich_html: str) -> str:
                     formatted_rows.append(f"  ├─ {clean_cells[0]}: <b>{clean_cells[1]}</b>")
                 else:
                     formatted_rows.append("  " + " | ".join(clean_cells))
-        if formatted_rows:
-            formatted_rows[-1] = formatted_rows[-1].replace("├─", "└─")
-        return "\n".join(formatted_rows)
+            if formatted_rows:
+                formatted_rows[-1] = formatted_rows[-1].replace("├─", "└─")
+            return "\n".join(formatted_rows)
 
     text = re.sub(r'<table>(.*?)</table>', table_sub, text, flags=re.DOTALL)
 
     # Safe allowed standard formatting elements supported by Telegram Bot API
     supported_legacy_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
-        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote"
+        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
+        "tg-math", "/tg-math"
     ]
 
     def strip_unsupported(match):
@@ -165,7 +153,7 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
     except Exception as e:
         print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
 
-    # 3. Ultimate Fallback to Standard sendPhoto (if media is present) or sendMessage (if text-only)
+    # 3. Ultimate Fallback to Standard HTML legacy delivery
     print(f"{Style.YELLOW}[RICH MSG] Falling back to standard HTML legacy delivery.{Style.RESET}", flush=True)
     legacy_html = convert_to_legacy_html(normalized_content)
 
@@ -189,54 +177,72 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
             **kwargs
         )
 
-async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: str, reply_markup=None, **kwargs) -> Message:
+async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: str, reply_markup=None, media_bytes=None, file_id=None, **kwargs) -> Message:
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     rich_html = normalized_content.replace("\n", "<br/>")
+    has_media = (media_bytes is not None) or (file_id is not None)
 
-    print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id}")
+    print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id} (media present: {has_media})")
 
-    # 1. Attempt raw HTTP POST first (bypassing PTB client-side text-empty check)
+    # 1. Attempt raw HTTP POST with correctly serialized JSON strings
     try:
         url = f"https://api.telegram.org/bot{bot.token}/editMessageText"
-        payload = {
+        
+        rich_message_dict = {
+            "html": rich_html
+        }
+        if has_media:
+            rich_message_dict["media"] = [
+                {
+                    "id": "quiz_diagram",
+                    "media": {
+                        "type": "photo",
+                        "media": file_id if file_id else "attach://quiz_diagram"
+                    }
+                }
+            ]
+
+        data_payload = {
             "chat_id": str(chat_id),
-            "message_id": int(message_id),
-            "rich_message": {
-                "html": rich_html
-            }
+            "message_id": str(message_id),
+            "rich_message": json.dumps(rich_message_dict)
         }
         if reply_markup:
-            payload["reply_markup"] = reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup
+            data_payload["reply_markup"] = json.dumps(reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup)
 
         for k, v in kwargs.items():
-            payload[k] = v.to_dict() if hasattr(v, "to_dict") else v
+            data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
+
+        files_payload = {}
+        if has_media and not file_id:
+            files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
 
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=30.0)
+            resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
             if resp.status_code == 200:
                 resp_json = resp.json()
                 if resp_json.get("ok"):
                     return Message.de_json(resp_json["result"], bot)
             else:
-                print(f"[RICH MSG] editMessageText raw endpoint returned status {resp.status_code}: {resp.text}", flush=True)
+                print(f"[RICH MSG] editMessageText raw HTTP returned status {resp.status_code}: {resp.text}", flush=True)
     except Exception as e:
         print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
 
-    # 2. Native python-telegram-bot helper fallback (using space text to satisfy client checks)
-    try:
-        return await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=" ",
-            api_kwargs={"rich_message": {"html": rich_html}},
-            reply_markup=reply_markup,
-            **kwargs
-        )
-    except Exception as e:
-        print(f"{Style.YELLOW}[RICH MSG] editMessageText with api_kwargs failed: {e}. Trying legacy HTML edit...{Style.RESET}", flush=True)
-
-    # 3. Ultimate Fallback to Standard HTML edit_message_text
+    # 2. Ultimate Fallback to Standard legacy HTML editing
     legacy_html = convert_to_legacy_html(normalized_content)
+    if has_media:
+        try:
+            return await bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=legacy_html,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                **kwargs
+            )
+        except Exception:
+            pass
+
     return await bot.edit_message_text(
         chat_id=chat_id,
         message_id=message_id,
@@ -244,4 +250,4 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
         parse_mode="HTML",
         reply_markup=reply_markup,
         **kwargs
-    )
+)

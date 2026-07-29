@@ -159,6 +159,27 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+    def db_swap_track_message_id(self, old_mid, new_mid):
+        """Swaps the message ID inside both track records and user responses for deleted photo elements."""
+        QuizEngine._tracks_cache_time = 0
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("UPDATE user_responses SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                except Exception as e:
+                    print(f"[DB SWAP WARNING] user_responses update bypassed: {e}")
+                
+                cur.execute("UPDATE sent_tracks SET message_id = %s, msg_type = 'text' WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                conn.commit()
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"[DB ERROR] Failed to swap track message ID: {e}")
+        finally:
+            if conn:
+                self.release_connection(conn)
+
     def db_import_questions(self, json_data):
         conn = None
         try:
@@ -295,13 +316,9 @@ class QuizEngine:
                 self.db[subject].append(q)
         return self.db
 
-# --- GLOBAL SINGLETON ENGINE INSTANCE ---
 GLOBAL_ENGINE = QuizEngine()
 
-# --- HIGH PERFORMANCE GROUPING & GAMIFICATION DB UTILITIES ---
-
 def db_set_user_alliance(user_id, alliance_tag: str):
-    """Registers and normalizes school/clan hashtags."""
     clean_tag = alliance_tag.strip().replace("#", "").upper()
     clean_tag = "".join(c for c in clean_tag if c.isalnum() or c == "_")
     if not clean_tag:
@@ -327,7 +344,6 @@ def db_set_user_alliance(user_id, alliance_tag: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_alliance_leaderboard():
-    """Aggregates scores across school/alliance groups."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -349,7 +365,6 @@ def db_get_alliance_leaderboard():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_responses_for_message(message_id: str):
-    """Fetches all users who answered this question during the tournament showdown."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -595,7 +610,6 @@ def db_mark_question_as_sent(q_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
-    """Evaluates user scores and updates the daily streak using 'last_active_at' from your schema."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -617,7 +631,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 cur.execute("SELECT total, correct, total_marks, grade, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
                 stats = cur.fetchone()
             else:
-                # --- DAILY STREAK EVALUATION ---
                 streak_multiplier = 1.0
                 cur.execute("SELECT last_active_at, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
                 user_meta = cur.fetchone()
@@ -630,7 +643,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                     current_streak = user_meta.get('current_streak', 0) or 0
 
                     if last_date:
-                        # Extract the .date() component safely regardless of raw timestamp or string conversion
                         if isinstance(last_date, (datetime, date)):
                             last_active_date = last_date.date() if isinstance(last_date, datetime) else last_date
                         elif isinstance(last_date, str):

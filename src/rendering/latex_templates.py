@@ -2,6 +2,7 @@
 import re
 from datetime import datetime
 from src.typography import UNICODE_TO_LATEX
+from src.config import CONFIG
 
 def is_complex(text):
     if not text: return False
@@ -130,7 +131,6 @@ def build_figure_block(q, add_strut=False):
     return re.sub(r'\n\s*\n', '\n', tikz)
 
 def assemble_layout(watermark: str, question_block: str, figure_block: str, options_block: str, display_id: str = None) -> str:
-    # Adjusted to 15.2cm width to fit tightly inside 16.0cm paperwidth
     content_width_cm = 15.2
     latex_blocks = []
     if question_block:
@@ -148,14 +148,13 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
 
     footer_latex = (
         f"\\begin{{minipage}}{{{content_width_cm}cm}}\n"
-        f"\\vspace{{0.3em}}\n" # Reduced padding
+        f"\\vspace{{0.3em}}\n"
         f"\\noindent\\hrulefill \\par\n"
-        f"\\vspace{{0.4em}}\n" # Reduced padding
+        f"\\vspace{{0.4em}}\n"
         f"\\centering \\color{{gray}} \\bfseries\\scriptsize {footer_text}\n"
         f"\\end{{minipage}}"
     )
     latex_blocks.append(footer_latex)
-    # Tightened from 1.5em to 0.7em vertical separation for mobile views
     body_content = "\n\\par\\vspace{0.7em}\n".join(latex_blocks)
 
     watermark_tikz = (
@@ -166,7 +165,6 @@ def assemble_layout(watermark: str, question_block: str, figure_block: str, opti
         f"\\end{{tikzpicture}}"
     )
 
-    # Tightened Geometry bounds (left/right=0.3cm) and minimized PreviewBorder (4pt) for mobile scaling
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -195,7 +193,6 @@ __BODY_CONTENT__
 
 def assemble_diagram_only_layout(watermark: str, display_id: str, figure_block: str) -> str:
     escaped_watermark = watermark.replace("_", "\\_").replace("&", "\\&").replace("%", "\\%")
-    # Custom tight dimensions for standalone diagram-only view (paperwidth=14.0cm, PreviewBorder=4pt)
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -253,7 +250,6 @@ def build_widescreen_solution_latex(q, display_id, watermark: str, day_str: str)
         f"\\end{{tikzpicture}}"
     )
 
-    # Tightened Widescreen template bounds to prevent horizontal/vertical padding issues
     template = """\\documentclass[12pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage{mathpazo}
@@ -376,7 +372,6 @@ def create_explanation_assets(q, user_idx, display_id):
 
     has_tikz = has_real_diagram(q)
 
-    # Use CONFIG dynamic channel value
     channel_name = CONFIG.get("channel", "@QuizOva")
     channel_username = channel_name.lstrip('@')
 

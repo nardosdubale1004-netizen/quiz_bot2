@@ -7,9 +7,9 @@ import traceback
 from pathlib import Path
 from src.config import CONFIG, Style
 from src.database import (
-    QuizEngine, 
-    db_mark_question_as_sent, 
-    db_get_cached_file_id, 
+    QuizEngine,
+    db_mark_question_as_sent,
+    db_get_cached_file_id,
     db_save_cached_file_id,
     db_get_responses_for_message,
     process_user_score
@@ -39,36 +39,56 @@ class CLI:
 async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, last_seq):
     """Asynchronously evaluates student stats and edits their private DM placeholder message."""
     try:
-        # Load score card stats
         perf_card = await asyncio.to_thread(
             process_user_score,
             u_id, message_id, q['id'],
             is_correct, sel_opt
         )
-        
-        # Build answer review card
+
         explanation_html = UIFactory.build_answered_view(
             q, str(last_seq), sel_opt,
             show_derivation=True, show_perf=False,
             perf_card=perf_card
         )
-        
+
         kb = UIFactory.build_answered_keyboard(
             last_seq, sel_opt,
             show_derivation=True, show_perf=False,
             is_photo=False, message_id=message_id
         )
-        
-        # Edit the existing confirmation card in their DM
-        await edit_rich_message_safe(
+
+        has_tikz = UIFactory.has_real_diagram(q)
+        media_bytes = None
+        cached_file_id = None
+
+        if has_tikz:
+            cache_key = f"q:{q['id']}:exp:{sel_opt}"
+            cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+
+            if not cached_file_id:
+                latex_code, _ = UIFactory.create_explanation_assets(q, sel_opt, last_seq)
+                if latex_code:
+                    img_url = UIFactory.get_latex_url(latex_code)
+                    async with httpx.AsyncClient() as client:
+                        resp = await fetch_kroki_image(client, img_url, latex_code)
+                        if resp and resp.status_code == 200:
+                            media_bytes = resp.content
+
+        m = await edit_rich_message_safe(
             bot,
             chat_id=u_id,
             message_id=p_mid,
             html_content=explanation_html,
-            reply_markup=kb
+            reply_markup=kb,
+            media_bytes=media_bytes,
+            file_id=cached_file_id
         )
+
+        if media_bytes and m and m.photo and not cached_file_id:
+            await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+
     except Exception as e:
-        # Fallback: Send new private chat message if the original placeholder can no longer be edited
+        traceback.print_exc()
         try:
             kb = UIFactory.build_answered_keyboard(
                 last_seq, sel_opt,
@@ -79,7 +99,9 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
                 bot,
                 chat_id=u_id,
                 html_content=explanation_html,
-                reply_markup=kb
+                reply_markup=kb,
+                media_bytes=media_bytes,
+                file_id=cached_file_id
             )
         except Exception:
             pass
@@ -327,30 +349,47 @@ async def admin_panel(app, engine: QuizEngine):
                             else:
                                 is_photo = (v.get('msg_type') == "photo")
                                 if is_photo:
-                                    print(f" {Style.CYAN}├─ [CLOSE] Rendering cropped diagram graphic for REF: {ref}...{Style.RESET}")
+                                    try:
+                                        await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(mid))
+                                    except Exception:
+                                        pass
+                                    
                                     fig_block = UIFactory.build_figure_block(q, add_strut=False)
+                                    media_bytes = None
+                                    cached_file_id = None
+                                    
                                     if fig_block:
                                         channel_id = CONFIG.get("channel") or "@QuizOva"
                                         sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, ref, fig_block)
                                         sol_img_url = UIFactory.get_latex_url(sol_latex)
-                                        async with httpx.AsyncClient() as client:
-                                            resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
-                                            if resp and resp.status_code == 200:
-                                                closed_view = UIFactory.build_closed_static_view(q, ref, compact=True)
-                                                media = InputMediaPhoto(media=resp.content, caption=convert_to_legacy_html(closed_view), parse_mode="HTML")
-                                                await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=None)
-                                                full_text = UIFactory.build_closed_static_view(q, ref, compact=False, continuation=True)
-                                                if len(full_text) > len(media.caption):
-                                                    follow_up = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=full_text, reply_to_message_id=int(mid))
-                                                    await asyncio.to_thread(engine.db_save_track, mid, v["q_id"], "closed", ref, v["type"], v["msg_type"], followup_mid=follow_up.message_id)
-                                            else:
-                                                await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
-                                                await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
-                                    else:
-                                        await app.bot.edit_message_caption(chat_id=engine.config['channel'], message_id=int(mid), caption=convert_to_legacy_html(UIFactory.build_closed_static_view(q, ref, compact=True)), parse_mode="HTML", reply_markup=None)
-                                        await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
+                                        
+                                        cache_key = f"q:{q['id']}:closed_diag"
+                                        cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+                                        
+                                        if not cached_file_id:
+                                            async with httpx.AsyncClient() as client:
+                                                resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
+                                                if resp and resp.status_code == 200:
+                                                    media_bytes = resp.content
+                                    
+                                    closed_view = UIFactory.build_closed_static_view(q, ref, compact=False)
+                                    new_msg = await send_rich_message_safe(
+                                        app.bot,
+                                        chat_id=engine.config['channel'],
+                                        html_content=closed_view,
+                                        reply_markup=None,
+                                        media_bytes=media_bytes,
+                                        file_id=cached_file_id
+                                    )
+                                    
+                                    if media_bytes and new_msg and new_msg.photo and not cached_file_id:
+                                        await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
+
+                                    await asyncio.to_thread(engine.db_swap_track_message_id, mid, new_msg.message_id)
+                                    await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
                                 else:
-                                    await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=UIFactory.build_closed_static_view(q, ref, compact=False), reply_markup=None)
+                                    closed_view = UIFactory.build_closed_static_view(q, ref, compact=False)
+                                    await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=closed_view, reply_markup=None)
                                     await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
                             await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
                         else:
@@ -396,8 +435,7 @@ async def admin_panel(app, engine: QuizEngine):
                 continue
 
             target_list = db[subjects[int(sub_in)-1]]
-            
-            # Print the target questions list to verify available index intervals
+
             for i, q in enumerate(target_list):
                 m_tag = f"{Style.MAGENTA}[MATH]{Style.RESET} " if (q.get("latex") or UIFactory.is_complex(q['question'])) else ""
                 diff = q.get("difficulty", "medium").lower()
@@ -410,7 +448,6 @@ async def admin_panel(app, engine: QuizEngine):
 
             tournament_qs = []
 
-            # Parse and segment multi-option parameters/intervals
             if ":" in range_in:
                 query_parts = [p.strip().split(":") for p in range_in.split(",")]
                 requested = {}
@@ -420,10 +457,10 @@ async def admin_panel(app, engine: QuizEngine):
                 pools = {"easy": [], "medium": [], "hard": []}
                 for q in target_list:
                     d = "easy" if q.get("difficulty", "medium").lower() == "weak" else q.get("difficulty", "medium").lower()
-                    if d in pools: 
+                    if d in pools:
                         pools[d].append(q)
                 for diff, count in requested.items():
-                    if diff in pools: 
+                    if diff in pools:
                         tournament_qs.extend(pools[diff][:count])
             else:
                 indices = []
@@ -438,7 +475,7 @@ async def admin_panel(app, engine: QuizEngine):
                     print(f"{Style.RED}Invalid selection syntax.{Style.RESET}")
                     continue
                 for idx in indices:
-                    if 0 <= idx < len(target_list): 
+                    if 0 <= idx < len(target_list):
                         tournament_qs.append(target_list[idx])
 
             if not tournament_qs:
@@ -488,14 +525,13 @@ async def admin_panel(app, engine: QuizEngine):
                 if img_url and not cached_file_id and m.photo:
                     await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
-                # Save track record under silent 'tournament_active' state (prevents DM answers)
                 await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "tournament_active", last_seq, "premium", "photo" if img_url else "text")
 
                 # Dynamic update loop to show ticking countdown inside Telegram channel
                 for remaining in range(50, -1, -10):
                     await asyncio.sleep(10)
                     print(f"  └─ Timer ticking: {remaining}s remaining for live showdown submissions...", flush=True)
-                    
+
                     if remaining > 0:
                         updated_text = (
                             f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • QUESTION {step+1}/{len(tournament_qs)}</b>\n"
@@ -520,10 +556,11 @@ async def admin_panel(app, engine: QuizEngine):
 
                 print(f"🔒 {Style.YELLOW}Showdown round expired! Locking submissions & revealing answers for REF: {last_seq}...{Style.RESET}")
 
-                # 1. Update database track status to 'closed' to unlock detailed private DM reviews
+                user_responses = await asyncio.to_thread(db_get_responses_for_message, m.message_id)
+                print(f"  ├─ Concluding round: Spawning background DM updates for {len(user_responses)} participants...", flush=True)
+
                 await asyncio.to_thread(engine.db_update_track_status, m.message_id, "closed")
 
-                # 2. Conclude announcement text on the channel
                 try:
                     closed_announcement = (
                         f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • QUESTION {step+1}/{len(tournament_qs)}</b>\n"
@@ -538,28 +575,48 @@ async def admin_panel(app, engine: QuizEngine):
                 except Exception:
                     pass
 
-                # 3. Modify question card dynamically to display the solutions on channel immediately
+                final_msg_id = m.message_id
                 if img_url:
                     try:
-                        # Edit the question caption to display correct option indicator
-                        compact_closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=True)
-                        await app.bot.edit_message_caption(
-                            chat_id=engine.config['channel'],
-                            message_id=m.message_id,
-                            caption=convert_to_legacy_html(compact_closed_view),
-                            parse_mode="HTML",
-                            reply_markup=None
-                        )
-                        # Broadcast the full step-by-step math derivation sheet as a followup
-                        full_text = UIFactory.build_closed_static_view(q, last_seq, compact=False, continuation=True)
-                        follow_up = await send_rich_message_safe(
+                        try:
+                            await app.bot.delete_message(chat_id=engine.config['channel'], message_id=m.message_id)
+                        except Exception:
+                            pass
+                        
+                        fig_block = UIFactory.build_figure_block(q, add_strut=False)
+                        media_bytes = None
+                        cached_file_id = None
+                        
+                        if fig_block:
+                            channel_id = CONFIG.get("channel") or "@QuizOva"
+                            sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, last_seq, fig_block)
+                            sol_img_url = UIFactory.get_latex_url(sol_latex)
+                            
+                            cache_key = f"q:{q['id']}:closed_diag"
+                            cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+                            
+                            if not cached_file_id:
+                                async with httpx.AsyncClient() as client:
+                                    resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
+                                    if resp and resp.status_code == 200:
+                                        media_bytes = resp.content
+                        
+                        closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
+                        new_msg = await send_rich_message_safe(
                             app.bot,
                             chat_id=engine.config['channel'],
-                            html_content=full_text,
-                            reply_to_message_id=m.message_id
+                            html_content=closed_view,
+                            reply_markup=None,
+                            media_bytes=media_bytes,
+                            file_id=cached_file_id
                         )
-                        # Register followup to clear trace on channel cleanups
-                        await asyncio.to_thread(engine.db_save_track, m.message_id, q["id"], "closed", last_seq, "premium", "photo", followup_mid=follow_up.message_id)
+                        
+                        if media_bytes and new_msg and new_msg.photo and not cached_file_id:
+                            await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
+
+                        final_msg_id = new_msg.message_id
+                        await asyncio.to_thread(engine.db_swap_track_message_id, m.message_id, new_msg.message_id)
+                        await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed")
                     except Exception as e:
                         print(f"Error publishing solution for REF {last_seq}: {e}")
                 else:
@@ -575,11 +632,6 @@ async def admin_panel(app, engine: QuizEngine):
                     except Exception as e:
                         print(f"Error publishing flat solution for REF {last_seq}: {e}")
 
-                # --- 4. ASYNCHRONOUS NON-BLOCKING DM REVEALS ---
-                # Fetch all participants who answered this specific round
-                user_responses = await asyncio.to_thread(db_get_responses_for_message, m.message_id)
-                print(f"  ├─ Concluding round: Spawning background DM updates for {len(user_responses)} participants...", flush=True)
-
                 tasks = []
                 for resp in user_responses:
                     u_id = resp['user_id']
@@ -587,16 +639,14 @@ async def admin_panel(app, engine: QuizEngine):
                     sel_opt = resp['selected_option']
 
                     if p_mid:
-                        # Spawn background non-blocking execution task for each user DM
                         task = asyncio.create_task(
                             push_dm_update(
-                                app.bot, u_id, p_mid, sel_opt, 
-                                resp['is_correct'], m.message_id, q, last_seq
+                                app.bot, u_id, p_mid, sel_opt,
+                                resp['is_correct'], final_msg_id, q, last_seq
                             )
                         )
                         tasks.append(task)
 
-                # Delay between rounds
                 await asyncio.sleep(5)
 
             print(f"\n🏆 {Style.GREEN}Live Showdown Tournament closed successfully.{Style.RESET}")
