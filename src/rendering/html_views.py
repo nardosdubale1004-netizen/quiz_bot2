@@ -48,38 +48,88 @@ def get_next_rank_info(marks: int) -> str:
     if marks < 1200: return f"Earn <b>{1200 - marks} Marks</b> to unlock <b>Legend</b>"
     return "Maximum Mastery Level Reached! 🌌"
 
+def apply_spoiler_line_by_line(text: str) -> str:
+    """
+    Wraps each non-empty line of text in its own spoiler tag.
+    Bypasses standard client parser crashes on multiline spoiler blocks containing nested entities.
+    """
+    lines = text.split("\n")
+    spoiled_lines = []
+    for line in lines:
+        if line.strip():
+            spoiled_lines.append(f"<tg-spoiler>{line} \u200b</tg-spoiler>")
+        else:
+            spoiled_lines.append("")
+    return "\n".join(spoiled_lines)
+
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
 
+    # Construct the question body (kept unhidden)
+    body = (
+        f"<blockquote>"
+        f"<b>PROBLEM PROPOSITION</b><br/>"
+        f"{beautify_markdown_math(q['question'])}"
+        f"</blockquote>"
+    )
+
+    # Construct the options block (kept unhidden)
+    opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
+    for i, o in enumerate(q['options']):
+        opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
+    opts_list.append("</ul>")
+    opts_block = "\n".join(opts_list)
+
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    channel_name = CONFIG.get("channel", "@QuizOva")
+    channel_username = channel_name.lstrip('@')
+
+    footer = (
+        f"\n<hr/>\n"
+        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+        f"{' '.join(hashtag_list)}"
+    )
+
+    # Compact View: Fits within Telegram's 1024-character photo caption limits
+    if compact:
+        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
+        spoiled_content = apply_spoiler_line_by_line(spoiler_content)
+        components = [
+            body,
+            opts_block,
+            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER:</b>\n{spoiled_content}",
+            footer
+        ]
+        return "\n\n".join(components)
+
+    # Full View: Eliminates all block-level blockquotes inside the spoiler to ensure hides work
     exp = q.get("poll_explanation", {})
     why = exp.get('why', 'No detailed explanation provided.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
+    # Flatten general principle block
     general_principle = (
-        f"<blockquote>\n"
-        f"<b>🏛️ GENERAL PRINCIPLE</b><br/>\n"
+        f"🏛️ <b>GENERAL PRINCIPLE:</b>\n"
         f"<i>{beautify_markdown_math(rule_text)}</i>\n"
-        f"</blockquote>"
     )
 
+    # Flatten step-by-step derivation blocks
     step_by_step_parts = [
-        f"<blockquote expandable>\n"
-        f"<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
+        f"🔢 <b>STEP-BY-STEP DERIVATION:</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
     if exp.get('analogy'):
-        step_by_step_parts.append(f"<b>💡 Analogy</b>\n{beautify_markdown_math(exp['analogy'])}")
+        step_by_step_parts.append(f"💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}")
     if exp.get('memory_tip'):
-        step_by_step_parts.append(f"<b>🧠 Memory Tip</b>\n{beautify_markdown_math(exp['memory_tip'])}")
-    step_by_step_parts.append("</blockquote>")
+        step_by_step_parts.append(f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}")
 
-    step_by_step = "\n".join(step_by_step_parts)
+    step_by_step = "\n\n".join(step_by_step_parts)
 
+    # Flatten option breakdowns
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
-        f"<blockquote expandable>\n"
-        f"<b>🔍 OPTION BREAKDOWN</b>\n"
+        f"🔍 <b>OPTION BREAKDOWN:</b>\n"
     ]
     for i, o_text in enumerate(q['options']):
         let = chr(65 + i)
@@ -96,54 +146,42 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
         breakdown_parts.append(analysis_line)
-    breakdown_parts.append("</blockquote>")
+
     breakdown_block = "\n".join(breakdown_parts)
 
     general_principle = replace_code_with_italic(general_principle)
     step_by_step = replace_code_with_italic(step_by_step)
     breakdown_block = replace_code_with_italic(breakdown_block)
 
-    if continuation:
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-        connection_header = f"<b>📖 DETAILED SOLUTION (CONTINUATION) • REF <code>{display_id}</code></b>\n<hr/>"
-        return f"{connection_header}🎯 <b>REVEAL SOLUTION DETAILS:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
+    # Join the explanations
+    spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
 
-    body = (
-        f"<blockquote>"
-        f"<b>PROBLEM PROPOSITION</b><br/>"
-        f"{beautify_markdown_math(q['question'])}"
-        f"</blockquote>"
-    )
-
-    if compact:
-        opts_block = ""
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
-    else:
-        opts_list = ["📋 <b>OPTIONS</b>", "<ul>"]
-        for i, o in enumerate(q['options']):
-            opts_list.append(f"  <li><b>{chr(65+i)})</b> {beautify_markdown_math(o)}</li>")
-        opts_list.append("</ul>")
-        opts_block = "\n" + "\n".join(opts_list)
-        spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-
+    # CRITICAL: Replace all block-level math tags in the spoiler with inline tags
+    # This prevents the markdown parser from rendering <pre> blocks inside the spoiler.
+    spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
     spoiler_content = replace_code_with_italic(spoiler_content)
-    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
-    channel_name = CONFIG.get("channel", "@QuizOva")
-    channel_username = channel_name.lstrip('@')
 
-    footer = (
-        f"\n<hr/>\n"
-        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
-        f"{' '.join(hashtag_list)}"
-    )
+    # Line-by-line wrapper preserves clean execution
+    spoiled_content = apply_spoiler_line_by_line(spoiler_content)
 
-    components = [body]
-    if opts_block:
-        components.append(opts_block)
-    components.append(f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>")
-    components.append(footer)
+    if continuation:
+        connection_header = f"<b>📖 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
+        components = [
+            connection_header,
+            body,
+            opts_block,
+            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n{spoiled_content}",
+            footer
+        ]
+        return "\n\n".join(components)
 
-    return "\n".join(components)
+    components = [
+        body,
+        opts_block,
+        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n{spoiled_content}",
+        footer
+    ]
+    return "\n\n".join(components)
 
 
 def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
@@ -171,14 +209,14 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
     general_principle = (
-        f"<blockquote>\n"
-        f"<b>🏛️ GENERAL PRINCIPLE</b><br/>\n"
-        f"<i>{beautify_markdown_math(rule_text)}</i>\n"
+        f"<blockquote>"
+        f"<b>🏛️ GENERAL PRINCIPLE</b><br/>"
+        f"<i>{beautify_markdown_math(rule_text)}</i>"
         f"</blockquote>"
     )
 
     step_by_step_parts = [
-        f"<blockquote expandable>\n"
+        f"<blockquote expandable>"
         f"<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
@@ -192,7 +230,7 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
 
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
-        f"<blockquote expandable>\n"
+        f"<blockquote expandable>"
         f"<b>🔍 OPTION BREAKDOWN</b>\n"
     ]
     for i, o_text in enumerate(q['options']):
@@ -239,24 +277,24 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
             f"<hr/>\n"
             f"📊 <b>STUDY PERFORMANCE CARD</b>\n"
             f"<p>{marks_notice}</p>\n"
-            f"<table>\n"
-            f"  <tr>\n"
-            f"    <td>🎒 <b>Academic Level:</b></td>\n"
-            f"    <td>Grade {perf_card.get('grade', 12)}</td>\n"
-            f"  </tr>\n"
-            f"  <tr>\n"
-            f"    <td>📝 <b>Practice Score:</b></td>\n"
-            f"    <td><b>{perf_card['total_marks']} Marks</b></td>\n"
-            f"  </tr>\n"
-            f"  <tr>\n"
-            f"    <td>🏆 <b>Mastery Level:</b></td>\n"
-            f"    <td><b>{mastery}</b></td>\n"
-            f"  </tr>\n"
-            f"  <tr>\n"
-            f"    <td>🎯 <b>Accuracy Rate:</b></td>\n"
-            f"    <td><b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']})</td>\n"
-            f"  </tr>\n"
-            f"</table>\n"
+            f"<table>"
+            f"  <tr>"
+            f"    <td>🎒 <b>Academic Level:</b></td>"
+            f"    <td>Grade {perf_card.get('grade', 12)}</td>"
+            f"  </tr>"
+            f"  <tr>"
+            f"    <td>📝 <b>Practice Score:</b></td>"
+            f"    <td><b>{perf_card['total_marks']} Marks</b></td>"
+            f"  </tr>"
+            f"  <tr>"
+            f"    <td>🏆 <b>Mastery Level:</b></td>"
+            f"    <td><b>{mastery}</b></td>"
+            f"  </tr>"
+            f"  <tr>"
+            f"    <td>🎯 <b>Accuracy Rate:</b></td>"
+            f"    <td><b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']})</td>"
+            f"  </tr>"
+            f"</table>"
             f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
@@ -322,8 +360,9 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     components.append(footer)
 
     return "\n".join(components)
+
+
 def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: bool, show_perf: bool, is_photo=False, message_id: str = None) -> InlineKeyboardMarkup:
-    """Generates a composite, binary state-driven keyboard mapping the exact on/off layout combination."""
     prefix = "toggle_photo" if is_photo else "toggle"
     buttons = []
 
