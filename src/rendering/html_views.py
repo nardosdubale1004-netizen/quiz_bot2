@@ -77,7 +77,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         f"{' '.join(hashtag_list)}"
     )
 
-    # Compact View: Fits within Telegram's 1024-character photo caption limits [1]
+    # Compact View: Fits within Telegram's 1024-character photo caption limits
     if compact:
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
         components = [
@@ -108,7 +108,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         step_by_step_parts.append(f"💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}")
     if exp.get('memory_tip'):
         step_by_step_parts.append(f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}")
-    
+
     step_by_step = "\n\n".join(step_by_step_parts)
 
     # Flatten option breakdowns
@@ -129,9 +129,12 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
-            analysis_line += f"\n  {beautify_markdown_math(example_text)}"
+            # We append ' .' (a space and a period) to the end of the example block.
+            # This places standard plain text at the boundaries of the spoiler,
+            # avoiding the client-side parsing bug with trailing math tags.
+            analysis_line += f"\n  {beautify_markdown_math(example_text)} ."
         breakdown_parts.append(analysis_line)
-        
+
     breakdown_block = "\n".join(breakdown_parts)
 
     general_principle = replace_code_with_italic(general_principle)
@@ -140,9 +143,9 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     # Join the explanations
     spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-    
-    # CRITICAL: Replace all block-level math tags in the spoiler with inline tags
-    # This prevents the markdown parser from rendering <pre> blocks inside the spoiler [1].
+
+    # Replace block-level math tags in the spoiler with inline tags
+    # to maintain compatibility inside rich inline containers.
     spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
     spoiler_content = replace_code_with_italic(spoiler_content)
 
@@ -152,7 +155,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             connection_header,
             body,
             opts_block,
-            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>",
+            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content.strip()}</tg-spoiler>",
             footer
         ]
         return "\n\n".join(components)
@@ -160,11 +163,10 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     components = [
         body,
         opts_block,
-        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>",
+        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content.strip()}</tg-spoiler>",
         footer
     ]
     return "\n\n".join(components)
-
 
 def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
     if compact is not None:
@@ -252,7 +254,7 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         else:
             marks_notice = f"{status_prefix}🟥 <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
 
-        mastery = get_grade_mastery_title(perf_card['total_marks'])
+        master = get_grade_mastery_title(perf_card['total_marks'])
         next_rank_info = get_next_rank_info(perf_card['total_marks'])
 
         score_segment = (
@@ -270,14 +272,12 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
             f"  </tr>"
             f"  <tr>"
             f"    <td>🏆 <b>Mastery Level:</b></td>"
-            f"    <td><b>{mastery}</b></td>"
+            f"    <td><b>{master}</b></td>"
             f"  </tr>"
             f"  <tr>"
             f"    <td>🎯 <b>Accuracy Rate:</b></td>"
             f"    <td><b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']})</td>"
             f"  </tr>"
-            f"</table>"
-            f"💡 <i>Target: {next_rank_info}</i>\n"
         )
 
     if continuation:
@@ -342,7 +342,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     components.append(footer)
 
     return "\n".join(components)
-
 
 def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: bool, show_perf: bool, is_photo=False, message_id: str = None) -> InlineKeyboardMarkup:
     prefix = "toggle_photo" if is_photo else "toggle"
