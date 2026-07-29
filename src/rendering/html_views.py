@@ -48,20 +48,6 @@ def get_next_rank_info(marks: int) -> str:
     if marks < 1200: return f"Earn <b>{1200 - marks} Marks</b> to unlock <b>Legend</b>"
     return "Maximum Mastery Level Reached! 🌌"
 
-def apply_spoiler_line_by_line(text: str) -> str:
-    """
-    Wraps each non-empty line of text in its own spoiler tag.
-    Bypasses standard client parser crashes on multiline spoiler blocks containing nested entities.
-    """
-    lines = text.split("\n")
-    spoiled_lines = []
-    for line in lines:
-        if line.strip():
-            spoiled_lines.append(f"<tg-spoiler>{line} \u200b</tg-spoiler>")
-        else:
-            spoiled_lines.append("")
-    return "\n".join(spoiled_lines)
-
 def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
@@ -91,14 +77,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         f"{' '.join(hashtag_list)}"
     )
 
-    # Compact View: Fits within Telegram's 1024-character photo caption limits
+    # Compact View: Fits within Telegram's 1024-character photo caption limits [1]
     if compact:
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
-        spoiled_content = apply_spoiler_line_by_line(spoiler_content)
         components = [
             body,
             opts_block,
-            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER:</b>\n{spoiled_content}",
+            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>",
             footer
         ]
         return "\n\n".join(components)
@@ -123,7 +108,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         step_by_step_parts.append(f"💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}")
     if exp.get('memory_tip'):
         step_by_step_parts.append(f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}")
-
+    
     step_by_step = "\n\n".join(step_by_step_parts)
 
     # Flatten option breakdowns
@@ -146,7 +131,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
         breakdown_parts.append(analysis_line)
-
+        
     breakdown_block = "\n".join(breakdown_parts)
 
     general_principle = replace_code_with_italic(general_principle)
@@ -155,14 +140,11 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     # Join the explanations
     spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
-
+    
     # CRITICAL: Replace all block-level math tags in the spoiler with inline tags
-    # This prevents the markdown parser from rendering <pre> blocks inside the spoiler.
+    # This prevents the markdown parser from rendering <pre> blocks inside the spoiler [1].
     spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
     spoiler_content = replace_code_with_italic(spoiler_content)
-
-    # Line-by-line wrapper preserves clean execution
-    spoiled_content = apply_spoiler_line_by_line(spoiler_content)
 
     if continuation:
         connection_header = f"<b>📖 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
@@ -170,7 +152,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             connection_header,
             body,
             opts_block,
-            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n{spoiled_content}",
+            f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>",
             footer
         ]
         return "\n\n".join(components)
@@ -178,7 +160,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     components = [
         body,
         opts_block,
-        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n{spoiled_content}",
+        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>",
         footer
     ]
     return "\n\n".join(components)
