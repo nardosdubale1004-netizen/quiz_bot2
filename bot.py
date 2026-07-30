@@ -16,7 +16,7 @@ logging.basicConfig(
 for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.ext._updater", "httpx"]:
     logging.getLogger(log_name).setLevel(logging.CRITICAL)
 
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style, LOCKOUT_MESSAGES
@@ -46,6 +46,17 @@ from telegram import Poll
 from src.typography import lite_math
 
 engine = QuizEngine()
+
+# Commands registered via set_my_commands() below so Telegram shows them in
+# the "/" autocomplete menu inside a DM with the bot. Previously the handlers
+# were wired up with CommandHandler but Telegram was never told about them
+# via setMyCommands, so they worked when typed manually but never appeared
+# in the "/" popup.
+BOT_COMMANDS = [
+    BotCommand("start", "Register your profile / view your stats"),
+    BotCommand("school", "Set your school or study-alliance tag"),
+    BotCommand("leaderboard", "View your rank, or /leaderboard school for group rankings"),
+]
 
 async def handle_http_request(reader, writer, app):
     try:
@@ -546,6 +557,15 @@ def main():
         CONFIG["bot_username"] = bot_info.username
         print(f"Registered Bot Username: @{bot_info.username}", flush=True)
 
+        # Register the "/" command menu with Telegram. Without this call the
+        # handlers still work when typed manually, but they never appear in
+        # the "/" autocomplete popup inside a chat with the bot.
+        try:
+            loop.run_until_complete(app.bot.set_my_commands(BOT_COMMANDS))
+            print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
+        except Exception as e:
+            print(f"{Style.YELLOW}[WARNING] Failed to register bot commands: {e}{Style.RESET}", flush=True)
+
         try:
             loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
         except KeyboardInterrupt:
@@ -573,6 +593,14 @@ def main():
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
         print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
+
+        # Register the "/" command menu with Telegram (same as the webhook
+        # branch above) so it also works when running the local CLI dashboard.
+        try:
+            loop.run_until_complete(app.bot.set_my_commands(BOT_COMMANDS))
+            print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
+        except Exception as e:
+            print(f"{Style.YELLOW}[WARNING] Failed to register bot commands: {e}{Style.RESET}", flush=True)
 
         run_cli = sys.stdin.isatty()
         if run_cli:

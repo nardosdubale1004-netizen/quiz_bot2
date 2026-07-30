@@ -1,24 +1,48 @@
 # src/rendering/rich_helpers.py
 import re
 import json
-import httpx
 from telegram import Bot, Message
 from src.config import CONFIG, Style
 from src.typography import lite_math
+from src.http_client import get_shared_client
+from src.perf import timed
 
 def convert_to_legacy_html(rich_html: str) -> str:
     """
     Converts advanced Rich HTML tags to standard, safe legacy Telegram HTML tags.
-    Preserves <tg-math> tags and maps <tg-math-block> tags to <tg-math> to prevent
-    unsupported tag parsing errors on standard Telegram HTML fallbacks.
+
+    IMPORTANT: <tg-math> and <tg-math-block> are NOT real Telegram Bot API tags.
+    They are only understood by the custom sendRichMessage/editMessageText
+    endpoint used in TIER 1 of send_rich_message_safe/edit_rich_message_safe.
+    The real api.telegram.org HTML parser (used by python-telegram-bot's
+    bot.send_message / bot.edit_message_text, i.e. TIER 2/3 here) has never
+    heard of <tg-math> and will reject the entire request with:
+        "Can't parse entities: unsupported start tag "tg-math""
+    Previously this function just passed <tg-math>/<tg-math-block> straight
+    through as if they were "supported legacy tags", which meant any time
+    TIER 1 failed (e.g. stale message ID -> "message to edit not found")
+    the TIER 2/3 fallback would ALSO fail on any question containing formulas,
+    crashing bulk operations like `clean` or ranged closes.
+
+    Fix: convert <tg-math>/<tg-math-block> content to plain unicode math via
+    lite_math() BEFORE the generic tag-stripping pass runs, and remove them
+    from the "supported" whitelist so they are never passed through raw.
     """
     if not rich_html:
         return ""
 
     text = rich_html
 
-    # Map tg-math-block to standard tg-math with custom spacing for legacy parse fallback
-    text = text.replace("<tg-math-block>", "\n<tg-math>").replace("</tg-math-block>", "</tg-math>\n")
+    # Convert tg-math / tg-math-block content to plain text math FIRST,
+    # since the real Telegram HTML parser cannot render these tags at all.
+    def _tg_math_block_repl(match):
+        return lite_math(match.group(1))
+
+    def _tg_math_repl(match):
+        return lite_math(match.group(1))
+
+    text = re.sub(r'<tg-math-block>(.*?)</tg-math-block>', _tg_math_block_repl, text, flags=re.DOTALL)
+    text = re.sub(r'<tg-math>(.*?)</tg-math>', _tg_math_repl, text, flags=re.DOTALL)
 
     # Convert headers to standard bold tags
     text = re.sub(r'</?h[1-6](?:\s+[^>]*)?>', lambda m: "<b>" if not m.group(0).startswith("</") else "</b>\n", text)
@@ -47,15 +71,16 @@ def convert_to_legacy_html(rich_html: str) -> str:
                     formatted_rows.append("  " + " | ".join(clean_cells))
             if formatted_rows:
                 formatted_rows[-1] = formatted_rows[-1].replace("├─", "└─")
-            return "\n".join(formatted_rows)
+        return "\n".join(formatted_rows)
 
     text = re.sub(r'<table>(.*?)</table>', table_sub, text, flags=re.DOTALL)
 
-    # Safe allowed standard formatting elements supported by Telegram Bot API
+    # Safe allowed standard formatting elements supported by Telegram Bot API.
+    # tg-math / tg-math-block intentionally REMOVED — they are converted above,
+    # not passed through, since the real parser doesn't understand them.
     supported_legacy_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
-        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",
-        "tg-math", "/tg-math"
+        "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote"
     ]
 
     def strip_unsupported(match):
@@ -72,42 +97,47 @@ def convert_to_legacy_html(rich_html: str) -> str:
 
     return text.strip()
 
+
 async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, file_id=None, **kwargs) -> Message:
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     has_media = (media_bytes is not None) or (file_id is not None)
 
-    print(f"\033[96m[RICH MESSENGER]\033[0m Attempting rich delivery to Chat: {chat_id} (media present: {has_media}, file_id cached: {file_id is not None})")
+    print(f"\033[96m[RICH MESSENGER]\033[0m Attempting rich delivery to Chat: {chat_id} (media present: {has_media}, file_id cached: {file_id is not None})", flush=True)
 
-    # 1. Attempt native python-telegram-bot library helper if available
+    # --- TIER 1: native python-telegram-bot library helper, if this build of the library has it ---
     for method_name in ["send_rich_message", "sendRichMessage"]:
         if hasattr(bot, method_name):
             try:
-                method = getattr(bot, method_name)
-                rich_html = normalized_content.replace("\n", "<br/>")
-                media_arr = []
-                if has_media:
-                    media_arr.append({
-                        "id": "quiz_diagram",
-                        "media": {
-                            "type": "photo",
-                            "media": file_id if file_id else "attach://quiz_diagram"
-                        }
-                    })
-                return await method(
-                    chat_id=chat_id,
-                    rich_message={
-                        "html": rich_html,
-                        "media": media_arr if has_media else None
-                    },
-                    reply_markup=reply_markup,
-                    reply_to_message_id=reply_to_message_id,
-                    **kwargs
-                )
+                with timed(f"TIER1 native {method_name} -> {chat_id}"):
+                    method = getattr(bot, method_name)
+                    rich_html = normalized_content.replace("\n", "<br/>")
+                    media_arr = []
+                    if has_media:
+                        media_arr.append({
+                            "id": "quiz_diagram",
+                            "media": {
+                                "type": "photo",
+                                "media": file_id if file_id else "attach://quiz_diagram"
+                            }
+                        })
+                    return await method(
+                        chat_id=chat_id,
+                        rich_message={
+                            "html": rich_html,
+                            "media": media_arr if has_media else None
+                        },
+                        reply_markup=reply_markup,
+                        reply_to_message_id=reply_to_message_id,
+                        **kwargs
+                    )
             except Exception as e:
                 print(f"{Style.YELLOW}[RICH MSG] Native client call failed: {e}. Trying HTTP raw fallback...{Style.RESET}", flush=True)
 
-    # 2. Raw HTTP POST Fallback to /sendRichMessage with Multipart Form-Data
+    # --- TIER 2: raw HTTP POST to /sendRichMessage using the SHARED pooled client ---
+    # (previously this opened `async with httpx.AsyncClient() as client:` — a brand
+    # new TCP+TLS handshake on every single message. Now reuses one warm connection.)
     try:
+        client = get_shared_client()
         url = f"https://api.telegram.org/bot{bot.token}/sendRichMessage"
         rich_html = normalized_content.replace("\n", "<br/>")
 
@@ -142,52 +172,59 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
         if has_media and not file_id:
             files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
 
-        async with httpx.AsyncClient() as client:
+        with timed(f"TIER2 sendRichMessage -> {chat_id}"):
             resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
-            if resp.status_code == 200:
-                resp_json = resp.json()
-                if resp_json.get("ok"):
-                    return Message.de_json(resp_json["result"], bot)
-            else:
-                print(f"[RICH MSG] sendRichMessage raw HTTP returned status {resp.status_code}: {resp.text}", flush=True)
+
+        if resp.status_code == 200:
+            resp_json = resp.json()
+            if resp_json.get("ok"):
+                return Message.de_json(resp_json["result"], bot)
+        else:
+            print(f"[RICH MSG] sendRichMessage raw HTTP returned status {resp.status_code}: {resp.text[:300]}", flush=True)
     except Exception as e:
         print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
 
-    # 3. Ultimate Fallback to Standard HTML legacy delivery
+    # --- TIER 3: ultimate fallback to standard HTML legacy delivery ---
+    # convert_to_legacy_html() now safely converts <tg-math>/<tg-math-block>
+    # to plain unicode math instead of passing the raw tags through, so this
+    # tier no longer crashes on questions containing formulas.
     print(f"{Style.YELLOW}[RICH MSG] Falling back to standard HTML legacy delivery.{Style.RESET}", flush=True)
     legacy_html = convert_to_legacy_html(normalized_content)
 
-    if has_media:
-        return await bot.send_photo(
-            chat_id=chat_id,
-            photo=file_id if file_id else media_bytes,
-            caption=legacy_html,
-            parse_mode="HTML",
-            reply_markup=reply_markup,
-            reply_to_message_id=reply_to_message_id,
-            **kwargs
-        )
-    else:
-        return await bot.send_message(
-            chat_id=chat_id,
-            text=legacy_html,
-            parse_mode="HTML",
-            reply_markup=reply_markup,
-            reply_to_message_id=reply_to_message_id,
-            **kwargs
-        )
+    with timed(f"TIER3 legacy send -> {chat_id}"):
+        if has_media:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=file_id if file_id else media_bytes,
+                caption=legacy_html,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                reply_to_message_id=reply_to_message_id,
+                **kwargs
+            )
+        else:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=legacy_html,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                reply_to_message_id=reply_to_message_id,
+                **kwargs
+            )
+
 
 async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: str, reply_markup=None, media_bytes=None, file_id=None, **kwargs) -> Message:
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     rich_html = normalized_content.replace("\n", "<br/>")
     has_media = (media_bytes is not None) or (file_id is not None)
 
-    print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id} (media present: {has_media})")
+    print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id} (media present: {has_media})", flush=True)
 
-    # 1. Attempt raw HTTP POST with correctly serialized JSON strings
+    # --- TIER 1: raw HTTP POST with correctly serialized JSON strings, using the SHARED pooled client ---
     try:
+        client = get_shared_client()
         url = f"https://api.telegram.org/bot{bot.token}/editMessageText"
-        
+
         rich_message_dict = {
             "html": rich_html
         }
@@ -217,37 +254,43 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
         if has_media and not file_id:
             files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
 
-        async with httpx.AsyncClient() as client:
+        with timed(f"TIER1 editMessageText(rich) msg={message_id}"):
             resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
-            if resp.status_code == 200:
-                resp_json = resp.json()
-                if resp_json.get("ok"):
-                    return Message.de_json(resp_json["result"], bot)
-            else:
-                print(f"[RICH MSG] editMessageText raw HTTP returned status {resp.status_code}: {resp.text}", flush=True)
+
+        if resp.status_code == 200:
+            resp_json = resp.json()
+            if resp_json.get("ok"):
+                return Message.de_json(resp_json["result"], bot)
+        else:
+            print(f"[RICH MSG] editMessageText raw HTTP returned status {resp.status_code}: {resp.text[:300]}", flush=True)
     except Exception as e:
         print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
 
-    # 2. Ultimate Fallback to Standard legacy HTML editing
+    # --- TIER 2: ultimate fallback to standard legacy HTML editing ---
+    # convert_to_legacy_html() now safely converts <tg-math>/<tg-math-block>
+    # to plain unicode math instead of passing the raw tags through, so this
+    # tier no longer crashes with "unsupported start tag tg-math" when TIER 1
+    # fails (e.g. stale/deleted message IDs during bulk `clean`/range ops).
     legacy_html = convert_to_legacy_html(normalized_content)
-    if has_media:
-        try:
-            return await bot.edit_message_caption(
-                chat_id=chat_id,
-                message_id=message_id,
-                caption=legacy_html,
-                parse_mode="HTML",
-                reply_markup=reply_markup,
-                **kwargs
-            )
-        except Exception:
-            pass
+    with timed(f"TIER2 legacy edit msg={message_id}"):
+        if has_media:
+            try:
+                return await bot.edit_message_caption(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    caption=legacy_html,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    **kwargs
+                )
+            except Exception:
+                pass
 
-    return await bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=message_id,
-        text=legacy_html,
-        parse_mode="HTML",
-        reply_markup=reply_markup,
-        **kwargs
-)
+        return await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=legacy_html,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+            **kwargs
+        )

@@ -1,6 +1,7 @@
 # src/cli.py
 import math
 import os
+import re
 import json
 import asyncio
 import traceback
@@ -23,6 +24,106 @@ from prompt_toolkit.shortcuts import clear as clear_screen
 from prompt_toolkit.formatted_text import HTML
 import httpx
 from telegram import Poll, InputMediaPhoto
+from telegram.error import BadRequest
+
+# Phrases Telegram's Bot API returns when the target message/poll no longer
+# exists on the channel (deleted manually, deleted by another admin, expired,
+# etc). When we hit one of these, the RIGHT move is to self-heal by marking
+# the local track "deleted" so it stops being retried forever and stops
+# blocking/erroring out future range-close or clean operations. Previously
+# these just bubbled up as an unhandled exception, got caught by the generic
+# `except Exception` below, printed, and left the track stuck as "active"
+# permanently — meaning every future close attempt on it would fail the
+# exact same way.
+_MISSING_MESSAGE_PHRASES = [
+    "message to edit not found",
+    "message to delete not found",
+    "message can't be edited",
+    "message identifier is not specified",
+    "message is not modified",  # not fatal, but harmless to treat as "already fine"
+]
+
+def _is_missing_message_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(phrase in msg for phrase in _MISSING_MESSAGE_PHRASES if phrase != "message is not modified")
+
+def _is_not_modified_error(err: Exception) -> bool:
+    return "message is not modified" in str(err).lower()
+
+def _parse_manage_selection(cmd: str, items: list, tracks: dict) -> list:
+    """
+    Parses a Manage Quizzes command string into a list of target message_id
+    strings. Previously this menu only accepted a single bare number per
+    token (e.g. "3"), so typing a range like "1-5" silently matched nothing
+    (the isdigit() check failed) and the loop below ran over an empty set --
+    no error, no action, just a confusing no-op re-render of the list.
+
+    Now supports, comma-separated and freely mixed:
+      - Single position:        "3"
+      - Position range:         "1-5"
+      - Direct REF targeting:   "r167" or "#167"  -- matches a question's
+        REF/display_id directly, found anywhere in the CURRENT filtered
+        `items` list regardless of which page is currently shown. This means
+        you no longer have to page all the way to page 14 to close REF 167 --
+        just type "r167" from page 1.
+      - Any mix: "1,3,5-7,r167"
+
+    Invalid or unmatched tokens are skipped with a warning printed to the
+    console, but any valid targets found are still returned -- one bad token
+    doesn't block the rest of a batch command.
+    """
+    targets = []
+    invalid_tokens = []
+
+    # REF (display_id) -> mid lookup, scoped to the currently filtered `items`
+    # (i.e. respects the active status/type filter you're currently viewing).
+    ref_lookup = {}
+    for mid in items:
+        v = tracks.get(mid)
+        if v:
+            ref_lookup[str(v.get('display_id'))] = mid
+
+    for raw_part in cmd.split(','):
+        part = raw_part.strip()
+        if not part:
+            continue
+
+        ref_match = re.match(r'^[r#](\d+)$', part, re.IGNORECASE)
+        if ref_match:
+            ref_num = ref_match.group(1)
+            mid = ref_lookup.get(ref_num)
+            if mid:
+                targets.append(mid)
+            else:
+                invalid_tokens.append(f"REF:{ref_num} (not found in current filtered list)")
+            continue
+
+        range_match = re.match(r'^(\d+)-(\d+)$', part)
+        if range_match:
+            start, end = int(range_match.group(1)), int(range_match.group(2))
+            if start > end:
+                start, end = end, start
+            for idx in range(start, end + 1):
+                if 1 <= idx <= len(items):
+                    targets.append(items[idx - 1])
+                else:
+                    invalid_tokens.append(str(idx))
+            continue
+
+        if part.isdigit():
+            idx = int(part)
+            if 1 <= idx <= len(items):
+                targets.append(items[idx - 1])
+            else:
+                invalid_tokens.append(part)
+            continue
+
+        invalid_tokens.append(part)
+
+    if invalid_tokens:
+        print(f"{Style.YELLOW}⚠️  Skipped invalid/unmatched tokens: {', '.join(invalid_tokens)}{Style.RESET}")
+
+    return targets
 
 class CLI:
     def __init__(self):
@@ -305,7 +406,7 @@ async def admin_panel(app, engine: QuizEngine):
                     print(f"  {(page*10)+i+1}. {'[NAT]' if v.get('type')=='native' else '[PRM]'} REF:{v.get('display_id')} | {q_obj['question'][:45]}...")
 
                 print(f"\n  Page {page+1} / {max(1, total_pages)}")
-                print(f"{Style.CYAN}Nav: [n] Next | [p] Prev | [sw] Status | [ft] Filter\nAction: [Index], [ref#], [all] | [clean] Live Sync | [b] Back{Style.RESET}")
+                print(f"{Style.CYAN}Nav: [n] Next | [p] Prev | [p<N>] Jump to page N | [sw] Status | [ft] Filter\nAction: [1,3,5-7] Index/Range | [r167] Direct REF (any page) | [all] Current page | [clean] Live Sync | [b] Back{Style.RESET}")
 
                 cmd = await cli.ask("<b>Command > </b>")
                 if not cmd or cmd == 'b': break
@@ -320,6 +421,19 @@ async def admin_panel(app, engine: QuizEngine):
                         curr_type = f_val
                         page = 0; continue
 
+                # Direct page jump, e.g. "p14" -> page index 13. Checked after
+                # the exact "p" (prev page) match above so bare "p" still means
+                # "previous page" -- this only fires when a number follows it.
+                page_jump_match = re.match(r'^p(\d+)$', cmd, re.IGNORECASE)
+                if page_jump_match:
+                    target_page_num = int(page_jump_match.group(1))
+                    max_page_num = max(1, total_pages)
+                    if 1 <= target_page_num <= max_page_num:
+                        page = target_page_num - 1
+                    else:
+                        print(f"{Style.RED}Page {target_page_num} is out of range (1-{max_page_num}).{Style.RESET}")
+                    continue
+
                 if cmd == 'clean':
                     print(f"{Style.YELLOW}Syncing with Telegram...{Style.RESET}")
                     for mid, v in list(tracks.items()):
@@ -330,7 +444,14 @@ async def admin_panel(app, engine: QuizEngine):
                                 await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
                     continue
 
-                targets = [items[int(part)-1] for part in cmd.split(',') if part.strip().isdigit() and 0 <= int(part)-1 < len(items)] if cmd.lower() != 'all' else [m for m in items[page*10 : (page+1)*10] if tracks[m].get('type') != 'native']
+                if cmd.lower() == 'all':
+                    targets = [m for m in items[page*10 : (page+1)*10] if tracks[m].get('type') != 'native']
+                else:
+                    targets = _parse_manage_selection(cmd, items, tracks)
+
+                if not targets:
+                    print(f"{Style.YELLOW}No valid targets matched — nothing to do.{Style.RESET}")
+                    continue
 
                 for mid in set(targets):
                     v = tracks[mid]
@@ -345,7 +466,14 @@ async def admin_panel(app, engine: QuizEngine):
                                     pass
                                 del v["followup_mid"]
                             if v.get('type') == 'native':
-                                await app.bot.stop_poll(engine.config['channel'], int(mid))
+                                try:
+                                    await app.bot.stop_poll(engine.config['channel'], int(mid))
+                                except BadRequest as e:
+                                    if _is_missing_message_error(e):
+                                        print(f"{Style.YELLOW}├─ [STALE] Poll msg {mid} (REF:{ref}) no longer exists on channel. Marking as deleted.{Style.RESET}")
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
+                                        continue
+                                    raise
                             else:
                                 is_photo = (v.get('msg_type') == "photo")
                                 if is_photo:
@@ -353,25 +481,25 @@ async def admin_panel(app, engine: QuizEngine):
                                         await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(mid))
                                     except Exception:
                                         pass
-                                    
+
                                     fig_block = UIFactory.build_figure_block(q, add_strut=False)
                                     media_bytes = None
                                     cached_file_id = None
-                                    
+
                                     if fig_block:
                                         channel_id = CONFIG.get("channel") or "@QuizOva"
                                         sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, ref, fig_block)
                                         sol_img_url = UIFactory.get_latex_url(sol_latex)
-                                        
+
                                         cache_key = f"q:{q['id']}:closed_diag"
                                         cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
-                                        
+
                                         if not cached_file_id:
                                             async with httpx.AsyncClient() as client:
                                                 resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
                                                 if resp and resp.status_code == 200:
                                                     media_bytes = resp.content
-                                    
+
                                     closed_view = UIFactory.build_closed_static_view(q, ref, compact=False)
                                     new_msg = await send_rich_message_safe(
                                         app.bot,
@@ -381,7 +509,7 @@ async def admin_panel(app, engine: QuizEngine):
                                         media_bytes=media_bytes,
                                         file_id=cached_file_id
                                     )
-                                    
+
                                     if media_bytes and new_msg and new_msg.photo and not cached_file_id:
                                         await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
 
@@ -389,31 +517,62 @@ async def admin_panel(app, engine: QuizEngine):
                                     await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
                                 else:
                                     closed_view = UIFactory.build_closed_static_view(q, ref, compact=False)
-                                    await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=closed_view, reply_markup=None)
-                                    await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
-                            await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
+                                    try:
+                                        await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=closed_view, reply_markup=None)
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
+                                    except BadRequest as e:
+                                        if _is_missing_message_error(e):
+                                            print(f"{Style.YELLOW}├─ [STALE] Message {mid} (REF:{ref}) no longer exists on channel. Marking as deleted.{Style.RESET}")
+                                            await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
+                                            continue
+                                        elif _is_not_modified_error(e):
+                                            # Content was already identical -- treat as a successful close.
+                                            await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
+                                        else:
+                                            raise
                         else:
                             if v.get('type') == 'native': continue
                             img_url, cap = UIFactory.create_question_assets(q, ref)
                             kb = UIFactory.build_keyboard(q, ref)
                             if v.get('msg_type') == "photo":
-                                async with httpx.AsyncClient() as client:
-                                    media_bytes = None
-                                    if img_url:
-                                        fig_block = UIFactory.build_figure_block(q, add_strut=False)
-                                        if fig_block:
-                                            compiled_latex = UIFactory.assemble_diagram_only_layout(UIFactory.WATERMARK, ref, fig_block)
-                                            img_url_kroki = UIFactory.get_latex_url(compiled_latex)
-                                            resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
-                                            if resp and resp.status_code == 200:
-                                                media_bytes = resp.content
+                                try:
+                                    async with httpx.AsyncClient() as client:
+                                        media_bytes = None
+                                        if img_url:
+                                            fig_block = UIFactory.build_figure_block(q, add_strut=False)
+                                            if fig_block:
+                                                compiled_latex = UIFactory.assemble_diagram_only_layout(UIFactory.WATERMARK, ref, fig_block)
+                                                img_url_kroki = UIFactory.get_latex_url(compiled_latex)
+                                                resp = await fetch_kroki_image(client, img_url_kroki, compiled_latex)
+                                                if resp and resp.status_code == 200:
+                                                    media_bytes = resp.content
 
-                                    if media_bytes:
-                                        media = InputMediaPhoto(media=media_bytes, caption=convert_to_legacy_html(cap), parse_mode="HTML")
-                                        await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
+                                        if media_bytes:
+                                            media = InputMediaPhoto(media=media_bytes, caption=convert_to_legacy_html(cap), parse_mode="HTML")
+                                            await app.bot.edit_message_media(chat_id=engine.config['channel'], message_id=int(mid), media=media, reply_markup=kb)
+                                    await asyncio.to_thread(engine.db_update_track_status, mid, "active")
+                                except BadRequest as e:
+                                    if _is_missing_message_error(e):
+                                        print(f"{Style.YELLOW}├─ [STALE] Message {mid} (REF:{ref}) no longer exists on channel. Marking as deleted.{Style.RESET}")
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
+                                        continue
+                                    elif _is_not_modified_error(e):
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "active")
+                                    else:
+                                        raise
                             else:
-                                await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=cap, reply_markup=kb)
-                            await asyncio.to_thread(engine.db_update_track_status, mid, "active")
+                                try:
+                                    await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(mid), html_content=cap, reply_markup=kb)
+                                    await asyncio.to_thread(engine.db_update_track_status, mid, "active")
+                                except BadRequest as e:
+                                    if _is_missing_message_error(e):
+                                        print(f"{Style.YELLOW}├─ [STALE] Message {mid} (REF:{ref}) no longer exists on channel. Marking as deleted.{Style.RESET}")
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
+                                        continue
+                                    elif _is_not_modified_error(e):
+                                        await asyncio.to_thread(engine.db_update_track_status, mid, "active")
+                                    else:
+                                        raise
                     except Exception as e:
                         traceback.print_exc()
                         print(f"Error processing REF:{ref} | {e}")
@@ -582,25 +741,25 @@ async def admin_panel(app, engine: QuizEngine):
                             await app.bot.delete_message(chat_id=engine.config['channel'], message_id=m.message_id)
                         except Exception:
                             pass
-                        
+
                         fig_block = UIFactory.build_figure_block(q, add_strut=False)
                         media_bytes = None
                         cached_file_id = None
-                        
+
                         if fig_block:
                             channel_id = CONFIG.get("channel") or "@QuizOva"
                             sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, last_seq, fig_block)
                             sol_img_url = UIFactory.get_latex_url(sol_latex)
-                            
+
                             cache_key = f"q:{q['id']}:closed_diag"
                             cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
-                            
+
                             if not cached_file_id:
                                 async with httpx.AsyncClient() as client:
                                     resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
                                     if resp and resp.status_code == 200:
                                         media_bytes = resp.content
-                        
+
                         closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
                         new_msg = await send_rich_message_safe(
                             app.bot,
@@ -610,7 +769,7 @@ async def admin_panel(app, engine: QuizEngine):
                             media_bytes=media_bytes,
                             file_id=cached_file_id
                         )
-                        
+
                         if media_bytes and new_msg and new_msg.photo and not cached_file_id:
                             await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
 

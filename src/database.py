@@ -9,12 +9,157 @@ from psycopg2.pool import ThreadedConnectionPool
 from pathlib import Path
 from datetime import datetime, timezone, date
 from src.config import CONFIG, Style
+from src.perf import timed_sync
+from src.cache import track_question_cache
+
+# fn_process_user_score collapses the 3-5 sequential round trips that
+# process_user_score used to make (check existing -> read user meta ->
+# count correct responses -> insert response -> upsert stats -> re-read stats)
+# into ONE network round trip. Every one of those round trips was paying the
+# same ~380-450ms network floor to Neon (confirmed via src/db_diag.py), so the
+# fix that actually matters is doing all of that logic server-side in a single
+# call, not making each individual step faster.
+_FN_PROCESS_USER_SCORE_SQL = """
+CREATE OR REPLACE FUNCTION fn_process_user_score(
+    p_user_id text,
+    p_message_id text,
+    p_q_id text,
+    p_is_correct boolean,
+    p_selected_option int,
+    p_private_message_id int,
+    p_show_derivation boolean,
+    p_show_perf boolean,
+    p_bonus_limit int
+) RETURNS TABLE (
+    o_total int,
+    o_correct int,
+    o_total_marks int,
+    o_marks_awarded int,
+    o_first_try boolean,
+    o_is_bonus_winner boolean,
+    o_grade int,
+    o_current_streak int
+) AS $$
+DECLARE
+    v_existing_correct boolean;
+    v_existing_marks int;
+    v_found boolean := false;
+    v_marks int := 0;
+    v_first_try boolean := true;
+    v_is_bonus boolean := false;
+    v_streak int := 0;
+    v_streak_mult numeric := 1.0;
+    v_last_active timestamptz;
+    v_last_active_date date;
+    v_today date := (NOW() AT TIME ZONE 'utc')::date;
+    v_days_diff int;
+    v_correct_count int;
+    v_base_marks int;
+BEGIN
+    SELECT ur.is_correct, ur.marks_awarded
+      INTO v_existing_correct, v_existing_marks
+      FROM user_responses ur
+     WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
+
+    IF FOUND THEN
+        v_first_try := false;
+        v_marks := v_existing_marks;
+        v_is_bonus := (v_marks >= 10);
+    ELSE
+        SELECT us.last_active_at, COALESCE(us.current_streak, 0)
+          INTO v_last_active, v_streak
+          FROM user_stats us
+         WHERE us.user_id = p_user_id;
+
+        IF v_last_active IS NULL THEN
+            v_streak := 1;
+        ELSE
+            v_last_active_date := v_last_active::date;
+            v_days_diff := v_today - v_last_active_date;
+            IF v_days_diff = 1 THEN
+                v_streak := v_streak + 1;
+            ELSIF v_days_diff > 1 THEN
+                v_streak := 1;
+            END IF;
+        END IF;
+
+        IF v_streak >= 7 THEN
+            v_streak_mult := 1.5;
+        ELSIF v_streak >= 3 THEN
+            v_streak_mult := 1.2;
+        END IF;
+
+        IF p_is_correct THEN
+            SELECT COUNT(*) INTO v_correct_count
+              FROM user_responses
+             WHERE message_id = p_message_id AND is_correct = TRUE;
+
+            IF v_correct_count < p_bonus_limit THEN
+                v_base_marks := 10;
+                v_is_bonus := true;
+            ELSE
+                v_base_marks := 2;
+            END IF;
+            v_marks := FLOOR(v_base_marks * v_streak_mult)::int;
+        ELSE
+            v_marks := 0;
+        END IF;
+
+        BEGIN
+            INSERT INTO user_responses (
+                user_id, message_id, q_id, is_correct, marks_awarded,
+                selected_option, private_message_id, show_derivation, show_perf
+            )
+            VALUES (
+                p_user_id, p_message_id, p_q_id, p_is_correct, v_marks,
+                p_selected_option, p_private_message_id, p_show_derivation, p_show_perf
+            );
+
+            INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
+            VALUES (
+                p_user_id, 1,
+                CASE WHEN p_is_correct THEN 1 ELSE 0 END,
+                v_marks, v_streak, NOW()
+            )
+            ON CONFLICT (user_id) DO UPDATE SET
+                total = COALESCE(user_stats.total, 0) + 1,
+                correct = COALESCE(user_stats.correct, 0) + CASE WHEN p_is_correct THEN 1 ELSE 0 END,
+                total_marks = COALESCE(user_stats.total_marks, 0) + v_marks,
+                current_streak = v_streak,
+                last_active_at = NOW();
+
+        EXCEPTION WHEN unique_violation THEN
+            -- Race: another request inserted the same (user_id, message_id) between
+            -- our check above and this insert. Fall back to reading what actually landed.
+            v_first_try := false;
+            SELECT ur.is_correct, ur.marks_awarded
+              INTO v_existing_correct, v_existing_marks
+              FROM user_responses ur
+             WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
+            IF FOUND THEN
+                v_marks := v_existing_marks;
+                v_is_bonus := (v_marks >= 10);
+            ELSE
+                v_marks := 0;
+                v_is_bonus := false;
+            END IF;
+        END;
+    END IF;
+
+    RETURN QUERY
+    SELECT us.total, us.correct, us.total_marks, v_marks, v_first_try, v_is_bonus, us.grade, us.current_streak
+      FROM user_stats us
+     WHERE us.user_id = p_user_id;
+END;
+$$ LANGUAGE plpgsql;
+"""
 
 class QuizEngine:
     _pool = None
     _warned_detected = False
     _tracks_cache = {}
     _tracks_cache_time = 0
+    _fn_ensured = False
 
     def __init__(self):
         self.config = CONFIG
@@ -25,18 +170,55 @@ class QuizEngine:
         if self.db_url:
             if not QuizEngine._pool:
                 try:
+                    # NOTE: minconn was previously 2. Under any concurrent load (multiple
+                    # asyncio.to_thread DB calls firing close together, which this app does
+                    # constantly per button tap), the pool would lazily grow past those 2
+                    # warm connections -- and EVERY new connection it opens costs 1.3-2.4s
+                    # (confirmed via src/db_diag.py "fresh connect+auth" measurement),
+                    # vs. ~380-450ms for reusing an already-open one. Pre-warming with a
+                    # much higher minconn means we pay that cold-connect cost ONCE at
+                    # startup instead of randomly mid-conversation.
+                    prewarm_count = int(os.getenv("DB_POOL_PREWARM", "10"))
+                    max_count = int(os.getenv("DB_POOL_MAX", "20"))
+                    prewarm_count = min(prewarm_count, max_count)
+
+                    t0 = time.perf_counter()
                     QuizEngine._pool = ThreadedConnectionPool(
-                        minconn=2,
-                        maxconn=20,
+                        minconn=prewarm_count,
+                        maxconn=max_count,
                         dsn=self.db_url
                     )
+                    warm_ms = (time.perf_counter() - t0) * 1000
                     if not QuizEngine._warned_detected:
-                        print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized.{Style.RESET}")
+                        print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized "
+                              f"({prewarm_count} pre-warmed / {max_count} max) in {warm_ms:.0f}ms.{Style.RESET}")
                         QuizEngine._warned_detected = True
                 except Exception as e:
                     print(f"{Style.RED}[DATABASE ERROR] Failed to initialize connection pool: {e}{Style.RESET}")
+
+            self._ensure_functions()
         else:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
+
+    def _ensure_functions(self):
+        """Creates/updates fn_process_user_score once per process. Idempotent (CREATE OR REPLACE)."""
+        if QuizEngine._fn_ensured:
+            return
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute(_FN_PROCESS_USER_SCORE_SQL)
+                conn.commit()
+            QuizEngine._fn_ensured = True
+            print(f"{Style.GREEN}[DATABASE] fn_process_user_score ensured.{Style.RESET}")
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"{Style.RED}[DATABASE ERROR] Failed to ensure fn_process_user_score: {e}{Style.RESET}")
+        finally:
+            if conn:
+                self.release_connection(conn)
 
     def get_db_connection(self):
         if not self.db_url:
@@ -49,21 +231,18 @@ class QuizEngine:
                     conn.cursor_factory = RealDictCursor
 
                     if conn.closed == 0:
-                        try:
-                            with conn.cursor() as cur:
-                                cur.execute("SELECT 1;")
-                            return conn
-                        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-                            print(f"{Style.YELLOW}[DATABASE] Discarding stale connection from pool: {e}{Style.RESET}")
-                            try:
-                                QuizEngine._pool.putconn(conn, close=True)
-                            except Exception:
-                                pass
+                        return conn
                     else:
                         try:
                             QuizEngine._pool.putconn(conn, close=True)
                         except Exception:
                             pass
+                except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                    print(f"{Style.YELLOW}[DATABASE] Discarding stale connection from pool: {e}{Style.RESET}")
+                    try:
+                        QuizEngine._pool.putconn(conn, close=True)
+                    except Exception:
+                        pass
                 except Exception as e:
                     print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool checkout failed: {e}{Style.RESET}")
                     break
@@ -96,6 +275,7 @@ class QuizEngine:
             pass
 
     # --- TRACKING STATE METHODS ---
+    @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
         QuizEngine._tracks_cache_time = 0
         conn = None
@@ -110,6 +290,7 @@ class QuizEngine:
                         followup_mid = EXCLUDED.followup_mid;
                 """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid))
                 conn.commit()
+            track_question_cache.invalidate(f"trackq:{display_id}")
         except Exception as e:
             if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to save track: {e}{Style.RESET}")
@@ -117,6 +298,7 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+    @timed_sync(lambda self: "db_get_all_tracks")
     def db_get_all_tracks(self):
         now = time.time()
         if QuizEngine._tracks_cache and (now - QuizEngine._tracks_cache_time < 5):
@@ -139,6 +321,7 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+    @timed_sync(lambda self, message_id, status, *a, **kw: f"db_update_track_status(msg={message_id})")
     def db_update_track_status(self, message_id, status, followup_mid=None, clear_followup=False):
         QuizEngine._tracks_cache_time = 0
         conn = None
@@ -152,6 +335,9 @@ class QuizEngine:
                 else:
                     cur.execute("UPDATE sent_tracks SET status = %s WHERE message_id = %s;", (status, str(message_id)))
                 conn.commit()
+            # We don't know the display_id here cheaply, so drop the whole track/question
+            # cache namespace on any status change -- cheap relative to a DB round trip.
+            track_question_cache.invalidate_prefix("trackq:")
         except Exception as e:
             if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to update track status: {e}{Style.RESET}")
@@ -159,6 +345,7 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+    @timed_sync(lambda self, old_mid, new_mid: f"db_swap_track_message_id({old_mid}->{new_mid})")
     def db_swap_track_message_id(self, old_mid, new_mid):
         """Swaps the message ID inside both track records and user responses for deleted photo elements."""
         QuizEngine._tracks_cache_time = 0
@@ -170,9 +357,10 @@ class QuizEngine:
                     cur.execute("UPDATE user_responses SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
                 except Exception as e:
                     print(f"[DB SWAP WARNING] user_responses update bypassed: {e}")
-                
+
                 cur.execute("UPDATE sent_tracks SET message_id = %s, msg_type = 'text' WHERE message_id = %s;", (str(new_mid), str(old_mid)))
                 conn.commit()
+            track_question_cache.invalidate_prefix("trackq:")
         except Exception as e:
             if conn: conn.rollback()
             print(f"[DB ERROR] Failed to swap track message ID: {e}")
@@ -180,6 +368,7 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+    @timed_sync(lambda self, json_data: "db_import_questions")
     def db_import_questions(self, json_data):
         conn = None
         try:
@@ -232,6 +421,9 @@ class QuizEngine:
                     imported_count += 1
 
                 conn.commit()
+                # A re-imported question may have changed content -- drop the whole
+                # cache rather than tracking which display_ids reference which q_id.
+                track_question_cache.invalidate_prefix("trackq:")
                 return imported_count
         except Exception as e:
             if conn: conn.rollback()
@@ -383,6 +575,20 @@ def db_get_responses_for_message(message_id: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_track_and_question(display_id: int):
+    """
+    Cached: track+question content is read on every single button tap but only
+    changes on send/import/status-change, all of which explicitly invalidate this
+    key above. A cache hit costs ~0ms instead of paying the ~400-700ms network
+    floor to Neon on every tap.
+    """
+    cache_key = f"trackq:{display_id}"
+    cached = track_question_cache.get(cache_key)
+    if cached is not None:
+        # Return a shallow copy of the tuple's dicts so callers mutating the
+        # question dict (none currently do, but to be safe) can't corrupt the cache.
+        track, row_dict = cached
+        return dict(track), dict(row_dict)
+
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -421,6 +627,8 @@ def db_get_track_and_question(display_id: int):
                         row_dict[field] = json.loads(row_dict[field])
                     except Exception:
                         pass
+
+            track_question_cache.set(cache_key, (dict(track), dict(row_dict)))
             return track, row_dict
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch track and question: {e}")
@@ -610,138 +818,47 @@ def db_mark_question_as_sent(q_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
+    """
+    Previously this made 3-5 SEQUENTIAL round trips (check existing response ->
+    read user meta -> count correct responses -> insert response -> upsert stats ->
+    re-read stats), each paying the ~380-450ms network floor to Neon on its own.
+    That's why this single function was clocking 2-3+ seconds in the logs. It now
+    delegates the entire operation to fn_process_user_score (see top of this file),
+    executed as ONE round trip via a single cur.execute() + fetchone().
+
+    Return shape is UNCHANGED -- callers (callbacks.py, cli.py, bot.py) need no changes.
+    """
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            first_try = True
-            marks_to_award = 0
-            is_bonus_winner = False
+            cur.execute(
+                "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
+                (
+                    str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
+                    private_message_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
+                )
+            )
+            row = cur.fetchone()
+            conn.commit()
 
-            cur.execute("""
-                SELECT is_correct, marks_awarded FROM user_responses
-                WHERE user_id = %s AND message_id = %s;
-            """, (str(user_id), str(message_id)))
-            existing_response = cur.fetchone()
+        if not row:
+            return None
 
-            if existing_response:
-                first_try = False
-                marks_to_award = existing_response['marks_awarded']
-                is_bonus_winner = (marks_to_award >= 10)
-                cur.execute("SELECT total, correct, total_marks, grade, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
-                stats = cur.fetchone()
-            else:
-                streak_multiplier = 1.0
-                cur.execute("SELECT last_active_at, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
-                user_meta = cur.fetchone()
-
-                current_streak = 0
-                today = datetime.now(timezone.utc).date()
-
-                if user_meta:
-                    last_date = user_meta.get('last_active_at')
-                    current_streak = user_meta.get('current_streak', 0) or 0
-
-                    if last_date:
-                        if isinstance(last_date, (datetime, date)):
-                            last_active_date = last_date.date() if isinstance(last_date, datetime) else last_date
-                        elif isinstance(last_date, str):
-                            try:
-                                last_active_date = datetime.fromisoformat(last_date.replace('Z', '+00:00')).date()
-                            except Exception:
-                                last_active_date = today
-                        else:
-                            last_active_date = today
-
-                        days_diff = (today - last_active_date).days
-                        if days_diff == 1:
-                            current_streak += 1
-                        elif days_diff > 1:
-                            current_streak = 1
-                    else:
-                        current_streak = 1
-                else:
-                    current_streak = 1
-
-                if current_streak >= 7:
-                    streak_multiplier = 1.5
-                elif current_streak >= 3:
-                    streak_multiplier = 1.2
-
-                if is_correct:
-                    cur.execute("""
-                        SELECT COUNT(*) FROM user_responses
-                        WHERE message_id = %s AND is_correct = TRUE;
-                    """, (str(message_id),))
-                    correct_count = cur.fetchone()['count']
-
-                    if correct_count < bonus_limit:
-                        base_marks = 10
-                        is_bonus_winner = True
-                    else:
-                        base_marks = 2
-
-                    marks_to_award = int(base_marks * streak_multiplier)
-                else:
-                    marks_to_award = 0
-
-                try:
-                    cur.execute("SAVEPOINT score_insertion_sp;")
-
-                    cur.execute("""
-                        INSERT INTO user_responses (user_id, message_id, q_id, is_correct, marks_awarded, selected_option, private_message_id, show_derivation, show_perf)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-                    """, (str(user_id), str(message_id), q_id, is_correct, marks_to_award, int(selected_option), private_message_id, show_derivation, show_perf))
-
-                    correct_inc = 1 if is_correct else 0
-
-                    cur.execute("""
-                        INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
-                        VALUES (%s, 1, %s, %s, %s, NOW())
-                        ON CONFLICT (user_id) DO UPDATE SET
-                            total = COALESCE(user_stats.total, 0) + 1,
-                            correct = COALESCE(user_stats.correct, 0) + %s,
-                            total_marks = COALESCE(user_stats.total_marks, 0) + %s,
-                            current_streak = %s,
-                            last_active_at = NOW();
-                    """, (str(user_id), correct_inc, marks_to_award, current_streak, correct_inc, marks_to_award, current_streak))
-
-                    cur.execute("RELEASE SAVEPOINT score_insertion_sp;")
-                except psycopg2.IntegrityError:
-                    cur.execute("ROLLBACK TO SAVEPOINT score_insertion_sp;")
-                    cur.execute("""
-                        SELECT is_correct, marks_awarded FROM user_responses
-                        WHERE user_id = %s AND message_id = %s;
-                    """, (str(user_id), str(message_id)))
-                    existing_response_retry = cur.fetchone()
-                    if existing_response_retry:
-                        first_try = False
-                        marks_to_award = existing_response_retry['marks_awarded']
-                        is_bonus_winner = (marks_to_award >= 10)
-                    else:
-                        first_try = False
-                        marks_to_award = 0
-                        is_bonus_winner = False
-
-                conn.commit()
-
-                cur.execute("SELECT total, correct, total_marks, grade, current_streak FROM user_stats WHERE user_id = %s;", (str(user_id),))
-                stats = cur.fetchone()
-
-        if stats:
-            accuracy = int((stats['correct'] / stats['total']) * 100) if stats['total'] > 0 else 0
-            return {
-                "total": stats['total'],
-                "correct": stats['correct'],
-                "accuracy": accuracy,
-                "total_marks": stats['total_marks'],
-                "marks_awarded": marks_to_award,
-                "first_try": first_try,
-                "is_bonus_winner": is_bonus_winner,
-                "grade": stats['grade'],
-                "current_streak": stats.get('current_streak', 0)
-            }
-        return None
+        total = row['o_total']
+        correct = row['o_correct']
+        accuracy = int((correct / total) * 100) if total and total > 0 else 0
+        return {
+            "total": total,
+            "correct": correct,
+            "accuracy": accuracy,
+            "total_marks": row['o_total_marks'],
+            "marks_awarded": row['o_marks_awarded'],
+            "first_try": row['o_first_try'],
+            "is_bonus_winner": row['o_is_bonus_winner'],
+            "grade": row['o_grade'],
+            "current_streak": row['o_current_streak'],
+        }
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Error in process_user_score: {e}")

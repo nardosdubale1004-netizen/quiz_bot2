@@ -111,7 +111,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
 
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)
-            
+
             has_lockout = check_message_has_lockout(user_id, query.message)
             if has_lockout:
                 explanation_html = warning_notice + explanation_html
