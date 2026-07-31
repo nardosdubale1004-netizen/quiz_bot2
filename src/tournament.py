@@ -110,9 +110,8 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
             question_preview = raw_q[:220] + ("…" if len(raw_q) > 220 else "")
 
         STOP_EDITING_WITHIN = 0
-        remaining = round_seconds
 
-        while remaining > STOP_EDITING_WITHIN:
+        while True:
             if src.config.SHUTTING_DOWN:
                 print(f"[DEBUG-TIMER] Shutdown detected. Exiting countdown loop for message {ann_mid}.", flush=True)
                 return
@@ -124,11 +123,19 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 print(f"[DEBUG-TIMER] Track status changed from tournament_active or track deleted. Stopping countdown for message {ann_mid}.", flush=True)
                 return
 
+            # FIX: Dynamically read 'remaining' strictly from the database's actual deadline on every tick!
+            # This completely eliminates timer collisions/skips/jitter because any running task across any instance
+            # reads from the exact same central source of truth (the Neon database clock).
+            remaining = live_track.get('remaining_seconds', 0)
+            if remaining <= STOP_EDITING_WITHIN:
+                print(f"[DEBUG-TIMER-FINISH] Remaining seconds achieved threshold ({remaining}s <= {STOP_EDITING_WITHIN}s). Ending countdown loop.", flush=True)
+                break
+
             question_mid = live_track.get('message_id')
             submission_count = 0
             # Ensure we only query once swap has registered a real numeric message ID
             if question_mid and str(question_mid).isdigit():
-                # Fix: Retrieve submission counts utilizing dual active/placeholder query matching
+                # Retrieve submission counts utilizing dual active/placeholder query matching
                 responses = await asyncio.to_thread(db_get_responses_for_message, question_mid, display_id)
                 submission_count = len(responses)
                 print(f"[DEBUG-TIMER-TICK] Track {display_id} (mid={question_mid}) has {submission_count} submissions. Remaining: {remaining}s", flush=True)
@@ -150,12 +157,8 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 sleep_chunk = 2
 
             sleep_chunk = min(sleep_chunk, remaining - 1 if remaining > 1 else 1)
+            await asyncio.sleep(sleep_chunk)
 
-            for _ in range(sleep_chunk):
-                if src.config.SHUTTING_DOWN:
-                    break
-                await asyncio.sleep(1)
-            remaining -= sleep_chunk
     except asyncio.CancelledError:
         print(f"[DEBUG-TIMER] Countdown task for message {ann_mid} was cancelled.", flush=True)
         raise
@@ -445,7 +448,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
         print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
-        # Fix: Query user responses using final_msg_id (post-swap) to ensure we fetch all records successfully!
+        # Query user responses using final_msg_id (post-swap) to ensure we fetch all records successfully!
         user_responses = await asyncio.to_thread(db_get_responses_for_message, final_msg_id, last_seq)
         print(f"[DEBUG-FINALIZE-FIX] Querying user responses using final_msg_id={final_msg_id} (post-swap) instead of old mid={mid} to ensure we load all student records successfully. Count found: {len(user_responses)}", flush=True)
 
@@ -678,6 +681,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 try:
                                     msg = await app.bot.send_message(chat_id=engine.config['channel'], text=cooldown_text, parse_mode="HTML")
                                     _COOLDOWN_MID = msg.message_id
+                                    print(f"[DEBUG-TIMER-COOLDOWN] Created cooldown message ID: {msg.message_id}", flush=True)
                                 except Exception:
                                     pass
                             elif _LAST_COOLDOWN_VAL != remaining_cooldown:

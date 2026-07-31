@@ -134,8 +134,6 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
                 print(f"{Style.YELLOW}[RICH MSG] Native client call failed: {e}. Trying HTTP raw fallback...{Style.RESET}", flush=True)
 
     # --- TIER 2: raw HTTP POST to /sendRichMessage using the SHARED pooled client ---
-    # (previously this opened `async with httpx.AsyncClient() as client:` — a brand
-    # new TCP+TLS handshake on every single message. Now reuses one warm connection.)
     try:
         client = get_shared_client()
         url = f"https://api.telegram.org/bot{bot.token}/sendRichMessage"
@@ -185,9 +183,6 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
         print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
 
     # --- TIER 3: ultimate fallback to standard HTML legacy delivery ---
-    # convert_to_legacy_html() now safely converts <tg-math>/<tg-math-block>
-    # to plain unicode math instead of passing the raw tags through, so this
-    # tier no longer crashes on questions containing formulas.
     print(f"{Style.YELLOW}[RICH MSG] Falling back to standard HTML legacy delivery.{Style.RESET}", flush=True)
     legacy_html = convert_to_legacy_html(normalized_content)
 
@@ -223,7 +218,11 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
     # --- TIER 1: raw HTTP POST with correctly serialized JSON strings, using the SHARED pooled client ---
     try:
         client = get_shared_client()
-        url = f"https://api.telegram.org/bot{bot.token}/editMessageText"
+        
+        # FIX: Dynamically select endpoint to target based on the presence of diagrams/photos.
+        # This prevents "unsupported tag / method clashing" on media messages.
+        endpoint = "editMessageCaption" if has_media else "editMessageText"
+        url = f"https://api.telegram.org/bot{bot.token}/{endpoint}"
 
         rich_message_dict = {
             "html": rich_html
@@ -254,27 +253,50 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
         if has_media and not file_id:
             files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
 
-        with timed(f"TIER1 editMessageText(rich) msg={message_id}"):
-            resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
+        print(f"[DEBUG-FIX-EDIT-API] Dispatching TIER 1 API request using endpoint: '{endpoint}' to modify message_id: {message_id}", flush=True)
+        resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
 
         if resp.status_code == 200:
             resp_json = resp.json()
             if resp_json.get("ok"):
+                print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on primary endpoint '{endpoint}'.", flush=True)
+                return Message.de_json(resp_json["result"], bot)
+
+        # Fallback to the other endpoint if the primary one returned an error.
+        fallback_endpoint = "editMessageText" if has_media else "editMessageCaption"
+        print(f"[DEBUG-FIX-EDIT-FALLBACK] Primary endpoint '{endpoint}' failed (HTTP {resp.status_code}). Retrying with: '{fallback_endpoint}'", flush=True)
+        fallback_url = f"https://api.telegram.org/bot{bot.token}/{fallback_endpoint}"
+        resp = await client.post(fallback_url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
+        
+        if resp.status_code == 200:
+            resp_json = resp.json()
+            if resp_json.get("ok"):
+                print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on fallback endpoint '{fallback_endpoint}'.", flush=True)
                 return Message.de_json(resp_json["result"], bot)
         else:
-            print(f"[RICH MSG] editMessageText raw HTTP returned status {resp.status_code}: {resp.text[:300]}", flush=True)
+            print(f"[RICH MSG] editMessage HTTP raw request returned status {resp.status_code}: {resp.text[:300]}", flush=True)
     except Exception as e:
         print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
 
     # --- TIER 2: ultimate fallback to standard legacy HTML editing ---
-    # convert_to_legacy_html() now safely converts <tg-math>/<tg-math-block>
-    # to plain unicode math instead of passing the raw tags through, so this
-    # tier no longer crashes with "unsupported start tag tg-math" when TIER 1
-    # fails (e.g. stale/deleted message IDs during bulk `clean`/range ops).
     legacy_html = convert_to_legacy_html(normalized_content)
-    with timed(f"TIER2 legacy edit msg={message_id}"):
-        if has_media:
-            try:
+    print(f"[DEBUG-FIX-EDIT-FALLBACK] Falling back to TIER 2 legacy editing for message_id: {message_id}", flush=True)
+
+    # Try edit_message_text first. If it fails (e.g. because of photo constraints), it retries with edit_message_caption.
+    try:
+        with timed(f"TIER2 legacy edit_message_text msg={message_id}"):
+            return await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=legacy_html,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                **kwargs
+            )
+    except Exception as text_err:
+        print(f"[DEBUG-FIX-EDIT-WARNING] edit_message_text failed: {text_err}. Retrying with edit_message_caption...", flush=True)
+        try:
+            with timed(f"TIER2 legacy edit_message_caption msg={message_id}"):
                 return await bot.edit_message_caption(
                     chat_id=chat_id,
                     message_id=message_id,
@@ -283,14 +305,6 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
                     reply_markup=reply_markup,
                     **kwargs
                 )
-            except Exception:
-                pass
-
-        return await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=legacy_html,
-            parse_mode="HTML",
-            reply_markup=reply_markup,
-            **kwargs
-        )
+        except Exception as cap_err:
+            print(f"[DEBUG-FIX-ERROR] Both TIER 2 legacy edit methods failed: {cap_err}", flush=True)
+            raise text_err

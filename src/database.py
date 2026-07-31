@@ -340,7 +340,7 @@ class QuizEngine:
     def db_update_track_followup_and_type(self, message_id, followup_mid, msg_type):
         conn = None
         try:
-            conn = GLOBAL_ENGINE.get_db_connection()
+            conn = self.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE sent_tracks SET followup_mid = %s, msg_type = %s WHERE message_id = %s;",
@@ -352,13 +352,13 @@ class QuizEngine:
             print(f"[DB ERROR] Failed to update track metadata: {e}")
         finally:
             if conn:
-                GLOBAL_ENGINE.release_connection(conn)
+                self.release_connection(conn)
 
     @timed_sync(lambda self, message_id: f"db_delete_track")
     def db_delete_track(self, message_id):
         conn = None
         try:
-            conn = GLOBAL_ENGINE.get_db_connection()
+            conn = self.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
                 conn.commit()
@@ -367,7 +367,7 @@ class QuizEngine:
             print(f"[DB ERROR] Failed to delete track: {e}")
         finally:
             if conn:
-                GLOBAL_ENGINE.release_connection(conn)
+                self.release_connection(conn)
 
     @timed_sync(lambda self: "db_get_all_tracks")
     def db_get_all_tracks(self):
@@ -642,7 +642,6 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             # --- ADVANCED GLOBAL DIAGNOSTIC DUMP ---
-            # Print the last 5 records of user_responses to isolate multi-process DB targets
             try:
                 cur.execute("SELECT * FROM user_responses ORDER BY answered_at DESC LIMIT 5;")
                 recent = cur.fetchall()
@@ -652,7 +651,7 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
             except Exception as diag_err:
                 print(f"[DEBUG-DB-DIAGNOSTIC-ERROR] Failed to run diagnostic: {diag_err}", flush=True)
 
-            # Fix: If display_id is specified, perform fallback querying against both message_id and placeholder_id.
+            # Fix: If display_id is specified, query against both message_id and placeholder_id.
             if display_id is not None:
                 placeholder_id = f"launching_{display_id}"
                 print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id} OR placeholder_id={placeholder_id}", flush=True)
@@ -1047,7 +1046,6 @@ def db_get_weekly_leaderboard(grade: int):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # Query updated to join and retrieve public nickname, username, and first name
             cur.execute("""
                 SELECT ur.user_id, SUM(ur.marks_awarded) as total_score,
                        us.nickname, us.username, us.first_name, us.alliance_tag
@@ -1104,7 +1102,7 @@ def db_mark_question_as_sent(q_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, db_get_weekly_leaderboard=3):
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1115,7 +1113,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
                 (
                     str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
-                    pm_id, bool(show_derivation), bool(show_perf), int(db_get_weekly_leaderboard)
+                    pm_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
                 )
             )
             row = cur.fetchone()
@@ -1142,7 +1140,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Error in process_user_score: {e}", flush=True)
-        # Fix: Unmute and raise the exception loudly to force Webhook logging diagnostics
         raise e
     finally:
         if conn:
@@ -1271,8 +1268,6 @@ def db_update_tournament_schedule_params(scheduled_start=None, round_seconds=Non
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
-# New query functions to manage and update names
 
 def db_update_user_telegram_info(user_id, username, first_name):
     """Upserts the user's latest real Telegram handle and first name."""
