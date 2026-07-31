@@ -267,6 +267,10 @@ async def emergency_shutdown_cleanup(app, engine: QuizEngine):
     src.config.SHUTTING_DOWN = True
     print(f"\n{Style.YELLOW}[SHUTDOWN] Signal trapped. Executing emergency round sweep...{Style.RESET}", flush=True)
     try:
+        # Clear the queue on shutdown so the tournament does not resume on reboot [1]
+        await asyncio.to_thread(db_clear_tournament_queue)
+        print(f"{Style.YELLOW}[SHUTDOWN] Queued tournament queue cleared.{Style.RESET}", flush=True)
+
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
         if active_rounds:
             print(f"[SHUTDOWN] Resolving {len(active_rounds)} active rounds.", flush=True)
@@ -290,6 +294,10 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
         for track in active_rounds:
             print(f"{Style.YELLOW}[TOURNAMENT] Resolving crashed round REF: {track['display_id']}...{Style.RESET}", flush=True)
             await finalize_tournament_round(app, engine, track)
+        
+        # Clear lingering tournament queue on startup as a fail-safe against hard crashes [1]
+        await asyncio.to_thread(db_clear_tournament_queue)
+        print(f"{Style.GREEN}[TOURNAMENT] Recovery sweep complete. Queue cleared.{Style.RESET}", flush=True)
     except Exception as e:
         print(f"{Style.RED}[TOURNAMENT RECOVERY ERROR] {e}{Style.RESET}", flush=True)
 
