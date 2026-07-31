@@ -19,7 +19,7 @@ CREATE OR REPLACE FUNCTION fn_process_user_score(
     p_q_id text,
     p_is_correct boolean,
     p_selected_option int,
-    p_private_message_id int,
+    p_private_message_id bigint, -- Aligned to match the bigint schema column
     p_show_derivation boolean,
     p_show_perf boolean,
     p_bonus_limit int
@@ -204,8 +204,6 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
-    # Insert/replace inside class QuizEngine in src/database.py:
-
     def _ensure_tournament_schema(self):
         if QuizEngine._tournament_schema_ensured:
             return
@@ -213,30 +211,14 @@ class QuizEngine:
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
-                cur.execute("""
-                    ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS round_deadline TIMESTAMPTZ;
-                    ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS round_number INT;
-                    ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS total_rounds INT;
-                    CREATE TABLE IF NOT EXISTS tournament_queue (
-                        id INT PRIMARY KEY DEFAULT 1,
-                        remaining_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-                        last_seq INT NOT NULL DEFAULT 100,
-                        round_seconds INT NOT NULL DEFAULT 60,
-                        total_count INT NOT NULL DEFAULT 1,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS total_count INT NOT NULL DEFAULT 1;
-                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS scheduled_start TIMESTAMPTZ;
-                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS announcement_mid INT;
-                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS cooldown_seconds INT NOT NULL DEFAULT 15;
-                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS is_paused BOOLEAN NOT NULL DEFAULT FALSE;
-                """)
-                conn.commit()
+                # Tables are pre-created manually as per production schema.
+                # Only verify that the primary tables are available.
+                cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
+                cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
             QuizEngine._tournament_schema_ensured = True
-            print(f"{Style.GREEN}[DATABASE] Tournament crash-safety schema (with pause state) ensured.{Style.RESET}")
+            print(f"{Style.GREEN}[DATABASE] Production schema configuration verified successfully.{Style.RESET}")
         except Exception as e:
-            if conn: conn.rollback()
-            print(f"{Style.RED}[DATABASE ERROR] Failed to ensure tournament schema: {e}{Style.RESET}")
+            print(f"{Style.YELLOW}[DATABASE WARNING] Schema checks encountered: {e}. Ensure SQL migrations have been executed.{Style.RESET}")
         finally:
             if conn:
                 self.release_connection(conn)
@@ -271,7 +253,7 @@ class QuizEngine:
         return psycopg2.connect(
             self.db_url,
             cursor_factory=RealDictCursor,
-            connect_timeout=5  # Fail-fast timeout protects thread blockages under Postgres cloud cold starts
+            connect_timeout=5
         )
 
     def release_connection(self, conn):
@@ -297,7 +279,6 @@ class QuizEngine:
             pass
 
     def db_get_current_epoch(self) -> float:
-        """Retrieves the true database server current epoch timestamp to protect against Docker clock drifts."""
         conn = None
         try:
             conn = self.get_db_connection()
@@ -353,7 +334,7 @@ class QuizEngine:
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE sent_tracks SET followup_mid = %s, msg_type = %s WHERE message_id = %s;",
-                    (str(followup_mid), msg_type, str(message_id))
+                    (followup_mid, msg_type, str(message_id))
                 )
                 conn.commit()
         except Exception as e:
@@ -458,14 +439,24 @@ class QuizEngine:
                     if not q.get("id") or not q.get("subject"):
                         continue
 
-                    tags = q.get("tags", [])
-                    options = q.get("options", [])
+                    # Handled directly as native Python list inputs for PostgreSQL arrays (text[])
+                    tags = q.get("tags")
+                    if not isinstance(tags, list):
+                        tags = [tags] if tags else []
+
+                    options = q.get("options")
+                    if not isinstance(options, list):
+                        options = [options] if options else []
+
+                    native_options = q.get("native_options")
+                    if native_options is not None and not isinstance(native_options, list):
+                        native_options = [native_options]
+
                     poll_explanation = Json(q.get("poll_explanation", {}))
                     options_analysis = Json(q.get("options_analysis", []))
                     scheduled_for = q.get("scheduled_for")
                     force_image = q.get("force_image", False)
                     native_question = q.get("native_question")
-                    native_options = q.get("native_options")
 
                     cur.execute("""
                         INSERT INTO questions (
@@ -545,7 +536,8 @@ class QuizEngine:
 
                     for row in rows:
                         q = dict(row)
-                        for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+                        # psycopg2 directly loads text[] to list; we only JSON deserialize string fields.
+                        for field in ["poll_explanation", "options_analysis"]:
                             if field in q and isinstance(q[field], str):
                                 try:
                                     q[field] = json.loads(q[field])
@@ -675,7 +667,7 @@ def db_get_overdue_tournament_rounds():
                 except (ValueError, TypeError):
                     overdue.append(r)
                     continue
-                
+
                 is_overdue = deadline_epoch <= now_epoch
                 print(f"[DEBUG-OVERDUE] REF {r.get('display_id')} | deadline={deadline_epoch:.1f} | now={now_epoch:.1f} | diff={deadline_epoch - now_epoch:.1f}s | is_overdue={is_overdue}", flush=True)
 
@@ -819,7 +811,8 @@ def db_get_question_by_id(q_id):
             if not row:
                 return None
             q = dict(row)
-            for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+            # psycopg2 directly loads tags, options, and native_options to Python list types.
+            for field in ["poll_explanation", "options_analysis"]:
                 if field in q and isinstance(q[field], str):
                     try:
                         q[field] = json.loads(q[field])
@@ -872,7 +865,7 @@ def db_get_track_and_question(display_id: int):
                 "q_id": row_dict["id"]
             }
 
-            for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+            for field in ["poll_explanation", "options_analysis"]:
                 if field in row_dict and isinstance(row_dict[field], str):
                     try:
                         row_dict[field] = json.loads(row_dict[field])
@@ -1073,11 +1066,13 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # private_message_id is passed as a safe big-integer to prevent cast errors
+            pm_id = int(private_message_id) if private_message_id is not None else None
             cur.execute(
                 "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
                 (
                     str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
-                    private_message_id, bool(show_derivation), bool(show_perf), int(db_get_weekly_leaderboard)
+                    pm_id, bool(show_derivation), bool(show_perf), int(db_get_weekly_leaderboard)
                 )
             )
             row = cur.fetchone()
@@ -1137,7 +1132,6 @@ def db_try_start_tournament_round(message_id, q_id, display_id, round_seconds, r
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_set_tournament_pause_state(paused: bool):
-    """Sets the tournament_queue pause state flag."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1158,7 +1152,6 @@ def db_set_tournament_pause_state(paused: bool):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_upcoming_scheduled_questions():
-    """Retrieves all unsent questions that have a planned publication date in the future."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1179,7 +1172,6 @@ def db_get_upcoming_scheduled_questions():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_reschedule_question(q_id: str, new_time_str: str or None):
-    """Updates the scheduled publication timestamp or clears it if None is provided."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1200,7 +1192,6 @@ def db_reschedule_question(q_id: str, new_time_str: str or None):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_update_tournament_schedule_params(scheduled_start=None, round_seconds=None, cooldown_seconds=None):
-    """Updates parameter properties on the scheduled tournament queue block."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1216,11 +1207,11 @@ def db_update_tournament_schedule_params(scheduled_start=None, round_seconds=Non
             if cooldown_seconds is not None:
                 updates.append("cooldown_seconds = %s")
                 params.append(int(cooldown_seconds))
-            
+
             if not updates:
                 return False
-                
-            params.append(1)  # Limit to ID 1
+
+            params.append(1)
             cur.execute(f"""
                 UPDATE tournament_queue
                 SET {", ".join(updates)}
