@@ -96,10 +96,11 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
         from src.typography import lite_math
         channel_id = engine.config['channel']
 
+        # Fix: Search by display_id instead of followup_mid to bypass the initial launch sequence race condition!
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
-        own_track = next((r for r in active_rounds if str(r.get('followup_mid')) == str(ann_mid)), None)
+        own_track = next((r for r in active_rounds if int(r.get('display_id')) == int(display_id)), None)
         if not own_track:
-            print(f"{Style.YELLOW}[DEBUG-TIMER] No matching active track found for message {ann_mid}. Aborting countdown loop.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[DEBUG-TIMER-WARNING] No active track found with display_id={display_id}. Aborting countdown loop.{Style.RESET}", flush=True)
             return
 
         q = await asyncio.to_thread(db_get_question_by_id, own_track.get('q_id'))
@@ -107,7 +108,6 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
         if q:
             raw_q = q.get('native_question') or lite_math(q.get('question', ''))
             question_preview = raw_q[:220] + ("…" if len(raw_q) > 220 else "")
-        question_mid = own_track.get('message_id')
 
         STOP_EDITING_WITHIN = 0
         remaining = round_seconds
@@ -118,15 +118,19 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 return
 
             active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
-            live_track = next((r for r in active_rounds if str(r.get('followup_mid')) == str(ann_mid)), None)
+            # Re-fetch live track by display_id to capture dynamic message_id swaps smoothly
+            live_track = next((r for r in active_rounds if int(r.get('display_id')) == int(display_id)), None)
             if not live_track or live_track.get('status') != 'tournament_active':
-                print(f"[DEBUG-TIMER] Track status changed from tournament_active. Stopping countdown for message {ann_mid}.", flush=True)
+                print(f"[DEBUG-TIMER] Track status changed from tournament_active or track deleted. Stopping countdown for message {ann_mid}.", flush=True)
                 return
 
+            question_mid = live_track.get('message_id')
             submission_count = 0
-            if question_mid:
+            # Ensure we only query once swap has registered a real numeric message ID
+            if question_mid and str(question_mid).isdigit():
                 responses = await asyncio.to_thread(db_get_responses_for_message, question_mid)
                 submission_count = len(responses)
+                print(f"[DEBUG-TIMER-TICK] Track {display_id} (mid={question_mid}) has {submission_count} submissions. Remaining: {remaining}s", flush=True)
 
             text = _render_challenge_text(current_round, total_rounds, display_id, remaining, question_preview, submission_count)
             if _LAST_COUNTDOWN_TEXT.get(ann_mid) != text:
@@ -386,7 +390,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     print(f"[DEBUG-FINALIZE ERROR] Failed to edit announcement card: {ann_err}", flush=True)
 
         print(f"[DEBUG-FINALIZE] Step 4: Refreshing and closing message assets on Telegram...", flush=True)
-        user_responses = await asyncio.to_thread(db_get_responses_for_message, mid)
         final_msg_id = mid
         if is_photo:
             try:
@@ -418,6 +421,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
 
                 final_msg_id = new_msg.message_id
+                # Shift database references to point to closed static answer card
                 await asyncio.to_thread(engine.db_swap_track_message_id, mid, new_msg.message_id)
                 await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
             except Exception as e:
@@ -438,7 +442,11 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 print(f"{Style.RED}[TOURNAMENT] Error publishing flat solution for REF {last_seq}: {e}{Style.RESET}")
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
-        print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players. Count: {len(user_responses)}", flush=True)
+        print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
+        # Fix: Query user responses using final_msg_id (post-swap) to ensure we fetch all records successfully!
+        user_responses = await asyncio.to_thread(db_get_responses_for_message, final_msg_id)
+        print(f"[DEBUG-FINALIZE-FIX] Querying user responses using final_msg_id={final_msg_id} (post-swap) instead of old mid={mid} to ensure we load all student records successfully. Count found: {len(user_responses)}", flush=True)
+
         dm_tasks = []
         for resp in user_responses:
             u_id, p_mid, sel_opt = resp['user_id'], resp['private_message_id'], resp['selected_option']
