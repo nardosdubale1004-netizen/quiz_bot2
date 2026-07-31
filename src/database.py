@@ -8,6 +8,7 @@ from psycopg2.extras import RealDictCursor, Json
 from psycopg2.pool import ThreadedConnectionPool
 from pathlib import Path
 from datetime import datetime, timezone, date
+import traceback
 from src.config import CONFIG, Style
 from src.perf import timed_sync
 from src.cache import track_question_cache
@@ -640,6 +641,17 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # --- ADVANCED GLOBAL DIAGNOSTIC DUMP ---
+            # Print the last 5 records of user_responses to isolate multi-process DB targets
+            try:
+                cur.execute("SELECT * FROM user_responses ORDER BY answered_at DESC LIMIT 5;")
+                recent = cur.fetchall()
+                print(f"[DEBUG-DB-DIAGNOSTIC] Last 5 rows in user_responses table:", flush=True)
+                for r in recent:
+                    print(f"  ├─ user_id={r['user_id']} | message_id={r['message_id']} | q_id={r['q_id']} | answered_at={r['answered_at']}", flush=True)
+            except Exception as diag_err:
+                print(f"[DEBUG-DB-DIAGNOSTIC-ERROR] Failed to run diagnostic: {diag_err}", flush=True)
+
             # Fix: If display_id is specified, perform fallback querying against both message_id and placeholder_id.
             if display_id is not None:
                 placeholder_id = f"launching_{display_id}"
