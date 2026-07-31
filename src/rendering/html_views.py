@@ -9,6 +9,33 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 def replace_code_with_italic(text: str) -> str:
     return text.replace("<code>", "<i>").replace("</code>", "</i>") if text else ""
 
+def format_public_name(row) -> str:
+    """
+    Formats a user's display identity following a safe, descending fallback chain:
+    1. Custom Nickname (User configured /name)
+    2. Real Telegram Username (Preceded with @, if available)
+    3. Real Telegram First Name (Sanitized)
+    4. Masked User ID (Default backup)
+    """
+    if not row:
+        return "Scholar"
+
+    nickname = row.get('nickname')
+    username = row.get('username')
+    first_name = row.get('first_name')
+    user_id = str(row.get('user_id') or '')
+
+    if nickname and nickname.strip():
+        return html.escape(nickname.strip())
+    if username and username.strip():
+        un = username.strip().lstrip('@')
+        return f"@{html.escape(un)}"
+    if first_name and first_name.strip():
+        return html.escape(first_name.strip())
+
+    masked_id = f"Scholar ...{user_id[-4:]}" if len(user_id) >= 4 else "Scholar"
+    return masked_id
+
 def smart_truncate_html(text: str, max_len: int) -> str:
     if not text or len(text) <= max_len:
         return text or ""
@@ -280,14 +307,19 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
             marks_notice = f"{status_prefix}🟥 <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
 
         master = get_grade_mastery_title(perf_card['total_marks'])
-        next_rank_info = get_next_rank_info(perf_card['total_marks'])
 
-        # CLOSED Table tag added cleanly at the end to prevent formatting crashes
+        # Display custom public nickname on their personal report card view
+        display_name = perf_card.get('nickname') or "Not Set"
+
         score_segment = (
             f"<hr/>\n"
             f"📊 <b>STUDY PERFORMANCE CARD</b>\n"
             f"<p>{marks_notice}</p>\n"
             f"<table>"
+            f"  <tr>"
+            f"    <td>👤 <b>Public Nickname:</b></td>"
+            f"    <td><b>{html.escape(display_name)}</b></td>"
+            f"  </tr>"
             f"  <tr>"
             f"    <td>🎒 <b>Academic Level:</b></td>"
             f"    <td>Grade {perf_card.get('grade', 12)}</td>"

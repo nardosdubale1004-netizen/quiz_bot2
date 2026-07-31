@@ -27,6 +27,7 @@ from src.database import (
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
+from src.rendering.html_views import format_public_name
 
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
@@ -302,18 +303,15 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
         import src.config
 
-        # --- FIX 1: Safe Cancellation Exception Shielding ---
-        print(f"[DEBUG-FINALIZE] Step 2: Cancelling countdown task safely to protect Watcher Loop...", flush=True)
+        print(f"[DEBUG-FINALIZE] Step 2: Cancelling countdown task safely...", flush=True)
         if ann_mid:
             countdown_task = _ACTIVE_COUNTDOWNS.pop(int(ann_mid), None)
             if countdown_task and not countdown_task.done():
-                print(f" ├─ Found active countdown task. Dispatching cancellation flag...", flush=True)
                 countdown_task.cancel()
                 try:
-                    # Trapping and resolving standard CancelledError to preserve Watchdog life
                     await countdown_task
                 except (asyncio.CancelledError, Exception) as cancel_err:
-                    print(f" └─ [DEBUG-FIX-1-SUCCESS] Countdown task safely terminated. Trapped error: {type(cancel_err).__name__}. Watcher task preserved.", flush=True)
+                    print(f" └─ [DEBUG-FIX-SUCCESS] Countdown task safely terminated. Trapped error: {type(cancel_err).__name__}", flush=True)
 
         if src.config.SHUTTING_DOWN or interrupted:
             print(f"{Style.YELLOW}[TOURNAMENT] Marking round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
@@ -341,9 +339,11 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             podium_lines = []
             medals = ["🥇", "🥈", "🥉"]
             for idx, r in enumerate(correct_responses[:3]):
-                u_id_masked = f"Scholar ...{str(r['user_id'])[-4:]}"
+                # Uses fallback formatting chain
+                formatted_identity = format_public_name(r)
                 tag_suffix = f" (<b>#{r['alliance_tag']}</b>)" if r.get('alliance_tag') else ""
-                podium_lines.append(f"  {medals[idx]} <b>{u_id_masked}</b>{tag_suffix}")
+                podium_lines.append(f"  {medals[idx]} <b>{formatted_identity}</b>{tag_suffix}")
+                print(f"[DEBUG-PODIUM-RENDER] Formatted podium winner: {formatted_identity} for user {r['user_id']}", flush=True)
 
             podium_block = ("\n🏆 <b>ROUND PODIUM (FASTEST CORRECT):</b>\n" + "\n".join(podium_lines)) if podium_lines else \
                 "\n🏆 <b>ROUND PODIUM:</b>\n  <i>No correct answers recorded this round.</i>"
@@ -441,7 +441,8 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     champions_lines = []
                     medals = ["🥇", "🥈", "🥉"]
                     for idx, row in enumerate(top_scorers[:3]):
-                        u_label = f"Scholar ...{str(row['user_id'])[-4:]}"
+                        # Format champions using format_public_name
+                        u_label = format_public_name(row)
                         champions_lines.append(f"  {medals[idx]} <b>{u_label}</b> — <b>{row['total_score']} Marks</b>")
                     champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""
 

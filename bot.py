@@ -36,10 +36,12 @@ from src.database import (
     db_get_track_and_question,
     db_get_cached_file_id,
     db_save_cached_file_id,
-    db_get_active_tournament_rounds
+    db_get_active_tournament_rounds,
+    db_update_user_telegram_info,
+    db_set_user_nickname,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
-from src.rendering.html_views import get_next_rank_info
+from src.rendering.html_views import get_next_rank_info, format_public_name
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
@@ -53,6 +55,7 @@ engine = QuizEngine()
 BOT_COMMANDS = [
     BotCommand("start", "Register your profile / view your stats"),
     BotCommand("school", "Set your school or study-alliance tag"),
+    BotCommand("name", "Set your public nickname on scoreboard"),
     BotCommand("leaderboard", "View your rank, or /leaderboard school for group rankings"),
 ]
 
@@ -199,8 +202,12 @@ async def check_and_publish_scheduled(app):
         await asyncio.sleep(60)
 
 async def start_command(update: Update, context):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
     args = context.args
+
+    # Sync latest Telegram attributes on command start
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
     channel_kb = InlineKeyboardMarkup([[
@@ -368,7 +375,7 @@ async def start_command(update: Update, context):
             return
         except Exception as e:
             traceback.print_exc()
-            print(f" {Style.RED}[ERROR] Failed to process deep-linked answer: {e}{Style.RESET}")
+            print(f" {Style.RED}[ERROR] Failed to process linked answer: {e}{Style.RESET}")
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
@@ -380,6 +387,8 @@ async def start_command(update: Update, context):
         accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
         streak = profile.get('current_streak', 0)
 
+        # Uses fallback helper for profile layout
+        public_name = format_public_name(profile)
         alliance_info = f"├─ Study Alliance:  <b>#{profile['alliance_tag']}</b>\n" if profile.get('alliance_tag') else ""
 
         await send_rich_message_safe(
@@ -387,16 +396,18 @@ async def start_command(update: Update, context):
             chat_id=update.message.chat_id,
             html_content=(
                 f"👋 <b>Welcome Back, Scholar!</b>\n\n"
-                f"Your academic profile is active and fully synchronized.\n\n"
+                f"Your profile is active and synchronized.\n\n"
                 f"📊 <b>YOUR STUDY METRICS:</b>\n"
+                f"├─ Display Handle:  <b>{public_name}</b>\n"
                 f"├─ Registered Level: <b>Grade {grade}</b>\n"
                 f"{alliance_info}"
                 f"├─ Practice Score:  <b>{user_marks} Marks</b>\n"
                 f"├─ Active Streak:   <b>🔥 {streak} Days</b>\n"
                 f"├─ Mastery Level:   <b>{mastery}</b>\n"
-                f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} questions solved correctly)\n\n"
-                f"💬 <b>STUDY CHANNELS:</b>\n"
-                f"• Check the main channel for active scheduled questions!\n"
+                f"└─ Accuracy:        <b>{accuracy}%</b> ({profile['correct']} of {profile['total']} solved)\n\n"
+                f"💬 <b>STUDY COMMANDS:</b>\n"
+                f"• Change display name: <code>/name YOUR_NICKNAME</code>\n"
+                f"• Check the channel for active scheduled questions!\n"
                 f"• Type /leaderboard to view your individual rank, or <code>/leaderboard school</code> to check group rankings!"
             ),
             reply_markup=channel_kb
@@ -408,7 +419,8 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
-        [InlineKeyboardButton("🎒 SET SCHOOL / ALLIANCE TAG", callback_data="prompt_alliance|0")],
+        [InlineKeyboardButton("🎒 SET PUBLIC NICKNAME", callback_data="prompt_nickname|0")],
+        [InlineKeyboardButton("🎒 SET ALLIANCE TAG", callback_data="prompt_alliance|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -417,15 +429,20 @@ async def start_command(update: Update, context):
         chat_id=update.message.chat_id,
         html_content=(
             "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
-            "To customize your study experience, unlock early bird rewards, and compare "
-            "scores inside fair rank tables, select your academic grade level below:\n\n"
-            "💡 <i>Tip: Tap the Alliance button to join or create a school group to participate in group challenges!</i>"
+            "To customize your study experience and compare scores inside "
+            "leaderboards, select your grade level below:\n\n"
+            "💡 <i>Tip: Tap the Public Nickname button to set your scoreboard handle! Otherwise, the bot will use your Telegram username or first name.</i>"
         ),
         reply_markup=reply_markup
     )
 
 async def school_command(update: Update, context):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+    
+    # Sync profile parameters
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+
     if not context.args:
         await update.message.reply_text("⚠️ Please specify your school name. Example: <code>/school ABYSSINIA</code>", parse_mode="HTML")
         return
@@ -442,8 +459,51 @@ async def school_command(update: Update, context):
     else:
         await update.message.reply_text("⚠️ Invalid tag format. Please use alphanumeric characters only.")
 
+async def name_command(update: Update, context):
+    """Sets a custom scoreboard nickname for the player."""
+    user = update.effective_user
+    user_id = user.id
+
+    # Sync real Telegram details
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+
+    if not context.args:
+        await update.message.reply_text(
+            "📝 <b>How to set your Public Scoreboard Name:</b>\n\n"
+            "Type <code>/name YOUR_NICKNAME</code> to set a custom scoreboard nickname!\n"
+            "<i>Example:</i> <code>/name Einstein_12</code>\n\n"
+            "If you want to clear your custom nickname and use your Telegram username or first name instead, type <code>/name clear</code>.",
+            parse_mode="HTML"
+        )
+        return
+
+    nickname = " ".join(context.args).strip()
+    if nickname.lower() == "clear":
+        await asyncio.to_thread(db_set_user_nickname, user_id, None)
+        await update.message.reply_text("✅ Your custom nickname has been cleared. The system will fall back to your Telegram username or first name on public standings.", parse_mode="HTML")
+        return
+
+    # Sanitize input to prevent styling injection or overflow
+    clean_name = re.sub(r'[^\w\s\-@]', '', nickname)[:20].strip()
+    if not clean_name:
+        await update.message.reply_text("⚠️ Invalid nickname format. Please use alphanumeric characters, underscores, or dashes (max 20 characters).")
+        return
+
+    success = await asyncio.to_thread(db_set_user_nickname, user_id, clean_name)
+    if success:
+        await update.message.reply_text(
+            f"✅ <b>Success!</b> Your public display handle has been updated to: <b>{clean_name}</b>.\n"
+            f"This name will now be used on round podiums and weekly grade leaderboards! 🏆",
+            parse_mode="HTML"
+        )
+
 async def leaderboard_command(update: Update, context):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+
+    # Auto-sync real Telegram parameters
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+
     args = context.args
 
     if args and args[0].lower() == "school":
@@ -488,6 +548,7 @@ async def leaderboard_command(update: Update, context):
     leaderboard_text = [
         f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
         f"🏅 <b>Your Rank Status:</b>",
+        f"├─ Display Handle: <b>{format_public_name(profile)}</b>",
         f"├─ Mastery Level: <b>{mastery}</b>",
         f"├─ Practice Score: <b>{user_marks} Marks</b>",
         f"├─ Daily Streak:   <b>🔥 {profile.get('current_streak', 0)} Days</b>",
@@ -498,7 +559,8 @@ async def leaderboard_command(update: Update, context):
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, row in enumerate(weekly_top):
-        user_label = f"Student {str(row['user_id'])[-4:]}"
+        # Format the top list profiles using format_public_name
+        user_label = format_public_name(row)
         leaderboard_text.append(f" {medals[i]} {user_label} — <b>{row['total_score']} Marks</b>")
 
     leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -518,8 +580,7 @@ async def run_cloud_server(app, port):
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
-    # --- FIX 3: Start loops clearly in Cloud Instance ---
-    print(f"[DEBUG-FIX-3] Webhook active on Cloud; initializing background loops safely.", flush=True)
+    print(f"[DEBUG-FIX] Webhook active on Cloud; initializing background loops safely.", flush=True)
     asyncio.create_task(check_and_publish_scheduled(app))
     asyncio.create_task(tournament_watcher_loop(app, engine, poll_seconds=2))
 
@@ -568,6 +629,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("school", school_command))
+    app.add_handler(CommandHandler("name", name_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
@@ -626,8 +688,7 @@ def main():
         else:
             print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local Telegram polling is bypassed.{Style.RESET}", flush=True)
             print(f"{Style.YELLOW}Outbound dashboard active. Cloud handles webhook/callbacks for students.{Style.RESET}", flush=True)
-            # --- FIX 3: Local Dashboard Log Warning ---
-            print(f"{Style.YELLOW}[DEBUG-FIX-3] Local background loop runners are disabled here. Ensure your Cloud server instance is up and active to process scheduled items!{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[DEBUG-FIX] Local background loop runners are disabled here. Ensure your Cloud server instance is up and active to process scheduled items!{Style.RESET}", flush=True)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username

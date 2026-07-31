@@ -211,14 +211,19 @@ class QuizEngine:
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
-                # Tables are pre-created manually as per production schema.
-                # Only verify that the primary tables are available.
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
+
+                # Self-healing Schema Updates to track nicknames and Telegram attributes
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS username text;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
+                conn.commit()
+
             QuizEngine._tournament_schema_ensured = True
-            print(f"{Style.GREEN}[DATABASE] Production schema configuration verified successfully.{Style.RESET}")
+            print(f"{Style.GREEN}[DATABASE] Production schema configuration & fallback username columns verified.{Style.RESET}")
         except Exception as e:
-            print(f"{Style.YELLOW}[DATABASE WARNING] Schema checks encountered: {e}. Ensure SQL migrations have been executed.{Style.RESET}")
+            print(f"{Style.YELLOW}[DATABASE WARNING] Schema checks encountered: {e}. Ensure migrations have run.{Style.RESET}")
         finally:
             if conn:
                 self.release_connection(conn)
@@ -536,7 +541,7 @@ class QuizEngine:
 
                     for row in rows:
                         q = dict(row)
-                        # psycopg2 directly loads text[] to list; we only JSON deserialize string fields.
+                        # psycopg2 directly loads text[] to list; we only deserialize string fields.
                         for field in ["poll_explanation", "options_analysis"]:
                             if field in q and isinstance(q[field], str):
                                 try:
@@ -628,8 +633,10 @@ def db_get_responses_for_message(message_id: str):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # Query updated to fetch user nickname, Telegram username, and first name
             cur.execute("""
-                SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at, us.alliance_tag
+                SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at, 
+                       us.alliance_tag, us.nickname, us.username, us.first_name
                 FROM user_responses ur
                 LEFT JOIN user_stats us ON ur.user_id = us.user_id
                 WHERE ur.message_id = %s
@@ -811,7 +818,6 @@ def db_get_question_by_id(q_id):
             if not row:
                 return None
             q = dict(row)
-            # psycopg2 directly loads tags, options, and native_options to Python list types.
             for field in ["poll_explanation", "options_analysis"]:
                 if field in q and isinstance(q[field], str):
                     try:
@@ -1006,13 +1012,15 @@ def db_get_weekly_leaderboard(grade: int):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # Query updated to join and retrieve public nickname, username, and first name
             cur.execute("""
-                SELECT ur.user_id, SUM(ur.marks_awarded) as total_score
+                SELECT ur.user_id, SUM(ur.marks_awarded) as total_score, 
+                       us.nickname, us.username, us.first_name, us.alliance_tag
                 FROM user_responses ur
                 JOIN user_stats us ON ur.user_id = us.user_id
                 WHERE us.grade = %s
                   AND ur.answered_at >= NOW() - INTERVAL '7 days'
-                GROUP BY ur.user_id
+                GROUP BY ur.user_id, us.nickname, us.username, us.first_name, us.alliance_tag
                 ORDER BY total_score DESC
                 LIMIT 10;
             """, (int(grade),))
@@ -1066,7 +1074,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # private_message_id is passed as a safe big-integer to prevent cast errors
             pm_id = int(private_message_id) if private_message_id is not None else None
             cur.execute(
                 "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
@@ -1222,6 +1229,55 @@ def db_update_tournament_schedule_params(scheduled_start=None, round_seconds=Non
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to update tournament schedule parameters: {e}")
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+# New query functions to manage and update names
+
+def db_update_user_telegram_info(user_id, username, first_name):
+    """Upserts the user's latest real Telegram handle and first name."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, username, first_name, total, correct, total_marks)
+                VALUES (%s, %s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    first_name = EXCLUDED.first_name;
+            """, (str(user_id), username, first_name))
+            conn.commit()
+            print(f"[DEBUG-DB-USER-SYNC] Synced profile for {user_id} -> Username: {username}, Name: {first_name}", flush=True)
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to sync user telegram attributes: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_set_user_nickname(user_id, nickname):
+    """Sets or clears a custom, student-defined display nickname."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, nickname, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    nickname = EXCLUDED.nickname;
+            """, (str(user_id), nickname))
+            conn.commit()
+            print(f"[DEBUG-DB-NICKNAME] User {user_id} configured custom nickname to: '{nickname}'", flush=True)
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to store user custom nickname: {e}", flush=True)
         return False
     finally:
         if conn:
