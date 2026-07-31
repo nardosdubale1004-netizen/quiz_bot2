@@ -157,7 +157,7 @@ class QuizEngine:
         self.config = CONFIG
         self.db = {}
         self.last_refresh = 0
-        self.refresh_interval = 30  # 30 seconds caching TTL
+        self.refresh_interval = 30
         self.db_url = self.config.get("database_url")
         if self.db_url:
             if not QuizEngine._pool:
@@ -174,7 +174,7 @@ class QuizEngine:
                     )
                     warm_ms = (time.perf_counter() - t0) * 1000
                     if not QuizEngine._warned_detected:
-                        print(f"{Style.GREEN}[DATABASE] Threaded PostgreSQL Connection Pool initialized "
+                        print(f"{Style.GREEN}[DATABASE] Threaded connection pool initialized "
                               f"({prewarm_count} pre-warmed / {max_count} max) in {warm_ms:.0f}ms.{Style.RESET}")
                         QuizEngine._warned_detected = True
                 except Exception as e:
@@ -186,7 +186,6 @@ class QuizEngine:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
     def _ensure_functions(self):
-        """Creates/updates fn_process_user_score once per process. Idempotent (CREATE OR REPLACE)."""
         if QuizEngine._fn_ensured:
             return
         conn = None
@@ -206,7 +205,6 @@ class QuizEngine:
                 self.release_connection(conn)
 
     def _ensure_tournament_schema(self):
-        """Idempotent. Adds the crash-safety columns/table used by src/tournament.py."""
         if QuizEngine._tournament_schema_ensured:
             return
         conn = None
@@ -226,6 +224,9 @@ class QuizEngine:
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
                     ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS total_count INT NOT NULL DEFAULT 1;
+                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS scheduled_start TIMESTAMPTZ;
+                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS announcement_mid INT;
+                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS cooldown_seconds INT NOT NULL DEFAULT 15;
                 """)
                 conn.commit()
             QuizEngine._tournament_schema_ensured = True
@@ -291,7 +292,6 @@ class QuizEngine:
         except Exception:
             pass
 
-    # --- TRACKING STATE METHODS ---
     @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None, round_seconds=None):
         QuizEngine._tracks_cache_time = 0
@@ -633,7 +633,6 @@ def db_get_responses_for_message(message_id: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_overdue_tournament_rounds():
-    """Tracks stuck in 'tournament_active' whose deadline has passed or is missing."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -668,7 +667,6 @@ def db_get_overdue_tournament_rounds():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_active_tournament_rounds():
-    """Fetch all tracks currently registered under active tournament status along with exact remaining seconds."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -701,20 +699,23 @@ def db_get_active_tournament_rounds():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60, total_count: int = 1):
+def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60, total_count: int = 1, scheduled_start=None, announcement_mid=None, cooldown_seconds: int = 15):
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count)
-                VALUES (1, %s, %s, %s, %s)
+                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     remaining_ids = EXCLUDED.remaining_ids,
                     last_seq = EXCLUDED.last_seq,
                     round_seconds = EXCLUDED.round_seconds,
-                    total_count = EXCLUDED.total_count;
-            """, (Json(remaining_ids), last_seq, round_seconds, total_count))
+                    total_count = EXCLUDED.total_count,
+                    scheduled_start = EXCLUDED.scheduled_start,
+                    announcement_mid = EXCLUDED.announcement_mid,
+                    cooldown_seconds = EXCLUDED.cooldown_seconds;
+            """, (Json(remaining_ids), last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds))
             conn.commit()
     except Exception as e:
         if conn: conn.rollback()
@@ -739,7 +740,6 @@ def db_get_tournament_queue():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_pop_tournament_question():
-    """Atomically pops the next queued question id and advances display index with an active round guard."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1086,10 +1086,6 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_try_start_tournament_round(message_id, q_id, display_id, round_seconds, round_number, total_rounds):
-    """
-    Claims an exclusive lock in PostgreSQL to verify no other tournament round is active,
-    then logs the current round status to ensure consistent round information.
-    """
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()

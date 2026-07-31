@@ -16,6 +16,7 @@ from src.database import (
     process_user_score,
     db_save_tournament_queue,
     db_get_question_by_id,
+    db_get_tournament_queue,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
@@ -27,6 +28,7 @@ from prompt_toolkit.formatted_text import HTML
 import httpx
 from telegram import Poll, InputMediaPhoto
 from telegram.error import BadRequest
+from datetime import datetime, timedelta, timezone
 
 # Phrases Telegram's Bot API returns when the target message/poll no longer exists
 _MISSING_MESSAGE_PHRASES = [
@@ -43,6 +45,22 @@ def _is_missing_message_error(err: Exception) -> bool:
 
 def _is_not_modified_error(err: Exception) -> bool:
     return "message is not modified" in str(err).lower()
+
+def parse_duration_to_seconds(text: str, default: int) -> int:
+    """Parses delay expressions such as 30s, 5m, or 1h into raw seconds."""
+    if not text:
+        return default
+    text = text.strip().lower()
+    match = re.match(r'^([\d.]+)\s*([smh]?)$', text)
+    if not match:
+        return default
+    val = float(match.group(1))
+    unit = match.group(2)
+    if unit == 'm':
+        return int(val * 60)
+    elif unit == 'h':
+        return int(val * 3600)
+    return int(val)
 
 def _parse_manage_selection(cmd: str, items: list, tracks: dict) -> list:
     targets = []
@@ -158,8 +176,7 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
         if media_bytes and m and m.photo and not cached_file_id:
             await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
-    except Exception as e:
-        traceback.print_exc()
+    except Exception:
         try:
             kb = UIFactory.build_answered_keyboard(
                 last_seq, sel_opt,
@@ -617,7 +634,41 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"{Style.RED}No valid questions selected.{Style.RESET}")
                 continue
 
-            # src/cli.py, inside `elif choice == "5":`, replace the final block with:
+            # Collect customized parameters from the CLI
+            duration_in = await cli.ask("<b>Round Duration (e.g. 30s, 1m, 5m - default 60s): </b>")
+            round_seconds = parse_duration_to_seconds(duration_in, 60)
+
+            cooldown_in = await cli.ask("<b>Interval / Cooldown between rounds (e.g. 10s, 30s, 1m - default 15s): </b>")
+            cooldown_seconds = parse_duration_to_seconds(cooldown_in, 15)
+
+            delay_in = await cli.ask("<b>Schedule Delay (e.g. 5m, 2h - or press Enter for immediate start): </b>")
+            delay_seconds = parse_duration_to_seconds(delay_in, 0)
+
+            scheduled_start = None
+            announcement_mid = None
+
+            if delay_seconds > 0:
+                now_utc = datetime.now(timezone.utc)
+                scheduled_start = now_utc + timedelta(seconds=delay_seconds)
+                print(f"{Style.GREEN}Scheduling tournament to start at {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (in {delay_in}){Style.RESET}")
+
+                # Post upcoming information card on the channel
+                try:
+                    channel_id = engine.config['channel']
+                    mins_left = int(delay_seconds / 60) or 1
+                    ann_text = (
+                        f"📢 <b>UPCOMING LIVE TOURNAMENT SHOWDOWN</b> ⚔️\n\n"
+                        f"Prepare yourself, scholars! A live tournament series will begin soon.\n\n"
+                        f"⏰ <b>Starting in:</b> ~{mins_left} minute(s)\n"
+                        f"📋 <b>Total Questions:</b> {len(tournament_qs)}\n"
+                        f"⏱️ <b>Round Duration:</b> {round_seconds} seconds\n"
+                        f"❄️ <b>Round Interval:</b> {cooldown_seconds} seconds\n\n"
+                        f"<i>Set your notifications ON! Correct and rapid answers earn maximum leaderboard marks.</i>"
+                    )
+                    ann_msg = await app.bot.send_message(chat_id=channel_id, text=ann_text, parse_mode="HTML")
+                    announcement_mid = ann_msg.message_id
+                except Exception as ann_err:
+                    print(f"{Style.YELLOW}Could not post scheduled announcement to channel: {ann_err}{Style.RESET}")
 
             print(f"\n{Style.GREEN}Selected {len(tournament_qs)} questions. Queuing showdown (crash-safe)...{Style.RESET}")
 
@@ -637,17 +688,62 @@ async def admin_panel(app, engine: QuizEngine):
                 has_pending_series = bool(existing_queue and existing_queue.get('remaining_ids'))
 
                 if active_rounds or has_pending_series:
-                    # Never launch on top of a live/queued round. Append to the END of whatever
-                    # is already running — the watcher fires them strictly one at a time, in order.
+                    # Safe merge: Only append to existing queue if a tournament is actively running or pending
                     merged_ids = (existing_queue['remaining_ids'] if existing_queue else []) + q_ids
                     merged_total = (existing_queue['total_count'] if existing_queue else 0) + total_count
                     merged_last_seq = max(existing_queue['last_seq'] if existing_queue else last_seq, last_seq)
-                    await asyncio.to_thread(db_save_tournament_queue, merged_ids, merged_last_seq, 60, merged_total)
-                    print(f"{Style.YELLOW}⚠️  A round is already live/queued. These {total_count} question(s) "
-                          f"were appended to the queue and will fire automatically, one at a time, once "
-                          f"the current showdown finishes.{Style.RESET}")
+
+                    await asyncio.to_thread(
+                        db_save_tournament_queue,
+                        merged_ids,
+                        merged_last_seq,
+                        round_seconds,
+                        merged_total,
+                        scheduled_start.isoformat() if scheduled_start else (existing_queue.get('scheduled_start').isoformat() if (existing_queue and existing_queue.get('scheduled_start')) else None),
+                        announcement_mid or (existing_queue.get('announcement_mid') if existing_queue else None),
+                        cooldown_seconds
+                    )
+                    if scheduled_start:
+                        print(f"{Style.GREEN}✅ Tournament successfully scheduled and appended to existing queue!{Style.RESET}")
+                    else:
+                        print(f"{Style.YELLOW}⚠️ A round is already live/queued. Question(s) appended to the queue.{Style.RESET}")
                 else:
-                    first_id = q_ids.pop(0)
-                    await asyncio.to_thread(db_save_tournament_queue, q_ids, last_seq + 1, 60, total_count)
-                    first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
-                    await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=60, current_round=1, total_rounds=total_count)
+                    # Fresh queue: Overwrite any old/stale row cleanly to prevent inaccurate total count
+                    if scheduled_start is not None:
+                        await asyncio.to_thread(
+                            db_save_tournament_queue,
+                            q_ids,  # Keep all selected questions in the queue since it's scheduled for later
+                            last_seq,
+                            round_seconds,
+                            total_count,  # Reset exactly to current selected size
+                            scheduled_start.isoformat(),
+                            announcement_mid,
+                            cooldown_seconds
+                        )
+                        print(f"{Style.GREEN}✅ Tournament successfully scheduled and queued!{Style.RESET}")
+                    else:
+                        # Immediate start
+                        first_id = q_ids.pop(0)
+                        await asyncio.to_thread(
+                            db_save_tournament_queue,
+                            q_ids,
+                            last_seq + 1,
+                            round_seconds,
+                            total_count,
+                            None,
+                            None,
+                            cooldown_seconds
+                        )
+                        first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
+                        await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=round_seconds, current_round=1, total_rounds=total_count)
+
+                # Direct database verification to verify exactly what was stored in Neon PostgreSQL
+                verification = await asyncio.to_thread(db_get_tournament_queue)
+                print(f"\n{Style.YELLOW}[DATABASE-VERIFICATION] Stored Row in 'tournament_queue':{Style.RESET}")
+                if verification:
+                    print(f" ├─ remaining_ids: {verification.get('remaining_ids')}")
+                    print(f" ├─ total_count: {verification.get('total_count')}")
+                    print(f" ├─ scheduled_start: {verification.get('scheduled_start')} (type={type(verification.get('scheduled_start'))})")
+                    print(f" └─ cooldown_seconds: {verification.get('cooldown_seconds')} (type={type(verification.get('cooldown_seconds'))})")
+                else:
+                    print(" └─ [ERROR] No queue record exists in database table!")
