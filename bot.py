@@ -254,7 +254,7 @@ async def start_command(update: Update, context):
                     context.bot,
                     chat_id=update.message.chat_id,
                     html_content=(
-                        "✅ <b>Response Recorded!</b>\n\n"
+                        "COOLDOWN_REACHED\n"
                         "Your selection has been securely logged. The correct answer and step-by-step "
                         "explanation card will be automatically delivered here in your DMs once the round ends!"
                     ),
@@ -627,7 +627,10 @@ def main():
             asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
         else:
             print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local Telegram polling is bypassed.{Style.RESET}", flush=True)
-            print(f"{Style.YELLOW}Outbound dashboard active. Cloud handles webhook/callbacks for students.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}Starting local diagnostic loops for real-time telemetry output...{Style.RESET}", flush=True)
+            # Run loops locally for output debugging while the cloud continues handling interactive polling tasks
+            asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
+            asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
