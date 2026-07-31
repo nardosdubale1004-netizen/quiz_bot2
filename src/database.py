@@ -339,7 +339,7 @@ class QuizEngine:
     def db_update_track_followup_and_type(self, message_id, followup_mid, msg_type):
         conn = None
         try:
-            conn = self.get_db_connection()
+            conn = GLOBAL_ENGINE.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE sent_tracks SET followup_mid = %s, msg_type = %s WHERE message_id = %s;",
@@ -351,13 +351,13 @@ class QuizEngine:
             print(f"[DB ERROR] Failed to update track metadata: {e}")
         finally:
             if conn:
-                self.release_connection(conn)
+                GLOBAL_ENGINE.release_connection(conn)
 
     @timed_sync(lambda self, message_id: f"db_delete_track")
     def db_delete_track(self, message_id):
         conn = None
         try:
-            conn = self.get_db_connection()
+            conn = GLOBAL_ENGINE.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
                 conn.commit()
@@ -366,7 +366,7 @@ class QuizEngine:
             print(f"[DB ERROR] Failed to delete track: {e}")
         finally:
             if conn:
-                self.release_connection(conn)
+                GLOBAL_ENGINE.release_connection(conn)
 
     @timed_sync(lambda self: "db_get_all_tracks")
     def db_get_all_tracks(self):
@@ -634,21 +634,37 @@ def db_get_alliance_leaderboard():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_get_responses_for_message(message_id: str):
+
+def db_get_responses_for_message(message_id: str, display_id: int = None):
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # Query updated to fetch user nickname, Telegram username, and first name
-            cur.execute("""
-                SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
-                       us.alliance_tag, us.nickname, us.username, us.first_name
-                FROM user_responses ur
-                LEFT JOIN user_stats us ON ur.user_id = us.user_id
-                WHERE ur.message_id = %s
-                ORDER BY ur.answered_at ASC;
-            """, (str(message_id),))
-            return cur.fetchall()
+            # Fix: If display_id is specified, perform fallback querying against both message_id and placeholder_id.
+            if display_id is not None:
+                placeholder_id = f"launching_{display_id}"
+                print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id} OR placeholder_id={placeholder_id}", flush=True)
+                cur.execute("""
+                    SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
+                           us.alliance_tag, us.nickname, us.username, us.first_name
+                    FROM user_responses ur
+                    LEFT JOIN user_stats us ON ur.user_id = us.user_id
+                    WHERE ur.message_id = %s OR ur.message_id = %s
+                    ORDER BY ur.answered_at ASC;
+                """, (str(message_id), placeholder_id))
+            else:
+                print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id}", flush=True)
+                cur.execute("""
+                    SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
+                           us.alliance_tag, us.nickname, us.username, us.first_name
+                    FROM user_responses ur
+                    LEFT JOIN user_stats us ON ur.user_id = us.user_id
+                    WHERE ur.message_id = %s
+                    ORDER BY ur.answered_at ASC;
+                """, (str(message_id),))
+            rows = cur.fetchall()
+            print(f"[DEBUG-DB-GET-RESPONSES] Query returned {len(rows)} rows.", flush=True)
+            return rows
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch responses for message {message_id}: {e}")
         return []
@@ -1082,6 +1098,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             pm_id = int(private_message_id) if private_message_id is not None else None
+            print(f"[DEBUG-DB-SCORE] Inserting/Processing user score: user={user_id}, message_id={message_id}, q_id={q_id}, correct={is_correct}", flush=True)
             cur.execute(
                 "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
                 (
@@ -1091,6 +1108,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             )
             row = cur.fetchone()
             conn.commit()
+            print(f"[DEBUG-DB-SCORE] Successfully processed user score. Row results: {dict(row) if row else 'None'}", flush=True)
 
         if not row:
             return None

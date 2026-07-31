@@ -128,7 +128,8 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
             submission_count = 0
             # Ensure we only query once swap has registered a real numeric message ID
             if question_mid and str(question_mid).isdigit():
-                responses = await asyncio.to_thread(db_get_responses_for_message, question_mid)
+                # Fix: Retrieve submission counts utilizing dual active/placeholder query matching
+                responses = await asyncio.to_thread(db_get_responses_for_message, question_mid, display_id)
                 submission_count = len(responses)
                 print(f"[DEBUG-TIMER-TICK] Track {display_id} (mid={question_mid}) has {submission_count} submissions. Remaining: {remaining}s", flush=True)
 
@@ -358,7 +359,8 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     pass
         else:
             print(f"[DEBUG-FINALIZE] Step 3: Fetching user responses from database...", flush=True)
-            user_responses = await asyncio.to_thread(db_get_responses_for_message, mid)
+            # Use display_id fallback parameter to fetch any records captured under the launching placeholder ID
+            user_responses = await asyncio.to_thread(db_get_responses_for_message, mid, last_seq)
             total_users = len(user_responses)
             correct_responses = [r for r in user_responses if r['is_correct']]
             correct_count = len(correct_responses)
@@ -444,7 +446,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
         print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
         # Fix: Query user responses using final_msg_id (post-swap) to ensure we fetch all records successfully!
-        user_responses = await asyncio.to_thread(db_get_responses_for_message, final_msg_id)
+        user_responses = await asyncio.to_thread(db_get_responses_for_message, final_msg_id, last_seq)
         print(f"[DEBUG-FINALIZE-FIX] Querying user responses using final_msg_id={final_msg_id} (post-swap) instead of old mid={mid} to ensure we load all student records successfully. Count found: {len(user_responses)}", flush=True)
 
         dm_tasks = []

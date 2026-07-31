@@ -10,10 +10,11 @@ import time
 import threading
 
 class TTLCache:
-    def __init__(self, default_ttl: float = 30.0):
+    def __init__(self, default_ttl: float = 5.0):
         self._store = {}
         self._lock = threading.Lock()
         self.default_ttl = default_ttl
+        print(f"[DEBUG-CACHE-FIX] Initializing TTLCache with default_ttl={self.default_ttl} to ensure self-healing from stale state across dual CLI/Webhook processes.", flush=True)
 
     def get(self, key):
         with self._lock:
@@ -47,7 +48,5 @@ class TTLCache:
             self._store.clear()
 
 # Process-wide cache instance for track/question lookups.
-# ttl=None on individual set() calls means "cache forever until explicitly invalidated",
-# which is what we want for track+question data: it's only ever stale if a write
-# happened, and every write path below explicitly invalidates the relevant key.
-track_question_cache = TTLCache(default_ttl=None)
+# Corrected: Set default_ttl=5.0 instead of None so stale cache records automatically expire and refresh.
+track_question_cache = TTLCache(default_ttl=5.0)
