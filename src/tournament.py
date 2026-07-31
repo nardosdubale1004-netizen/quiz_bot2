@@ -1,4 +1,9 @@
 # src/tournament.py
+"""
+Resilient tournament manager handling zero-lag transitions, startup recovery,
+and blocking emergency sweeps for graceful system shutdowns.
+"""
+import os
 import asyncio
 import traceback
 import sys
@@ -31,6 +36,7 @@ _FINALIZING_ROUNDS = set()
 _LAST_COUNTDOWN_TEXT = {}
 _LAUNCH_LOCK = asyncio.Lock()
 
+
 def run_graceful_shutdown_sync():
     """Synchronous wrapper to execute emergency_shutdown_cleanup from any thread/context."""
     import src.config
@@ -43,10 +49,10 @@ def run_graceful_shutdown_sync():
     engine = src.config.ACTIVE_ENGINE
 
     if not (loop and app and engine):
-        print("[SHUTDOWN] No active references found to run clean shutdown.", flush=True)
+        print(f"[SHUTDOWN] [PID {os.getpid()}] No active references found to run clean shutdown.", flush=True)
         return
 
-    print("[SHUTDOWN] Executing graceful shutdown sweep...", flush=True)
+    print(f"[SHUTDOWN] [PID {os.getpid()}] Executing graceful shutdown sweep...", flush=True)
     if loop.is_running():
         try:
             future = asyncio.run_coroutine_threadsafe(
@@ -54,20 +60,25 @@ def run_graceful_shutdown_sync():
             )
             future.result(timeout=15.0)
         except Exception as e:
-            print(f"[SHUTDOWN ERROR] Thread-safe emergency sweep failed: {e}", flush=True)
+            print(f"[SHUTDOWN ERROR] [PID {os.getpid()}] Thread-safe emergency sweep failed: {e}", flush=True)
     else:
         try:
             loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
         except Exception as e:
-            print(f"[SHUTDOWN ERROR] Synchronous emergency sweep failed: {e}", flush=True)
+            print(f"[SHUTDOWN ERROR] [PID {os.getpid()}] Synchronous emergency sweep failed: {e}", flush=True)
+
 
 def _render_challenge_text(current_round, total_rounds, ref, remaining_seconds, question_preview, submission_count=None):
+    # Safe fallback if round metrics evaluate to null
+    curr_r = current_round if current_round is not None else 1
+    tot_r = total_rounds if total_rounds is not None else 1
+    
     remaining_seconds = max(0, remaining_seconds)
     mins, secs = divmod(remaining_seconds, 60)
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
 
     lines = [
-        f"⚔️ <b>LIVE TOURNAMENT CHALLENGE</b> • REF {ref} • Round <b>{current_round}/{total_rounds}</b>",
+        f"⚔️ <b>LIVE TOURNAMENT CHALLENGE</b> • REF {ref} • Round <b>{curr_r}/{tot_r}</b>",
         f"⏳ <b>{time_str} remaining</b>",
     ]
     if submission_count is not None:
@@ -76,11 +87,13 @@ def _render_challenge_text(current_round, total_rounds, ref, remaining_seconds, 
         lines.append("\n<i>The lobby is open! Submit your answer before the timer expires!</i>")
     return "\n".join(lines)
 
+
 async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id: int, round_seconds: int, current_round: int = 1, total_rounds: int = 1):
     """
     Updates the challenge text on the channel. Edits are bypassed if the layout remains unchanged.
     """
     import src.config
+    print(f"{Style.CYAN}[DEBUG-TIMER] [PID {os.getpid()}] Starting countdown task for message {ann_mid}. Display ID: {display_id}. Duration: {round_seconds}s. Round {current_round}/{total_rounds}.{Style.RESET}", flush=True)
     try:
         from src.typography import lite_math
         channel_id = engine.config['channel']
@@ -88,6 +101,7 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
         own_track = next((r for r in active_rounds if str(r.get('followup_mid')) == str(ann_mid)), None)
         if not own_track:
+            print(f"{Style.YELLOW}[DEBUG-TIMER] [PID {os.getpid()}] No matching active track found for message {ann_mid}. Aborting countdown loop.{Style.RESET}", flush=True)
             return
 
         q = await asyncio.to_thread(db_get_question_by_id, own_track.get('q_id'))
@@ -102,11 +116,13 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
 
         while remaining > STOP_EDITING_WITHIN:
             if src.config.SHUTTING_DOWN:
+                print(f"[DEBUG-TIMER] [PID {os.getpid()}] Shutdown detected. Exiting countdown loop for message {ann_mid}.", flush=True)
                 return
 
             active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
             live_track = next((r for r in active_rounds if str(r.get('followup_mid')) == str(ann_mid)), None)
             if not live_track or live_track.get('status') != 'tournament_active':
+                print(f"[DEBUG-TIMER] [PID {os.getpid()}] Track status changed from tournament_active. Stopping countdown for message {ann_mid}.", flush=True)
                 return
 
             submission_count = 0
@@ -117,10 +133,11 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
             text = _render_challenge_text(current_round, total_rounds, display_id, remaining, question_preview, submission_count)
             if _LAST_COUNTDOWN_TEXT.get(ann_mid) != text:
                 try:
+                    print(f"[DEBUG-TIMER] [PID {os.getpid()}] Editing message {ann_mid} -> Remaining: {remaining}s | Submissions: {submission_count}", flush=True)
                     await app.bot.edit_message_text(chat_id=channel_id, message_id=ann_mid, text=text, parse_mode="HTML")
                     _LAST_COUNTDOWN_TEXT[ann_mid] = text
-                except Exception:
-                    pass
+                except Exception as edit_err:
+                    print(f"[DEBUG-TIMER] [PID {os.getpid()}] Edit failed for message {ann_mid}: {edit_err}", flush=True)
 
             sleep_chunk = max(1, min(5, remaining - STOP_EDITING_WITHIN))
             for _ in range(sleep_chunk):
@@ -129,12 +146,15 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 await asyncio.sleep(1)
             remaining -= sleep_chunk
     except asyncio.CancelledError:
+        print(f"[DEBUG-TIMER] [PID {os.getpid()}] Countdown task for message {ann_mid} has been cancelled.", flush=True)
         raise
     finally:
         current = asyncio.current_task()
         if _ACTIVE_COUNTDOWNS.get(ann_mid) is current:
             _ACTIVE_COUNTDOWNS.pop(ann_mid, None)
         _LAST_COUNTDOWN_TEXT.pop(ann_mid, None)
+        print(f"[DEBUG-TIMER] [PID {os.getpid()}] Countdown task cleaned up for message {ann_mid}.", flush=True)
+
 
 async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, last_seq):
     """Asynchronously evaluates student stats and edits their private DM placeholder message."""
@@ -179,9 +199,11 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
             except Exception:
                 pass
 
+
 async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: int, round_seconds: int = 60, current_round: int = 1, total_rounds: int = 1):
     """Sends the live tournament challenge to the main channel using pre-emptive database locking."""
     placeholder_mid = f"launching_{last_seq}"
+    print(f"{Style.CYAN}[DEBUG-LAUNCH] [PID {os.getpid()}] launch_tournament_round called. display_id: {last_seq}, question: {q['id']}, round: {current_round}/{total_rounds}.{Style.RESET}", flush=True)
 
     try:
         claimed = await asyncio.to_thread(
@@ -189,7 +211,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             round_seconds, current_round, total_rounds
         )
         if not claimed:
-            print(f"{Style.YELLOW}[TOURNAMENT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[DEBUG-LAUNCH] [PID {os.getpid()}] Round already active elsewhere — aborting duplicate launch for REF {last_seq}.{Style.RESET}", flush=True)
             return
 
         from src.typography import lite_math
@@ -200,6 +222,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
         ann_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=announcement_text, parse_mode="HTML")
 
         await asyncio.sleep(1.5)
+        
         countdown_task = asyncio.create_task(
             run_round_countdown(app, engine, ann_msg.message_id, last_seq, round_seconds, current_round, total_rounds)
         )
@@ -229,10 +252,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
 
         await asyncio.to_thread(engine.db_swap_track_message_id, placeholder_mid, m.message_id)
         await asyncio.to_thread(engine.db_update_track_followup_and_type, m.message_id, ann_msg.message_id, msg_type)
-        print(f"{Style.GREEN}[TOURNAMENT] Round launched successfully. REF: {last_seq}{Style.RESET}", flush=True)
-
-        await asyncio.sleep(1.5)
-        asyncio.create_task(run_round_countdown(app, engine, ann_msg.message_id, last_seq, round_seconds, current_round, total_rounds))
+        print(f"{Style.GREEN}[DEBUG-LAUNCH] [PID {os.getpid()}] Round launched successfully. REF: {last_seq} message_id: {m.message_id}{Style.RESET}", flush=True)
 
     except Exception as e:
         try:
@@ -240,6 +260,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
         except Exception:
             pass
         raise e
+
 
 async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False):
     """Concludes the round on the channel and resolves pending student DMs concurrently."""
@@ -252,7 +273,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
         still_live = any(str(r.get('message_id')) == str(mid) and r.get('status') == 'tournament_active' for r in active_rounds)
         if not still_live:
-            print(f"[TOURNAMENT] REF for msg {mid} already resolved. Skipping duplicate finalize.", flush=True)
+            print(f"[TOURNAMENT] [PID {os.getpid()}] REF for msg {mid} already resolved. Skipping duplicate finalize.", flush=True)
             return
 
         last_seq = track['display_id']
@@ -261,7 +282,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
         q = await asyncio.to_thread(db_get_question_by_id, track['q_id'])
         if not q:
-            print(f"{Style.RED}[TOURNAMENT] Question {track['q_id']} missing for REF {last_seq}. Marking track deleted.{Style.RESET}")
+            print(f"{Style.RED}[TOURNAMENT] [PID {os.getpid()}] Question {track['q_id']} missing for REF {last_seq}. Marking track deleted.{Style.RESET}")
             await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
             return
 
@@ -281,7 +302,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 except (asyncio.CancelledError, Exception):
                     pass
         if src.config.SHUTTING_DOWN or interrupted:
-            print(f"{Style.YELLOW}[TOURNAMENT] Marking round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Marking round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
             if ann_mid:
                 try:
                     shutdown_text = (
@@ -295,7 +316,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 except Exception:
                     pass
         else:
-            print(f"{Style.YELLOW}[TOURNAMENT] Closing round REF: {last_seq} normally...{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Closing round REF: {last_seq} normally...{Style.RESET}", flush=True)
             user_responses = await asyncio.to_thread(db_get_responses_for_message, mid)
             total_users = len(user_responses)
             correct_responses = [r for r in user_responses if r['is_correct']]
@@ -361,7 +382,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_swap_track_message_id, mid, new_msg.message_id)
                 await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
             except Exception as e:
-                print(f"{Style.RED}[TOURNAMENT] Error publishing solution for REF {last_seq}: {e}{Style.RESET}")
+                print(f"{Style.RED}[TOURNAMENT] [PID {os.getpid()}] Error publishing solution for REF {last_seq}: {e}{Style.RESET}")
                 fallback_id = locals().get('new_msg')
                 target_mid = fallback_id.message_id if fallback_id else mid
                 final_msg_id = target_mid
@@ -375,7 +396,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 )
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
             except Exception as e:
-                print(f"{Style.RED}[TOURNAMENT] Error publishing flat solution for REF {last_seq}: {e}{Style.RESET}")
+                print(f"{Style.RED}[TOURNAMENT] [PID {os.getpid()}] Error publishing flat solution for REF {last_seq}: {e}{Style.RESET}")
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
         # Deliver explanation DMs concurrently
@@ -390,7 +411,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         try:
             queue = await asyncio.to_thread(db_get_tournament_queue)
             if not src.config.SHUTTING_DOWN and (not queue or not queue.get('remaining_ids')):
-                print(f"{Style.GREEN}[TOURNAMENT] Tournament complete. Rendering final report card...{Style.RESET}", flush=True)
+                print(f"{Style.GREEN}[TOURNAMENT] [PID {os.getpid()}] Tournament complete. Rendering final report card...{Style.RESET}", flush=True)
                 target_grade = q.get('grade', 12)
                 top_scorers = await asyncio.to_thread(db_get_weekly_leaderboard, target_grade)
 
@@ -410,38 +431,15 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 )
                 await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
         except Exception as e:
-            print(f"{Style.RED}[TOURNAMENT] Series wrap-up failed: {e}{Style.RESET}", flush=True)
+            print(f"{Style.RED}[TOURNAMENT] [PID {os.getpid()}] Series wrap-up failed: {e}{Style.RESET}", flush=True)
 
-        print(f"{Style.GREEN}[TOURNAMENT] Round REF: {last_seq} closed. {len(user_responses)} DMs processed.{Style.RESET}", flush=True)
+        print(f"{Style.GREEN}[TOURNAMENT] [PID {os.getpid()}] Round REF: {last_seq} closed. {len(user_responses)} DMs processed.{Style.RESET}", flush=True)
     finally:
         _FINALIZING_ROUNDS.discard(mid)
 
-async def emergency_shutdown_cleanup(app, engine: QuizEngine):
-    """Emergency finalization hook triggered immediately on SIGTERM/System Shutdown."""
-    import src.config
-    src.config.SHUTTING_DOWN = True
-    print(f"\n{Style.YELLOW}[SHUTDOWN] Signal trapped. Executing emergency round sweep...{Style.RESET}", flush=True)
-    try:
-        active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
-        queue = await asyncio.to_thread(db_get_tournament_queue)
-        has_more_queued = bool(queue and queue.get('remaining_ids'))
-
-        if active_rounds:
-            print(f"[SHUTDOWN] Resolving {len(active_rounds)} active round(s).", flush=True)
-            for track in active_rounds:
-                print(f"[SHUTDOWN] Forcing finalization on REF: {track['display_id']}", flush=True)
-                await finalize_tournament_round(app, engine, track, interrupted=True)
-            print(f"{Style.GREEN}[SHUTDOWN] Emergency finalization complete.{Style.RESET}", flush=True)
-        else:
-            print("[SHUTDOWN] No active tournament rounds were pending cleanup.", flush=True)
-
-        if has_more_queued:
-            print(f"{Style.GREEN}[SHUTDOWN] {len(queue['remaining_ids'])} queued question(s) preserved — will resume on restart.{Style.RESET}", flush=True)
-    except Exception as e:
-        print(f"{Style.RED}[SHUTDOWN ERROR] Sweep execution failed: {e}{Style.RESET}", flush=True)
 
 async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2):
-    print(f"{Style.YELLOW}[TOURNAMENT] Executing startup recovery sweep...{Style.RESET}", flush=True)
+    print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Executing startup recovery sweep...{Style.RESET}", flush=True)
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
@@ -451,13 +449,13 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
         for track in active_rounds:
-            print(f"{Style.YELLOW}[TOURNAMENT] Resolving crashed round REF: {track['display_id']} as interrupted...{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Resolving crashed round REF: {track['display_id']} as interrupted...{Style.RESET}", flush=True)
             await finalize_tournament_round(app, engine, track, interrupted=True)
 
         queue = await asyncio.to_thread(db_get_tournament_queue)
         dropped_count = len(queue['remaining_ids']) if queue and queue.get('remaining_ids') else 0
         if dropped_count:
-            print(f"{Style.YELLOW}[TOURNAMENT] Dropping {dropped_count} queued question(s) after restart — series will NOT resume automatically.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Dropping {dropped_count} queued question(s) after restart — series will NOT resume automatically.{Style.RESET}", flush=True)
             try:
                 await app.bot.send_message(
                     chat_id=engine.config['channel'],
@@ -472,14 +470,14 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             except Exception:
                 pass
         await asyncio.to_thread(db_clear_tournament_queue)
-        print(f"{Style.GREEN}[TOURNAMENT] Recovery sweep complete.{Style.RESET}", flush=True)
+        print(f"{Style.GREEN}[TOURNAMENT] [PID {os.getpid()}] Recovery sweep complete.{Style.RESET}", flush=True)
     except Exception as e:
-        print(f"{Style.RED}[TOURNAMENT RECOVERY ERROR] {e}{Style.RESET}", flush=True)
+        print(f"{Style.RED}[TOURNAMENT RECOVERY ERROR] [PID {os.getpid()}] {e}{Style.RESET}", flush=True)
 
     while True:
         import src.config
         if src.config.SHUTTING_DOWN:
-            print("[TOURNAMENT] Watcher loop detected shutdown. Exiting cleanly.", flush=True)
+            print(f"[TOURNAMENT] [PID {os.getpid()}] Watcher loop detected shutdown. Exiting cleanly.", flush=True)
             break
 
         try:
@@ -547,12 +545,12 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
                             await launch_tournament_round(app, engine, q, next_seq, fresh_queue.get('round_seconds', 60), current_round, total_rounds)
                         else:
-                            print(f"{Style.RED}[TOURNAMENT] Question {next_qid} not found. Skipping.{Style.RESET}")
+                            print(f"{Style.RED}[TOURNAMENT] [PID {os.getpid()}] Question {next_qid} not found. Skipping.{Style.RESET}")
                     else:
                         await asyncio.to_thread(db_clear_tournament_queue)
-                        print(f"{Style.GREEN}[TOURNAMENT] Queue completed.{Style.RESET}", flush=True)
+                        print(f"{Style.GREEN}[TOURNAMENT] [PID {os.getpid()}] Queue completed.{Style.RESET}", flush=True)
         except Exception as e:
             traceback.print_exc()
-            print(f"{Style.RED}[TOURNAMENT WATCHER ERROR] {e}{Style.RESET}", flush=True)
+            print(f"{Style.RED}[TOURNAMENT WATCHER ERROR] [PID {os.getpid()}] {e}{Style.RESET}", flush=True)
 
         await asyncio.sleep(poll_seconds)
