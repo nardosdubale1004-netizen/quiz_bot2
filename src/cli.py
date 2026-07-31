@@ -1,5 +1,4 @@
-# Replace src/cli.py with this updated file:
-
+# src/cli.py
 import math
 import os
 import re
@@ -655,9 +654,15 @@ async def admin_panel(app, engine: QuizEngine):
             announcement_mid = None
 
             if delay_seconds > 0:
-                now_utc = datetime.now(timezone.utc)
+                # --- FIX 2: Synchronize Scheduled Date directly against Cloud Database clock ---
+                db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
+                now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
                 scheduled_start = now_utc + timedelta(seconds=delay_seconds)
-                print(f"{Style.GREEN}Scheduling tournament to start at {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (in {delay_in}){Style.RESET}")
+
+                print(f"\n{Style.CYAN}[DEBUG-FIX-2] Local and Cloud time synchronization performed.{Style.RESET}", flush=True)
+                print(f" ├─ Local Machine clock: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
+                print(f" ├─ Cloud Database clock: {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
+                print(f" └─ Scheduled Start (relative to DB): {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (in {delay_in})", flush=True)
 
                 try:
                     channel_id = engine.config['channel']
@@ -761,13 +766,13 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
     while True:
         clear_screen()
         print(f"{Style.MAGENTA}{Style.BOLD}--- PLANNED / SCHEDULED TASKS CONTROL CENTER ---{Style.RESET}\n")
-        
+
         # 1. Fetch Planned Items
         sched_qs = await asyncio.to_thread(db_get_upcoming_scheduled_questions)
         tourney_queue = await asyncio.to_thread(db_get_tournament_queue)
-        
+
         has_tourney = tourney_queue and tourney_queue.get("remaining_ids")
-        
+
         print(f"📅 {Style.YELLOW}PART A: Upcoming Scheduled Questions ({len(sched_qs)} items){Style.RESET}")
         if not sched_qs:
             print("  (No single questions scheduled in the future)")
@@ -775,7 +780,7 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
             for i, q in enumerate(sched_qs):
                 t_str = str(q['scheduled_for'])
                 print(f"  {i+1}. [{q['id']}] {Style.WHITE}{q['question'][:45]}...{Style.RESET}\n     ├─ Topic: {q['topic']}\n     └─ Planned For: {Style.CYAN}{t_str}{Style.RESET}")
-                
+
         print(f"\n⚔️ {Style.YELLOW}PART B: Pending Tournament Queue{Style.RESET}")
         if not has_tourney:
             print("  (No tournaments currently planned or queued)")
@@ -789,11 +794,11 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
             print(f"  Timing Bounds: {tourney_queue['round_seconds']}s round duration │ {tourney_queue['cooldown_seconds']}s rest interval")
 
         print(f"\n{Style.CYAN}Menu Options:\n [1] Reschedule planned single question │ [2] Unschedule planned question\n [3] Postpone/Reschedule tournament    │ [4] Modify tournament parameters\n [5] Delete/Cancel scheduled tournament │ [6] Trigger question immediate publish\n [b] Back to Main Cockpit{Style.RESET}")
-        
+
         sub_choice = await cli.ask("<b>Scheduler Command > </b>")
         if not sub_choice or sub_choice == 'b':
             break
-            
+
         if sub_choice == "1" and sched_qs:
             idx_in = await cli.ask("<b>Select question # to Reschedule: </b>")
             if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
@@ -804,7 +809,7 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
                     if success:
                         print(f"{Style.GREEN}✅ Question rescheduled successfully.{Style.RESET}")
                         await asyncio.sleep(1.5)
-                        
+
         elif sub_choice == "2" and sched_qs:
             idx_in = await cli.ask("<b>Select question # to Cancel (removes schedule): </b>")
             if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
@@ -826,10 +831,10 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
         elif sub_choice == "4" and has_tourney:
             dur_in = await cli.ask("<b>Modify Round Duration (seconds or Enter to skip): </b>")
             cool_in = await cli.ask("<b>Modify Cooldown Interval (seconds or Enter to skip): </b>")
-            
+
             dur = int(dur_in) if (dur_in and dur_in.isdigit()) else None
             cool = int(cool_in) if (cool_in and cool_in.isdigit()) else None
-            
+
             if dur is not None or cool is not None:
                 success = await asyncio.to_thread(db_update_tournament_schedule_params, round_seconds=dur, cooldown_seconds=cool)
                 if success:
@@ -853,8 +858,8 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
             idx_in = await cli.ask("<b>Select question # to publish IMMEDIATELY: </b>")
             if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
                 target_q = sched_qs[int(idx_in)-1]
-                
-                # Reschedule to 1 second ago to force scheduler task to ingest it
+
+                # Reschedule to 5 seconds ago to force scheduler task to ingest it
                 now_minus_1s = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
                 await asyncio.to_thread(db_reschedule_question, target_q['id'], now_minus_1s)
                 print(f"{Style.GREEN}✅ Triggered! The background daemon will publish the question in the next loop cycle.{Style.RESET}")
@@ -864,18 +869,18 @@ async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
     """Emergency control system that pauses, resumes, or stops active tournaments."""
     clear_screen()
     print(f"{Style.RED}{Style.BOLD}--- TOURNAMENT EMERGENCY INTERRUPT SYSTEM ---{Style.RESET}\n")
-    
+
     active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
     queue = await asyncio.to_thread(db_get_tournament_queue)
-    
+
     has_active_round = len(active_rounds) > 0
     has_queue = queue and queue.get('remaining_ids')
-    
+
     if not has_active_round and not has_queue:
         print("💡 No live or queued tournaments detected. Everything is idle.")
         await cli.ask("\nPress Enter to return...")
         return
-        
+
     if has_active_round:
         print(f"🔥 {Style.YELLOW}WARNING: Active Round detected!{Style.RESET}")
         for t in active_rounds:
@@ -889,7 +894,7 @@ async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
         print(f"Remaining Questions in Queue: {len(queue['remaining_ids'])} items")
 
     print(f"\n{Style.CYAN}Interruption Methods:\n [1] ⏸️  Pause Tournament (Halt active round + freeze queue)\n [2] ▶️  Resume Tournament Queue (Unfreeze execution loop)\n [3] ⏹️  Kill Tournament (Halt active round + wipe out queue)\n [b] Back to Cockpit{Style.RESET}")
-    
+
     action = await cli.ask("<b>Emergency Action > </b>")
     if not action or action == 'b':
         return
@@ -897,7 +902,6 @@ async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
     from src.tournament import halt_active_tournament
 
     if action == "1":
-        # Pause: finalize active round with interruption, set is_paused = True
         reason = await cli.ask("<b>Input halt reason displayed to channel (or enter to default): </b>")
         print(f"{Style.YELLOW}Executing pause...{Style.RESET}")
         await halt_active_tournament(app, engine, clear_queue=False, halt_reason=reason)
@@ -905,14 +909,12 @@ async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
         await asyncio.sleep(2.0)
 
     elif action == "2":
-        # Resume: set is_paused = False
         print(f"{Style.YELLOW}Resuming...{Style.RESET}")
         await asyncio.to_thread(db_set_tournament_pause_state, False)
         print(f"{Style.GREEN}✅ Tournament queue resumed.{Style.RESET}")
         await asyncio.sleep(1.5)
 
     elif action == "3":
-        # Kill: finalize active round, clear remaining queue
         confirm = await cli.ask("<b>Are you sure you want to completely kill and delete this entire tournament? (y/n): </b>")
         if confirm and confirm.lower() == 'y':
             reason = await cli.ask("<b>Input halt reason displayed to channel (or enter to default): </b>")

@@ -1,5 +1,4 @@
-# Replace src/tournament.py with this updated file:
-
+# src/tournament.py
 import os
 import asyncio
 import traceback
@@ -35,6 +34,7 @@ _LAST_COUNTDOWN_TEXT = {}
 _LAUNCH_LOCK = asyncio.Lock()
 _LAST_ROUND_CLOSED_AT = 0.0
 
+# Central tracking for live interval and delay countdown messaging
 _COOLDOWN_MID = None
 _LAST_COOLDOWN_VAL = -1
 _LAST_DELAY_VAL = -1
@@ -135,6 +135,7 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 except Exception as edit_err:
                     print(f"[DEBUG-TIMER] Edit failed for message {ann_mid}: {edit_err}", flush=True)
 
+            # Dynamic sleep interval to strictly respect Telegram's message editing rate limits
             if remaining > 30:
                 sleep_chunk = 10
             elif remaining > 10:
@@ -301,15 +302,18 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
         import src.config
 
-        print(f"[DEBUG-FINALIZE] Step 2: Cancelling countdown task...", flush=True)
+        # --- FIX 1: Safe Cancellation Exception Shielding ---
+        print(f"[DEBUG-FINALIZE] Step 2: Cancelling countdown task safely to protect Watcher Loop...", flush=True)
         if ann_mid:
             countdown_task = _ACTIVE_COUNTDOWNS.pop(int(ann_mid), None)
             if countdown_task and not countdown_task.done():
+                print(f" ├─ Found active countdown task. Dispatching cancellation flag...", flush=True)
                 countdown_task.cancel()
                 try:
+                    # Trapping and resolving standard CancelledError to preserve Watchdog life
                     await countdown_task
-                except Exception:
-                    pass
+                except (asyncio.CancelledError, Exception) as cancel_err:
+                    print(f" └─ [DEBUG-FIX-1-SUCCESS] Countdown task safely terminated. Trapped error: {type(cancel_err).__name__}. Watcher task preserved.", flush=True)
 
         if src.config.SHUTTING_DOWN or interrupted:
             print(f"{Style.YELLOW}[TOURNAMENT] Marking round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
@@ -486,7 +490,7 @@ async def halt_active_tournament(app, engine: QuizEngine, clear_queue: bool = Fa
     """Gracefully halts the currently executing tournament round and updates its status."""
     print(f"{Style.YELLOW}[TOURNAMENT] Initiating manual halt sequence...{Style.RESET}", flush=True)
     active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
-    
+
     if active_rounds:
         for track in active_rounds:
             print(f"[TOURNAMENT] Interrupting active round: REF {track['display_id']}", flush=True)
@@ -533,6 +537,9 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
             now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
 
+            # Watchdog heartbeat print
+            print(f"[WATCHDOG-TICK] {now_utc.strftime('%H:%M:%S')} UTC | Host: {time.time():.1f} | DB: {db_epoch:.1f}", flush=True)
+
             overdue = await asyncio.to_thread(db_get_overdue_tournament_rounds)
             did_finalize = False
             for track in overdue:
@@ -562,10 +569,8 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
             # Execution block of the queue scheduler
             if queue and queue.get('remaining_ids') and not has_live_round and not did_finalize and not _LAUNCH_LOCK.locked():
-                
-                # Check for Pause State State-Machine flag
+
                 if queue.get('is_paused', False):
-                    # Do not launch next rounds if the controller set is_paused = True
                     await asyncio.sleep(poll_seconds)
                     continue
 
@@ -585,6 +590,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                     remaining_delay = max(0, int((sched_dt_utc - now_utc).total_seconds()))
 
                     if now_utc < sched_dt_utc:
+                        print(f" ├─ [DELAY ACTIVE] Target scheduled: {sched_dt_utc.strftime('%H:%M:%S')} UTC | Remaining: {remaining_delay}s", flush=True)
                         ann_mid = queue.get('announcement_mid')
                         if ann_mid:
                             mins, secs = divmod(remaining_delay, 60)
@@ -625,8 +631,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(ann_mid))
                             except Exception:
                                 pass
-                
-                # Check interval / cooldown bounds
+
                 cooldown = queue.get('cooldown_seconds', 15)
                 time_since_close = db_epoch - _LAST_ROUND_CLOSED_AT
 

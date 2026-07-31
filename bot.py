@@ -518,6 +518,8 @@ async def run_cloud_server(app, port):
     )
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
+    # --- FIX 3: Start loops clearly in Cloud Instance ---
+    print(f"[DEBUG-FIX-3] Webhook active on Cloud; initializing background loops safely.", flush=True)
     asyncio.create_task(check_and_publish_scheduled(app))
     asyncio.create_task(tournament_watcher_loop(app, engine, poll_seconds=2))
 
@@ -543,7 +545,6 @@ def main():
         print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
         return
 
-    # --- Graceful Shutdown Signal Registration ---
     def sigterm_handler(signum, frame):
         print(f"\n{Style.RED}[SYSTEM TERMINATION] Received signal {signum}. Shutting down gracefully...{Style.RESET}", flush=True)
         try:
@@ -561,7 +562,6 @@ def main():
 
     app = Application.builder().token(token).build()
 
-    # Register shared runtime references cleanly
     import src.config
     src.config.ACTIVE_APP = app
     src.config.ACTIVE_ENGINE = engine
@@ -613,7 +613,6 @@ def main():
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
 
-        # Check environment flag to determine side-by-side run compatibility
         disable_polling = os.getenv("DISABLE_LOCAL_POLLING", "false").lower() == "true"
 
         if not disable_polling:
@@ -622,12 +621,13 @@ def main():
 
             loop.run_until_complete(app.updater.start_polling())
 
-            # Schedule local background loops
             asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
             asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
         else:
             print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local Telegram polling is bypassed.{Style.RESET}", flush=True)
             print(f"{Style.YELLOW}Outbound dashboard active. Cloud handles webhook/callbacks for students.{Style.RESET}", flush=True)
+            # --- FIX 3: Local Dashboard Log Warning ---
+            print(f"{Style.YELLOW}[DEBUG-FIX-3] Local background loop runners are disabled here. Ensure your Cloud server instance is up and active to process scheduled items!{Style.RESET}", flush=True)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
