@@ -1,4 +1,5 @@
-# src/tournament.py
+# Replace src/tournament.py with this updated file:
+
 import os
 import asyncio
 import traceback
@@ -23,6 +24,7 @@ from src.database import (
     db_get_weekly_leaderboard,
     process_user_score,
     db_try_start_tournament_round,
+    db_set_tournament_pause_state,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
@@ -33,7 +35,6 @@ _LAST_COUNTDOWN_TEXT = {}
 _LAUNCH_LOCK = asyncio.Lock()
 _LAST_ROUND_CLOSED_AT = 0.0
 
-# Central tracking for live interval and delay countdown messaging
 _COOLDOWN_MID = None
 _LAST_COOLDOWN_VAL = -1
 _LAST_DELAY_VAL = -1
@@ -134,7 +135,6 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 except Exception as edit_err:
                     print(f"[DEBUG-TIMER] Edit failed for message {ann_mid}: {edit_err}", flush=True)
 
-            # Dynamic sleep interval to strictly respect Telegram's message editing rate limits
             if remaining > 30:
                 sleep_chunk = 10
             elif remaining > 10:
@@ -266,7 +266,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             pass
         raise e
 
-async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False):
+async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False, halt_reason: str = None):
     """Concludes the round on the channel and resolves pending student DMs concurrently with complete diagnostics."""
     global _LAST_ROUND_CLOSED_AT
     _LAST_ROUND_CLOSED_AT = time.time()  # Start interval cooldown
@@ -315,11 +315,12 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             print(f"{Style.YELLOW}[TOURNAMENT] Marking round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
             if ann_mid:
                 try:
+                    reason_msg = halt_reason if halt_reason else "the server went offline or experienced an unexpected reboot sequence"
                     shutdown_text = (
                         f"{header}\n"
-                        f"⚠️ <b>ROUND INTERRUPTED</b>\n\n"
-                        f"<i>We apologize, scholars! This round was halted because the server went offline or experienced an "
-                        f"unexpected reboot sequence. Your submitted selections have been securely saved and scored. "
+                        f"⚠️ <b>ROUND INTERRUPTED / PAUSED</b>\n\n"
+                        f"<i>We apologize, scholars! This round was halted because {reason_msg}. "
+                        f"Your submitted selections have been securely saved and scored. "
                         f"We will resume shortly!</i> 🎓"
                     )
                     await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(ann_mid), text=shutdown_text, parse_mode="HTML")
@@ -357,7 +358,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 except Exception as ann_err:
                     print(f"[DEBUG-FINALIZE ERROR] Failed to edit announcement card: {ann_err}", flush=True)
 
-        # Update main channel question asset & close DB status
         print(f"[DEBUG-FINALIZE] Step 4: Refreshing and closing message assets on Telegram...", flush=True)
         user_responses = await asyncio.to_thread(db_get_responses_for_message, mid)
         final_msg_id = mid
@@ -411,7 +411,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 print(f"{Style.RED}[TOURNAMENT] Error publishing flat solution for REF {last_seq}: {e}{Style.RESET}")
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
-        # Deliver explanation DMs concurrently
         print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
         dm_tasks = []
         for resp in user_responses:
@@ -424,9 +423,9 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         print(f"[DEBUG-FINALIZE] Step 6: Checking and generating final tournament scoreboard...", flush=True)
         try:
             queue = await asyncio.to_thread(db_get_tournament_queue)
-            if not src.config.SHUTTING_DOWN and (not queue or not queue.get('remaining_ids')):
+            if not src.config.SHUTTING_DOWN and not interrupted and (not queue or not queue.get('remaining_ids')):
                 print(f"{Style.GREEN}[TOURNAMENT] Tournament complete. Rendering final report card...{Style.RESET}", flush=True)
-                
+
                 grade_val = q.get('grade')
                 try:
                     target_grade = int(grade_val) if grade_val is not None else 12
@@ -483,6 +482,25 @@ async def emergency_shutdown_cleanup(app, engine: QuizEngine):
     except Exception as e:
         print(f"{Style.RED}[SHUTDOWN ERROR] Sweep execution failed: {e}{Style.RESET}", flush=True)
 
+async def halt_active_tournament(app, engine: QuizEngine, clear_queue: bool = False, halt_reason: str = None):
+    """Gracefully halts the currently executing tournament round and updates its status."""
+    print(f"{Style.YELLOW}[TOURNAMENT] Initiating manual halt sequence...{Style.RESET}", flush=True)
+    active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
+    
+    if active_rounds:
+        for track in active_rounds:
+            print(f"[TOURNAMENT] Interrupting active round: REF {track['display_id']}", flush=True)
+            await finalize_tournament_round(app, engine, track, interrupted=True, halt_reason=halt_reason)
+    else:
+        print("[TOURNAMENT] No active rounds found to interrupt.", flush=True)
+
+    if clear_queue:
+        await asyncio.to_thread(db_clear_tournament_queue)
+        print(f"{Style.RED}[TOURNAMENT] Remaining queue deleted successfully.{Style.RESET}", flush=True)
+    else:
+        await asyncio.to_thread(db_set_tournament_pause_state, True)
+        print(f"{Style.YELLOW}[TOURNAMENT] Tournament queue execution paused.{Style.RESET}", flush=True)
+
 async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2):
     global _COOLDOWN_MID, _LAST_COOLDOWN_VAL, _LAST_DELAY_VAL
     print(f"{Style.YELLOW}[TOURNAMENT] Executing startup recovery sweep...{Style.RESET}", flush=True)
@@ -512,12 +530,8 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             break
 
         try:
-            # Sync directly with database current UTC epoch to bypass local Docker container clock drifts
             db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
             now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
-
-            # Continuous watchdog loop ticks printed directly to console every 2 seconds
-            print(f"[WATCHDOG-TICK] {now_utc.strftime('%H:%M:%S')} UTC | host_epoch={time.time():.1f} | db_epoch={db_epoch:.1f}", flush=True)
 
             overdue = await asyncio.to_thread(db_get_overdue_tournament_rounds)
             did_finalize = False
@@ -530,15 +544,6 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
             active_tracks = await asyncio.to_thread(db_get_active_tournament_rounds)
             has_live_round = len(active_tracks) > 0
-
-            # Real-time console diagnostics if an active round is running
-            if has_live_round:
-                print(f"\n{Style.CYAN}[DIAGNOSTIC-ACTIVE-ROUND] --- TICK ---{Style.RESET}", flush=True)
-                for t in active_tracks:
-                    print(f" ├─ REF: {t.get('display_id')} | msg_id: {t.get('message_id')} | status: {t.get('status')}", flush=True)
-                    print(f" ├─ round_deadline: {t.get('round_deadline')} (epoch={t.get('deadline_epoch')})", flush=True)
-                    print(f" ├─ remaining_seconds (derived): {t.get('remaining_seconds')}s", flush=True)
-                    print(f" └─ current database time (epoch): {db_epoch:.1f}", flush=True)
 
             queue = await asyncio.to_thread(db_get_tournament_queue)
 
@@ -555,17 +560,16 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         )
                         _ACTIVE_COUNTDOWNS[int(ann_mid)] = resumed_task
 
-            # Pop and execute next showdown question
+            # Execution block of the queue scheduler
             if queue and queue.get('remaining_ids') and not has_live_round and not did_finalize and not _LAUNCH_LOCK.locked():
-
-                # A. Handle Scheduled Start Delay
-                sched_start = queue.get('scheduled_start')
                 
-                # Active diagnostics printed locally and in the cloud whenever a queue is parsed
-                print(f"\n{Style.CYAN}[DIAGNOSTIC-WATCHER] --- LOOP TICK ---{Style.RESET}", flush=True)
-                print(f" ├─ remaining_ids count: {len(queue.get('remaining_ids', []))}", flush=True)
-                print(f" ├─ total_count: {queue.get('total_count')}", flush=True)
-                print(f" ├─ raw scheduled_start value: {sched_start} (type={type(sched_start)})", flush=True)
+                # Check for Pause State State-Machine flag
+                if queue.get('is_paused', False):
+                    # Do not launch next rounds if the controller set is_paused = True
+                    await asyncio.sleep(poll_seconds)
+                    continue
+
+                sched_start = queue.get('scheduled_start')
 
                 if sched_start:
                     if isinstance(sched_start, str):
@@ -575,19 +579,12 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
                     if sched_dt.tzinfo is None:
                         sched_dt = sched_dt.replace(tzinfo=timezone.utc)
-                    
+
                     sched_dt_utc = sched_dt.astimezone(timezone.utc)
-                    
+
                     remaining_delay = max(0, int((sched_dt_utc - now_utc).total_seconds()))
-                    print(f" ├─ Current Database UTC (now_utc): {now_utc}", flush=True)
-                    print(f" ├─ Target Scheduled UTC (sched_dt_utc): {sched_dt_utc}", flush=True)
-                    print(f" ├─ remaining_delay: {remaining_delay} seconds", flush=True)
-                    print(f" └─ Evaluation (now_utc < sched_dt_utc): {now_utc < sched_dt_utc}", flush=True)
 
                     if now_utc < sched_dt_utc:
-                        print(f"{Style.YELLOW}[DIAGNOSTIC-WATCHER] Target time not reached yet. Sleeping.{Style.RESET}\n", flush=True)
-                        
-                        # Dynamically update the upcoming announcement message to countdown wait delays live
                         ann_mid = queue.get('announcement_mid')
                         if ann_mid:
                             mins, secs = divmod(remaining_delay, 60)
@@ -601,8 +598,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 f"❄️ <b>Round Interval:</b> {queue.get('cooldown_seconds', 15)} seconds\n\n"
                                 f"<i>Set your notifications ON! Correct and rapid answers earn maximum leaderboard marks.</i>"
                             )
-                            
-                            # Adapt update interval to avoid flood rate limits
+
                             update_interval = 10 if remaining_delay > 30 else 2
                             if remaining_delay % update_interval == 0 or _LAST_DELAY_VAL == -1:
                                 if _LAST_DELAY_VAL != remaining_delay:
@@ -617,7 +613,6 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                     else:
                         print(f"{Style.RED}[DIAGNOSTIC-WATCHER] Scheduled threshold achieved! Releasing question segment...{Style.RESET}\n", flush=True)
                         _LAST_DELAY_VAL = -1
-                        # Schedule achieved: clear parameters
                         conn = GLOBAL_ENGINE.get_db_connection()
                         with conn.cursor() as cur:
                             cur.execute("UPDATE tournament_queue SET scheduled_start = NULL WHERE id = 1;")
@@ -630,20 +625,14 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(ann_mid))
                             except Exception:
                                 pass
-                else:
-                    print(f" └─ No scheduled start parameter found. Proceeding with immediate pop.", flush=True)
-
-                # B. Enforce post-close round interval / cooldown
+                
+                # Check interval / cooldown bounds
                 cooldown = queue.get('cooldown_seconds', 15)
                 time_since_close = db_epoch - _LAST_ROUND_CLOSED_AT
-                
-                print(f"[DIAGNOSTIC-WATCHER] Cooldown check: cooldown_seconds={cooldown}, _LAST_ROUND_CLOSED_AT={_LAST_ROUND_CLOSED_AT:.1f}, time_since_close={time_since_close:.1f}s", flush=True)
-                
+
                 if _LAST_ROUND_CLOSED_AT > 0.0 and time_since_close < cooldown:
                     remaining_cooldown = max(0, int(cooldown - time_since_close))
-                    print(f"[DIAGNOSTIC-WATCHER] Cooldown active. Waiting {remaining_cooldown}s more.\n", flush=True)
-                    
-                    # Update and countdown interval wait periods on the channel
+
                     if remaining_cooldown > 3:
                         if remaining_cooldown % 5 == 0 or _COOLDOWN_MID is None:
                             cooldown_text = f"⏳ <b>PREPARING NEXT ROUND...</b>\n\nNext showdown challenge will launch in <b>{remaining_cooldown} seconds</b>. Get ready!"
@@ -659,11 +648,10 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                     _LAST_COOLDOWN_VAL = remaining_cooldown
                                 except Exception:
                                     pass
-                    
+
                     await asyncio.sleep(poll_seconds)
                     continue
 
-                # Delete the cooldown countdown message when wait interval concludes
                 if _COOLDOWN_MID:
                     try:
                         await app.bot.delete_message(chat_id=engine.config['channel'], message_id=_COOLDOWN_MID)
@@ -672,7 +660,6 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                     _COOLDOWN_MID = None
                     _LAST_COOLDOWN_VAL = -1
 
-                # C. Launch Next Round
                 async with _LAUNCH_LOCK:
                     fresh_active = await asyncio.to_thread(db_get_active_tournament_rounds)
                     if fresh_active:
@@ -688,7 +675,6 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         q = await asyncio.to_thread(db_get_question_by_id, next_qid)
                         if q:
                             total_rounds = fresh_queue['total_count']
-                            # Calculate exactly how many items remain after pop to avoid off-by-one round display
                             remaining_count = len(fresh_queue['remaining_ids']) - 1
                             current_round = total_rounds - remaining_count
 

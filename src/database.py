@@ -204,6 +204,8 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+    # Insert/replace inside class QuizEngine in src/database.py:
+
     def _ensure_tournament_schema(self):
         if QuizEngine._tournament_schema_ensured:
             return
@@ -227,10 +229,11 @@ class QuizEngine:
                     ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS scheduled_start TIMESTAMPTZ;
                     ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS announcement_mid INT;
                     ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS cooldown_seconds INT NOT NULL DEFAULT 15;
+                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS is_paused BOOLEAN NOT NULL DEFAULT FALSE;
                 """)
                 conn.commit()
             QuizEngine._tournament_schema_ensured = True
-            print(f"{Style.GREEN}[DATABASE] Tournament crash-safety schema ensured.{Style.RESET}")
+            print(f"{Style.GREEN}[DATABASE] Tournament crash-safety schema (with pause state) ensured.{Style.RESET}")
         except Exception as e:
             if conn: conn.rollback()
             print(f"{Style.RED}[DATABASE ERROR] Failed to ensure tournament schema: {e}{Style.RESET}")
@@ -1128,6 +1131,106 @@ def db_try_start_tournament_round(message_id, q_id, display_id, round_seconds, r
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to claim tournament round: {e}")
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_set_tournament_pause_state(paused: bool):
+    """Sets the tournament_queue pause state flag."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE tournament_queue
+                SET is_paused = %s
+                WHERE id = 1;
+            """, (paused,))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update tournament pause state: {e}")
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_upcoming_scheduled_questions():
+    """Retrieves all unsent questions that have a planned publication date in the future."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, subject, topic, question, scheduled_for, difficulty
+                FROM questions
+                WHERE is_sent = FALSE
+                  AND scheduled_for IS NOT NULL
+                ORDER BY scheduled_for ASC;
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to get upcoming scheduled questions: {e}")
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_reschedule_question(q_id: str, new_time_str: str or None):
+    """Updates the scheduled publication timestamp or clears it if None is provided."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE questions
+                SET scheduled_for = %s
+                WHERE id = %s;
+            """, (new_time_str, q_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to reschedule question {q_id}: {e}")
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_update_tournament_schedule_params(scheduled_start=None, round_seconds=None, cooldown_seconds=None):
+    """Updates parameter properties on the scheduled tournament queue block."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            updates = []
+            params = []
+            if scheduled_start is not None:
+                updates.append("scheduled_start = %s")
+                params.append(scheduled_start if scheduled_start != "CLEAR" else None)
+            if round_seconds is not None:
+                updates.append("round_seconds = %s")
+                params.append(int(round_seconds))
+            if cooldown_seconds is not None:
+                updates.append("cooldown_seconds = %s")
+                params.append(int(cooldown_seconds))
+            
+            if not updates:
+                return False
+                
+            params.append(1)  # Limit to ID 1
+            cur.execute(f"""
+                UPDATE tournament_queue
+                SET {", ".join(updates)}
+                WHERE id = %s;
+            """, tuple(params))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update tournament schedule parameters: {e}")
         return False
     finally:
         if conn:
