@@ -267,7 +267,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
         raise e
 
 async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False):
-    """Concludes the round on the channel and resolves pending student DMs concurrently."""
+    """Concludes the round on the channel and resolves pending student DMs concurrently with complete diagnostics."""
     global _LAST_ROUND_CLOSED_AT
     _LAST_ROUND_CLOSED_AT = time.time()  # Start interval cooldown
 

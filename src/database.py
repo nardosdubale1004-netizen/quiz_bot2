@@ -267,7 +267,8 @@ class QuizEngine:
 
         return psycopg2.connect(
             self.db_url,
-            cursor_factory=RealDictCursor
+            cursor_factory=RealDictCursor,
+            connect_timeout=5  # Fail-fast timeout protects thread blockages under Postgres cloud cold starts
         )
 
     def release_connection(self, conn):
