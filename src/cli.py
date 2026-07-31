@@ -51,21 +51,35 @@ def _is_missing_message_error(err: Exception) -> bool:
 def _is_not_modified_error(err: Exception) -> bool:
     return "message is not modified" in str(err).lower()
 
+
 def parse_duration_to_seconds(text: str, default: int) -> int:
-    """Parses delay expressions such as 30s, 5m, or 1h into raw seconds."""
+    """Parses delay expressions such as 30s, 5m, or 1h into raw seconds with enhanced input safety."""
     if not text:
+        print(f"[DEBUG-PARSER] Empty duration input. Defaulting to: {default}s", flush=True)
         return default
+    
     text = text.strip().lower()
-    match = re.match(r'^([\d.]+)\s*([smh]?)$', text)
-    if not match:
+    if text in ['c', 'q', 'cancel', 'exit']:
+        print(f"[DEBUG-PARSER] Cancel token detected during duration parse.", flush=True)
+        return -99  # Signal an intentional abort
+
+    # Robust numeric extraction to handle spaces, trailing units, or raw numbers
+    num_match = re.search(r'([\d.]+)', text)
+    if not num_match:
+        print(f"[DEBUG-PARSER] No valid numeric value matched in '{text}'. Defaulting to: {default}s", flush=True)
         return default
-    val = float(match.group(1))
-    unit = match.group(2)
-    if unit == 'm':
-        return int(val * 60)
-    elif unit == 'h':
-        return int(val * 3600)
-    return int(val)
+
+    val = float(num_match.group(1))
+    result = int(val)
+
+    if 'm' in text:
+        result = int(val * 60)
+    elif 'h' in text:
+        result = int(val * 3600)
+
+    print(f"[DEBUG-PARSER] Input text '{text}' successfully parsed to {result} seconds (raw extraction: {val}).", flush=True)
+    return result
+
 
 def _parse_manage_selection(cmd: str, items: list, tracks: dict) -> list:
     targets = []
@@ -119,6 +133,7 @@ def _parse_manage_selection(cmd: str, items: list, tracks: dict) -> list:
 
     return targets
 
+
 class CLI:
     def __init__(self):
         self.session = PromptSession()
@@ -130,6 +145,7 @@ class CLI:
                 return result.strip()
         except (EOFError, KeyboardInterrupt):
             return None
+
 
 async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, last_seq):
     try:
@@ -198,6 +214,7 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
             )
         except Exception:
             pass
+
 
 async def admin_panel(app, engine: QuizEngine):
     cli = CLI()
@@ -590,7 +607,10 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"  {i+1}. {s.upper()} ({len(db[s])} questions)")
 
             sub_in = await cli.ask("<b>Select Subject for Tournament Showdown #: </b>")
-            if not sub_in or not sub_in.isdigit() or int(sub_in) > len(subjects):
+            if not sub_in or sub_in.lower() in ['c', 'q', 'cancel', 'exit']:
+                print(f"{Style.YELLOW}[DEBUG-FIX] Setup cancelled at Subject selection.{Style.RESET}")
+                continue
+            if not sub_in.isdigit() or int(sub_in) > len(subjects):
                 continue
 
             target_list = db[subjects[int(sub_in)-1]]
@@ -602,7 +622,8 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"    {i+1}. {diff_color} {m_tag}[{q['id']}] {q['question'][:45]}...")
 
             range_in = await cli.ask("<b>Showdown Selection (e.g. 1, 3-5 or easy:3): </b>")
-            if not range_in:
+            if not range_in or range_in.lower() in ['c', 'q', 'cancel', 'exit']:
+                print(f"{Style.YELLOW}[DEBUG-FIX] Setup cancelled at Question selection.{Style.RESET}")
                 continue
 
             tournament_qs = []
@@ -643,27 +664,58 @@ async def admin_panel(app, engine: QuizEngine):
 
             duration_in = await cli.ask("<b>Round Duration (e.g. 30s, 1m, 5m - default 60s): </b>")
             round_seconds = parse_duration_to_seconds(duration_in, 60)
+            if round_seconds == -99:
+                print(f"{Style.YELLOW}[DEBUG-FIX] Setup cancelled at Duration parameter.{Style.RESET}")
+                continue
 
             cooldown_in = await cli.ask("<b>Interval / Cooldown between rounds (e.g. 10s, 30s, 1m - default 15s): </b>")
             cooldown_seconds = parse_duration_to_seconds(cooldown_in, 15)
+            if cooldown_seconds == -99:
+                print(f"{Style.YELLOW}[DEBUG-FIX] Setup cancelled at Cooldown parameter.{Style.RESET}")
+                continue
 
             delay_in = await cli.ask("<b>Schedule Delay (e.g. 5m, 2h - or press Enter for immediate start): </b>")
             delay_seconds = parse_duration_to_seconds(delay_in, 0)
+            if delay_seconds == -99:
+                print(f"{Style.YELLOW}[DEBUG-FIX] Setup cancelled at Delay parameter.{Style.RESET}")
+                continue
 
             scheduled_start = None
             announcement_mid = None
 
+            # Timezone synchronization directly against Cloud Database clock
             if delay_seconds > 0:
-                # --- FIX 2: Synchronize Scheduled Date directly against Cloud Database clock ---
                 db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
                 now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
                 scheduled_start = now_utc + timedelta(seconds=delay_seconds)
 
-                print(f"\n{Style.CYAN}[DEBUG-FIX-2] Local and Cloud time synchronization performed.{Style.RESET}", flush=True)
-                print(f" ├─ Local Machine clock: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
-                print(f" ├─ Cloud Database clock: {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
-                print(f" └─ Scheduled Start (relative to DB): {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (in {delay_in})", flush=True)
+                print(f"\n{Style.CYAN}[DEBUG-FIX-LOG] Time synchronization completed successfully.{Style.RESET}", flush=True)
+                print(f" ├─ Local Host System clock:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
+                print(f" ├─ Neon Database clock context: {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
+                print(f" └─ Computed Execution Target: {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (Trigger in: {delay_seconds} seconds)", flush=True)
 
+            # --- PRE-COMMIT TRANSACTION PROTECTION ---
+            # Summarize variables and request manual verification before saving to database or sending messages
+            print(f"\n{Style.YELLOW}{Style.BOLD}⚔️  PROPOSED TOURNAMENT CAMPAIGN SHEET:{Style.RESET}")
+            print(f" ├─ Subject Category:  <b>{subjects[int(sub_in)-1].upper()}</b>")
+            print(f" ├─ Solved Queue Length: <b>{len(tournament_qs)} questions</b>")
+            print(f" ├─ Selected Question IDs: {', '.join([q['id'] for q in tournament_qs])}")
+            print(f" ├─ Active Round Duration:  <b>{round_seconds} seconds</b>")
+            print(f" ├─ Rest Interval Cooldown:  <b>{cooldown_seconds} seconds</b>")
+            if scheduled_start:
+                print(f" └─ Schedule Mode:  <b>DELAYED START ({scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')})</b>")
+            else:
+                print(f" └─ Schedule Mode:  <b>IMMEDIATE RUN (The first question will launch upon confirmation!)</b>")
+
+            confirm_commit = await cli.ask("<ansiyellow><b>Confirm and launch/schedule this tournament? (y/n) > </b></ansiyellow>")
+            if not confirm_commit or confirm_commit.lower() not in ['y', 'yes']:
+                print(f"\n{Style.RED}[ABORT] Transaction canceled. No updates made. Returning to Main Cockpit...{Style.RESET}\n")
+                await asyncio.sleep(1.5)
+                continue
+
+            print(f"\n{Style.GREEN}[TX COMMIT] Transaction confirmed! Initializing database payload...{Style.RESET}")
+
+            if delay_seconds > 0:
                 try:
                     channel_id = engine.config['channel']
                     mins_left = int(delay_seconds / 60) or 1
@@ -681,12 +733,9 @@ async def admin_panel(app, engine: QuizEngine):
                 except Exception as ann_err:
                     print(f"{Style.YELLOW}Could not post scheduled announcement to channel: {ann_err}{Style.RESET}")
 
-            print(f"\n{Style.GREEN}Selected {len(tournament_qs)} questions. Queuing showdown (crash-safe)...{Style.RESET}")
-
             tracks = await asyncio.to_thread(engine.db_get_all_tracks)
             last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100)
 
-            from src.database import db_save_tournament_queue, db_get_question_by_id, db_get_tournament_queue, db_get_active_tournament_rounds
             from src.tournament import launch_tournament_round
             import src.tournament
 
@@ -761,8 +810,9 @@ async def admin_panel(app, engine: QuizEngine):
         elif choice == "7":
             await render_emergency_stop_panel(app, engine, cli)
 
+
 async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
-    """Sub-panel that lists and modifies scheduled single questions and pending tournaments."""
+    """Control panel that lists and modifies scheduled single questions and pending tournaments."""
     while True:
         clear_screen()
         print(f"{Style.MAGENTA}{Style.BOLD}--- PLANNED / SCHEDULED TASKS CONTROL CENTER ---{Style.RESET}\n")
@@ -779,7 +829,7 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
         else:
             for i, q in enumerate(sched_qs):
                 t_str = str(q['scheduled_for'])
-                print(f"  {i+1}. [{q['id']}] {Style.WHITE}{q['question'][:45]}...{Style.RESET}\n     ├─ Topic: {q['topic']}\n     └─ Planned For: {Style.CYAN}{t_str}{Style.RESET}")
+                print(f"  {i+1}. [{q['id']}] {Style.WHITE}{q['question'][:45]}...{Style.RESET}\n     ├─ Topic: {q['topic']} │ Diff: {q.get('difficulty','medium')}\n     └─ Planned For: {Style.CYAN}{t_str}{Style.RESET}")
 
         print(f"\n⚔️ {Style.YELLOW}PART B: Pending Tournament Queue{Style.RESET}")
         if not has_tourney:
@@ -793,77 +843,210 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
             print(f"  Remaining Question IDs ({rem_cnt}/{tourney_queue['total_count']}): {tourney_queue['remaining_ids']}")
             print(f"  Timing Bounds: {tourney_queue['round_seconds']}s round duration │ {tourney_queue['cooldown_seconds']}s rest interval")
 
-        print(f"\n{Style.CYAN}Menu Options:\n [1] Reschedule planned single question │ [2] Unschedule planned question\n [3] Postpone/Reschedule tournament    │ [4] Modify tournament parameters\n [5] Delete/Cancel scheduled tournament │ [6] Trigger question immediate publish\n [b] Back to Main Cockpit{Style.RESET}")
+        print(f"\n{Style.CYAN}Menu Options:\n [1] 📝 Manage Scheduled Single Questions (Reschedule/Edit/Cancel)\n [2] ⚙️  Manage Pending Tournament Parameters & Timers\n [b] Back to Main Cockpit{Style.RESET}")
 
         sub_choice = await cli.ask("<b>Scheduler Command > </b>")
         if not sub_choice or sub_choice == 'b':
             break
 
-        if sub_choice == "1" and sched_qs:
-            idx_in = await cli.ask("<b>Select question # to Reschedule: </b>")
+        if sub_choice == "1":
+            if not sched_qs:
+                print(f"{Style.YELLOW}No scheduled questions found to manage.{Style.RESET}")
+                await asyncio.sleep(1.0)
+                continue
+
+            idx_in = await cli.ask("<b>Select question # to Manage: </b>")
             if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
                 target_q = sched_qs[int(idx_in)-1]
-                new_date = await cli.ask("<b>New ISO Timestamp (e.g. 2026-07-20T18:00:00+03:00): </b>")
-                if new_date:
-                    success = await asyncio.to_thread(db_reschedule_question, target_q['id'], new_date)
-                    if success:
-                        print(f"{Style.GREEN}✅ Question rescheduled successfully.{Style.RESET}")
-                        await asyncio.sleep(1.5)
-
-        elif sub_choice == "2" and sched_qs:
-            idx_in = await cli.ask("<b>Select question # to Cancel (removes schedule): </b>")
-            if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
-                target_q = sched_qs[int(idx_in)-1]
-                success = await asyncio.to_thread(db_reschedule_question, target_q['id'], None)
-                if success:
-                    print(f"{Style.GREEN}✅ Schedule cleared. Question reverted to manual draft.{Style.RESET}")
+                
+                # Fetch full question details from database to work with raw fields
+                q_full = await asyncio.to_thread(db_get_question_by_id, target_q['id'])
+                if not q_full:
+                    print(f"{Style.RED}Error: Failed to fetch question payload.{Style.RESET}")
                     await asyncio.sleep(1.5)
+                    continue
 
-        elif sub_choice == "3" and has_tourney:
-            new_start = await cli.ask("<b>New Tournament Start ISO Date (or 'CLEAR' for immediate start): </b>")
-            if new_start:
-                val = "CLEAR" if new_start.upper() == "CLEAR" else new_start
-                success = await asyncio.to_thread(db_update_tournament_schedule_params, scheduled_start=val)
-                if success:
-                    print(f"{Style.GREEN}✅ Tournament launch timer rescheduled successfully.{Style.RESET}")
-                    await asyncio.sleep(1.5)
+                while True:
+                    clear_screen()
+                    print(f"{Style.YELLOW}{Style.BOLD}--- MANAGE SCHEDULED QUESTION: {q_full['id']} ---{Style.RESET}")
+                    print(f"  Current Text: {Style.WHITE}{q_full['question']}{Style.RESET}")
+                    print(f"  Subject:      {q_full['subject']} │ Topic: {q_full['topic']}")
+                    print(f"  Difficulty:   {q_full.get('difficulty', 'medium')} │ Tags: {q_full.get('tags', [])}")
+                    print(f"  Options:      {q_full['options']}")
+                    print(f"  Scheduled:    {Style.CYAN}{q_full['scheduled_for']}{Style.RESET}")
+                    print(f"\n  Actions:")
+                    print("   [1] ⏰ Reschedule (Change Date/Time)")
+                    print("   [2] 📥 Cancel Schedule (Remove date, revert to manual draft list)")
+                    print("   [3] 📝 Edit Question Text")
+                    print("   [4] 📋 Edit Options Text")
+                    print("   [5] 🏷️  Modify Metadata (Subject, Topic, Difficulty, Tags)")
+                    print("   [6] 🚀 Publish Immediately")
+                    print("   [b] Back to Control Center")
 
-        elif sub_choice == "4" and has_tourney:
-            dur_in = await cli.ask("<b>Modify Round Duration (seconds or Enter to skip): </b>")
-            cool_in = await cli.ask("<b>Modify Cooldown Interval (seconds or Enter to skip): </b>")
+                    act = await cli.ask("<b>Select Action > </b>")
+                    if not act or act == 'b':
+                        break
 
-            dur = int(dur_in) if (dur_in and dur_in.isdigit()) else None
-            cool = int(cool_in) if (cool_in and cool_in.isdigit()) else None
-
-            if dur is not None or cool is not None:
-                success = await asyncio.to_thread(db_update_tournament_schedule_params, round_seconds=dur, cooldown_seconds=cool)
-                if success:
-                    print(f"{Style.GREEN}✅ Parameters updated successfully.{Style.RESET}")
-                    await asyncio.sleep(1.5)
-
-        elif sub_choice == "5" and has_tourney:
-            confirm = await cli.ask("<b>Are you sure you want to completely clear the tournament queue? (y/n): </b>")
-            if confirm and confirm.lower() == 'y':
-                ann_mid = tourney_queue.get('announcement_mid')
-                if ann_mid:
+                    conn = engine.get_db_connection()
                     try:
-                        await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(ann_mid))
-                    except Exception:
-                        pass
-                await asyncio.to_thread(db_clear_tournament_queue)
-                print(f"{Style.RED}✅ Scheduled tournament deleted and queue flushed.{Style.RESET}")
-                await asyncio.sleep(1.5)
+                        if act == "1":
+                            new_date = await cli.ask("<b>New ISO Timestamp (e.g. 2026-07-20T18:00:00+03:00): </b>")
+                            if new_date:
+                                success = await asyncio.to_thread(db_reschedule_question, q_full['id'], new_date)
+                                if success:
+                                    print(f"{Style.GREEN}[TX COMMIT] Rescheduled successfully to {new_date}.{Style.RESET}")
+                                    q_full['scheduled_for'] = new_date
+                                    await asyncio.sleep(1.5)
 
-        elif sub_choice == "6" and sched_qs:
-            idx_in = await cli.ask("<b>Select question # to publish IMMEDIATELY: </b>")
-            if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
-                target_q = sched_qs[int(idx_in)-1]
+                        elif act == "2":
+                            confirm = await cli.ask("<b>Confirm unscheduling to manual drafts? (y/n): </b>")
+                            if confirm and confirm.lower() == 'y':
+                                success = await asyncio.to_thread(db_reschedule_question, q_full['id'], None)
+                                if success:
+                                    print(f"{Style.GREEN}[TX COMMIT] Schedule cleared. Question reverted to draft.{Style.RESET}")
+                                    q_full['scheduled_for'] = None
+                                    await asyncio.sleep(1.5)
 
-                # Reschedule to 5 seconds ago to force scheduler task to ingest it
-                now_minus_1s = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
-                await asyncio.to_thread(db_reschedule_question, target_q['id'], now_minus_1s)
-                print(f"{Style.GREEN}✅ Triggered! The background daemon will publish the question in the next loop cycle.{Style.RESET}")
-                await asyncio.sleep(1.5)
+                        elif act == "3":
+                            new_text = await cli.ask("<b>Enter New Question Text (HTML supported): </b>")
+                            if new_text:
+                                with conn.cursor() as cur:
+                                    cur.execute("UPDATE questions SET question = %s WHERE id = %s;", (new_text, q_full['id']))
+                                    conn.commit()
+                                print(f"{Style.GREEN}[TX COMMIT] Question text updated.{Style.RESET}")
+                                q_full['question'] = new_text
+                                await asyncio.sleep(1.5)
+
+                        elif act == "4":
+                            print(f"\n  Current options: {q_full['options']}")
+                            opt_idx = await cli.ask("<b>Select option index to edit (0 to 3) or Enter to abort: </b>")
+                            if opt_idx and opt_idx.isdigit() and 0 <= int(opt_idx) < len(q_full['options']):
+                                idx = int(opt_idx)
+                                new_opt = await cli.ask(f"<b>Enter new value for Option {chr(65+idx)}: </b>")
+                                if new_opt:
+                                    new_opts = list(q_full['options'])
+                                    new_opts[idx] = new_opt
+                                    with conn.cursor() as cur:
+                                        cur.execute("UPDATE questions SET options = %s WHERE id = %s;", (new_opts, q_full['id']))
+                                        conn.commit()
+                                    print(f"{Style.GREEN}[TX COMMIT] Option {chr(65+idx)} updated.{Style.RESET}")
+                                    q_full['options'] = new_opts
+                                    await asyncio.sleep(1.5)
+
+                        elif act == "5":
+                            print("\n  [1] Subject │ [2] Topic │ [3] Difficulty │ [4] Tags")
+                            meta_choice = await cli.ask("<b>Select Metadata to edit: </b>")
+                            if meta_choice == "1":
+                                val = await cli.ask("<b>Enter Subject: </b>")
+                                if val:
+                                    with conn.cursor() as cur:
+                                        cur.execute("UPDATE questions SET subject = %s WHERE id = %s;", (val, q_full['id']))
+                                        conn.commit()
+                                    q_full['subject'] = val
+                            elif meta_choice == "2":
+                                val = await cli.ask("<b>Enter Topic: </b>")
+                                if val:
+                                    with conn.cursor() as cur:
+                                        cur.execute("UPDATE questions SET topic = %s WHERE id = %s;", (val, q_full['id']))
+                                        conn.commit()
+                                    q_full['topic'] = val
+                            elif meta_choice == "3":
+                                val = await cli.ask("<b>Enter Difficulty (easy/medium/hard): </b>")
+                                if val:
+                                    with conn.cursor() as cur:
+                                        cur.execute("UPDATE questions SET difficulty = %s WHERE id = %s;", (val, q_full['id']))
+                                        conn.commit()
+                                    q_full['difficulty'] = val
+                            elif meta_choice == "4":
+                                val = await cli.ask("<b>Enter Tags (comma-separated): </b>")
+                                if val:
+                                    tags_list = [t.strip() for t in val.split(',')]
+                                    with conn.cursor() as cur:
+                                        cur.execute("UPDATE questions SET tags = %s WHERE id = %s;", (tags_list, q_full['id']))
+                                        conn.commit()
+                                    q_full['tags'] = tags_list
+                            print(f"{Style.GREEN}[TX COMMIT] Metadata updated.{Style.RESET}")
+                            await asyncio.sleep(1.5)
+
+                        elif act == "6":
+                            confirm = await cli.ask("<b>Force Immediate Publish via Background Daemon? (y/n): </b>")
+                            if confirm and confirm.lower() == 'y':
+                                # Set date to 5 seconds ago to immediately trigger background scheduled task
+                                past_dt = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+                                success = await asyncio.to_thread(db_reschedule_question, q_full['id'], past_dt)
+                                if success:
+                                    print(f"{Style.GREEN}[TX COMMIT] Triggered! The background daemon will publish this in the next cycle.{Style.RESET}")
+                                    await asyncio.sleep(2.0)
+                                    break
+                    except Exception as tx_err:
+                        conn.rollback()
+                        print(f"{Style.RED}[TX ROLLBACK] Transaction failed: {tx_err}{Style.RESET}")
+                        await asyncio.sleep(2.0)
+                    finally:
+                        engine.release_connection(conn)
+
+        elif sub_choice == "2":
+            if not has_tourney:
+                print(f"{Style.YELLOW}No pending tournaments found to edit.{Style.RESET}")
+                await asyncio.sleep(1.0)
+                continue
+
+            while True:
+                clear_screen()
+                print(f"{Style.MAGENTA}{Style.BOLD}--- MANAGE PENDING TOURNAMENT QUEUE ---{Style.RESET}\n")
+                print(f"  Status:               {Style.WHITE}{'PAUSED' if tourney_queue.get('is_paused') else 'RUNNING/READY'}{Style.RESET}")
+                print(f"  Planned Start:        {Style.CYAN}{tourney_queue.get('scheduled_start')}{Style.RESET}")
+                print(f"  Remaining Question Count: {len(tourney_queue['remaining_ids'])} items")
+                print(f"  Round Timing Duration: {tourney_queue['round_seconds']} seconds")
+                print(f"  Rest Interval Cooldown: {tourney_queue['cooldown_seconds']} seconds")
+                print(f"\n  Actions:")
+                print("   [1] ⏰ Postpone / Reschedule Start Time")
+                print("   [2] 🔧 Modify Timing Parameters (Duration & Cooldown)")
+                print("   [3] 🛑 Cancel & Delete Entire Tournament Queue")
+                print("   [b] Back to Control Center")
+
+                act = await cli.ask("<b>Select Action > </b>")
+                if not act or act == 'b':
+                    break
+
+                if act == "1":
+                    new_start = await cli.ask("<b>New Tournament Start ISO Date (or 'CLEAR' for immediate start): </b>")
+                    if new_start:
+                        val = "CLEAR" if new_start.upper() == "CLEAR" else new_start
+                        success = await asyncio.to_thread(db_update_tournament_schedule_params, scheduled_start=val)
+                        if success:
+                            print(f"{Style.GREEN}✅ Tournament schedule updated.{Style.RESET}")
+                            tourney_queue = await asyncio.to_thread(db_get_tournament_queue)
+                            await asyncio.sleep(1.5)
+
+                elif act == "2":
+                    dur_in = await cli.ask("<b>Modify Round Duration (seconds or Enter to skip): </b>")
+                    cool_in = await cli.ask("<b>Modify Cooldown Interval (seconds or Enter to skip): </b>")
+
+                    dur = int(dur_in) if (dur_in and dur_in.isdigit()) else None
+                    cool = int(cool_in) if (cool_in and cool_in.isdigit()) else None
+
+                    if dur is not None or cool is not None:
+                        success = await asyncio.to_thread(db_update_tournament_schedule_params, round_seconds=dur, cooldown_seconds=cool)
+                        if success:
+                            print(f"{Style.GREEN}✅ Queue parameters updated successfully.{Style.RESET}")
+                            tourney_queue = await asyncio.to_thread(db_get_tournament_queue)
+                            await asyncio.sleep(1.5)
+
+                elif act == "3":
+                    confirm = await cli.ask("<b>Are you sure you want to completely clear the tournament queue? (y/n): </b>")
+                    if confirm and confirm.lower() == 'y':
+                        ann_mid = tourney_queue.get('announcement_mid')
+                        if ann_mid:
+                            try:
+                                await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(ann_mid))
+                            except Exception:
+                                pass
+                        await asyncio.to_thread(db_clear_tournament_queue)
+                        print(f"{Style.RED}✅ Scheduled tournament deleted and queue flushed.{Style.RESET}")
+                        await asyncio.sleep(1.5)
+                        break
+
 
 async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
     """Emergency control system that pauses, resumes, or stops active tournaments."""
