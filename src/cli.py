@@ -13,7 +13,9 @@ from src.database import (
     db_get_cached_file_id,
     db_save_cached_file_id,
     db_get_responses_for_message,
-    process_user_score
+    process_user_score,
+    db_save_tournament_queue,
+    db_get_question_by_id,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
@@ -458,8 +460,7 @@ async def admin_panel(app, engine: QuizEngine):
                                         pass
 
                                     fig_block = UIFactory.build_figure_block(q, add_strut=False)
-                                    media_bytes = None
-                                    cached_file_id = None
+                                    media_bytes, cached_file_id = None, None
 
                                     if fig_block:
                                         channel_id = CONFIG.get("channel") or "@QuizOva"
@@ -616,21 +617,37 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"{Style.RED}No valid questions selected.{Style.RESET}")
                 continue
 
+            # src/cli.py, inside `elif choice == "5":`, replace the final block with:
+
             print(f"\n{Style.GREEN}Selected {len(tournament_qs)} questions. Queuing showdown (crash-safe)...{Style.RESET}")
 
             tracks = await asyncio.to_thread(engine.db_get_all_tracks)
             last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100)
 
-            from src.database import db_save_tournament_queue, db_get_question_by_id
+            from src.database import db_save_tournament_queue, db_get_question_by_id, db_get_tournament_queue, db_get_active_tournament_rounds
             from src.tournament import launch_tournament_round
+            import src.tournament
 
-            q_ids = [q['id'] for q in tournament_qs]
-            first_id = q_ids.pop(0)
-            
-            # Pass last_seq + 1 cleanly so next popped index increments sequentially
-            await asyncio.to_thread(db_save_tournament_queue, q_ids, last_seq + 1, 60)
+            async with src.tournament._LAUNCH_LOCK:
+                q_ids = [q['id'] for q in tournament_qs]
+                total_count = len(tournament_qs)
 
-            first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
-            await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=60)
+                active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
+                existing_queue = await asyncio.to_thread(db_get_tournament_queue)
+                has_pending_series = bool(existing_queue and existing_queue.get('remaining_ids'))
 
-            print(f"{Style.GREEN}🚀 Round 1 is live. The background watcher will handle subsequent progression.{Style.RESET}")
+                if active_rounds or has_pending_series:
+                    # Never launch on top of a live/queued round. Append to the END of whatever
+                    # is already running — the watcher fires them strictly one at a time, in order.
+                    merged_ids = (existing_queue['remaining_ids'] if existing_queue else []) + q_ids
+                    merged_total = (existing_queue['total_count'] if existing_queue else 0) + total_count
+                    merged_last_seq = max(existing_queue['last_seq'] if existing_queue else last_seq, last_seq)
+                    await asyncio.to_thread(db_save_tournament_queue, merged_ids, merged_last_seq, 60, merged_total)
+                    print(f"{Style.YELLOW}⚠️  A round is already live/queued. These {total_count} question(s) "
+                          f"were appended to the queue and will fire automatically, one at a time, once "
+                          f"the current showdown finishes.{Style.RESET}")
+                else:
+                    first_id = q_ids.pop(0)
+                    await asyncio.to_thread(db_save_tournament_queue, q_ids, last_seq + 1, 60, total_count)
+                    first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
+                    await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=60, current_round=1, total_rounds=total_count)

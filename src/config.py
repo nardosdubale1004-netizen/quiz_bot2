@@ -35,3 +35,8 @@ CONFIG = {
 # --- Shared In-Memory Tracking for Lockout States ---
 LOCKOUT_MESSAGES = set()
 SHUTTING_DOWN = False
+
+# --- Central Application State Hooks for Graceful Shutdowns ---
+ACTIVE_LOOP = None
+ACTIVE_APP = None
+ACTIVE_ENGINE = None

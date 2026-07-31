@@ -215,13 +215,17 @@ class QuizEngine:
             with conn.cursor() as cur:
                 cur.execute("""
                     ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS round_deadline TIMESTAMPTZ;
+                    ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS round_number INT;
+                    ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS total_rounds INT;
                     CREATE TABLE IF NOT EXISTS tournament_queue (
                         id INT PRIMARY KEY DEFAULT 1,
                         remaining_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
                         last_seq INT NOT NULL DEFAULT 100,
                         round_seconds INT NOT NULL DEFAULT 60,
+                        total_count INT NOT NULL DEFAULT 1,
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
+                    ALTER TABLE tournament_queue ADD COLUMN IF NOT EXISTS total_count INT NOT NULL DEFAULT 1;
                 """)
                 conn.commit()
             QuizEngine._tournament_schema_ensured = True
@@ -289,25 +293,68 @@ class QuizEngine:
 
     # --- TRACKING STATE METHODS ---
     @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
-    def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None):
+    def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None, round_seconds=None):
         QuizEngine._tracks_cache_time = 0
         conn = None
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (message_id) DO UPDATE SET
-                        status = EXCLUDED.status,
-                        followup_mid = EXCLUDED.followup_mid,
-                        round_deadline = EXCLUDED.round_deadline;
-                """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, round_deadline))
+                if round_seconds is not None:
+                    cur.execute("""
+                        INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW() + (%s || ' second')::interval)
+                        ON CONFLICT (message_id) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            followup_mid = EXCLUDED.followup_mid,
+                            round_deadline = EXCLUDED.round_deadline;
+                    """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, int(round_seconds)))
+                else:
+                    cur.execute("""
+                        INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (message_id) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            followup_mid = EXCLUDED.followup_mid,
+                            round_deadline = EXCLUDED.round_deadline;
+                    """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, round_deadline))
                 conn.commit()
             track_question_cache.invalidate(f"trackq:{display_id}")
         except Exception as e:
             if conn: conn.rollback()
             print(f"{Style.RED}[DB ERROR] Failed to save track: {e}{Style.RESET}")
+        finally:
+            if conn:
+                self.release_connection(conn)
+
+    @timed_sync(lambda self, message_id, followup_mid, msg_type: f"db_update_track_followup_and_type")
+    def db_update_track_followup_and_type(self, message_id, followup_mid, msg_type):
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE sent_tracks SET followup_mid = %s, msg_type = %s WHERE message_id = %s;",
+                    (str(followup_mid), msg_type, str(message_id))
+                )
+                conn.commit()
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"[DB ERROR] Failed to update track metadata: {e}")
+        finally:
+            if conn:
+                self.release_connection(conn)
+
+    @timed_sync(lambda self, message_id: f"db_delete_track")
+    def db_delete_track(self, message_id):
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
+                conn.commit()
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"[DB ERROR] Failed to delete track: {e}")
         finally:
             if conn:
                 self.release_connection(conn)
@@ -369,7 +416,7 @@ class QuizEngine:
                 except Exception as e:
                     print(f"[DB SWAP WARNING] user_responses update bypassed: {e}")
 
-                cur.execute("UPDATE sent_tracks SET message_id = %s, msg_type = 'text' WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                cur.execute("UPDATE sent_tracks SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
                 conn.commit()
             track_question_cache.invalidate_prefix("trackq:")
         except Exception as e:
@@ -571,9 +618,11 @@ def db_get_responses_for_message(message_id: str):
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT user_id, private_message_id, selected_option, is_correct
-                FROM user_responses
-                WHERE message_id = %s;
+                SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at, us.alliance_tag
+                FROM user_responses ur
+                LEFT JOIN user_stats us ON ur.user_id = us.user_id
+                WHERE ur.message_id = %s
+                ORDER BY ur.answered_at ASC;
             """, (str(message_id),))
             return cur.fetchall()
     except Exception as e:
@@ -590,11 +639,27 @@ def db_get_overdue_tournament_rounds():
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT * FROM sent_tracks
-                WHERE status = 'tournament_active'
-                  AND (round_deadline IS NULL OR round_deadline <= NOW());
+                SELECT *, EXTRACT(EPOCH FROM round_deadline) AS deadline_epoch
+                FROM sent_tracks
+                WHERE status = 'tournament_active';
             """)
-            return [dict(r) for r in cur.fetchall()]
+            rows = [dict(r) for r in cur.fetchall()]
+
+            overdue = []
+            now_epoch = time.time()
+            for r in rows:
+                deadline_epoch = r.get('deadline_epoch')
+                if deadline_epoch is None:
+                    overdue.append(r)
+                    continue
+                try:
+                    deadline_epoch = float(deadline_epoch)
+                except (ValueError, TypeError):
+                    overdue.append(r)
+                    continue
+                if deadline_epoch <= now_epoch:
+                    overdue.append(r)
+            return overdue
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch overdue tournament rounds: {e}")
         return []
@@ -603,16 +668,32 @@ def db_get_overdue_tournament_rounds():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_active_tournament_rounds():
-    """Fetch all tracks currently registered under active tournament status."""
+    """Fetch all tracks currently registered under active tournament status along with exact remaining seconds."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT * FROM sent_tracks
+                SELECT *, EXTRACT(EPOCH FROM round_deadline) AS deadline_epoch
+                FROM sent_tracks
                 WHERE status = 'tournament_active';
             """)
-            return [dict(r) for r in cur.fetchall()]
+            rows = [dict(r) for r in cur.fetchall()]
+
+            now_epoch = time.time()
+            active = []
+            for r in rows:
+                deadline_epoch = r.get('deadline_epoch')
+                if deadline_epoch is not None:
+                    try:
+                        deadline_epoch = float(deadline_epoch)
+                        r['remaining_seconds'] = max(0, int(deadline_epoch - now_epoch))
+                    except (ValueError, TypeError):
+                        r['remaining_seconds'] = 0
+                else:
+                    r['remaining_seconds'] = 0
+                active.append(r)
+            return active
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch active tournament rounds: {e}")
         return []
@@ -620,19 +701,20 @@ def db_get_active_tournament_rounds():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60):
+def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60, total_count: int = 1):
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds)
-                VALUES (1, %s, %s, %s)
+                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count)
+                VALUES (1, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     remaining_ids = EXCLUDED.remaining_ids,
                     last_seq = EXCLUDED.last_seq,
-                    round_seconds = EXCLUDED.round_seconds;
-            """, (Json(remaining_ids), last_seq, round_seconds))
+                    round_seconds = EXCLUDED.round_seconds,
+                    total_count = EXCLUDED.total_count;
+            """, (Json(remaining_ids), last_seq, round_seconds, total_count))
             conn.commit()
     except Exception as e:
         if conn: conn.rollback()
@@ -657,7 +739,7 @@ def db_get_tournament_queue():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_pop_tournament_question():
-    """Atomically pops the next queued question id and advances display index."""
+    """Atomically pops the next queued question id and advances display index with an active round guard."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -667,6 +749,12 @@ def db_pop_tournament_question():
             if not row or not row['remaining_ids']:
                 conn.commit()
                 return None, None
+
+            cur.execute("SELECT 1 FROM sent_tracks WHERE status = 'tournament_active' LIMIT 1;")
+            if cur.fetchone():
+                conn.commit()
+                return None, None
+
             remaining = row['remaining_ids']
             next_id = remaining.pop(0)
             new_last_seq = row['last_seq'] + 1
@@ -993,6 +1081,38 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         if conn: conn.rollback()
         print(f"[DB ERROR] Error in process_user_score: {e}")
         return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_try_start_tournament_round(message_id, q_id, display_id, round_seconds, round_number, total_rounds):
+    """
+    Claims an exclusive lock in PostgreSQL to verify no other tournament round is active,
+    then logs the current round status to ensure consistent round information.
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(872364193);")
+            cur.execute("SELECT 1 FROM sent_tracks WHERE status = 'tournament_active' LIMIT 1;")
+            if cur.fetchone():
+                conn.rollback()
+                return False
+            cur.execute("""
+                INSERT INTO sent_tracks
+                    (message_id, q_id, status, display_id, type, msg_type, round_deadline, round_number, total_rounds)
+                VALUES
+                    (%s, %s, 'tournament_active', %s, 'premium', 'text',
+                     NOW() + (%s || ' second')::interval, %s, %s)
+                ON CONFLICT (message_id) DO NOTHING;
+            """, (str(message_id), q_id, int(display_id), int(round_seconds), int(round_number), int(total_rounds)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to claim tournament round: {e}")
+        return False
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

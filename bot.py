@@ -35,7 +35,8 @@ from src.database import (
     db_update_response_view_state,
     db_get_track_and_question,
     db_get_cached_file_id,
-    db_save_cached_file_id
+    db_save_cached_file_id,
+    db_get_active_tournament_rounds
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info
@@ -122,10 +123,11 @@ async def check_and_publish_scheduled(app):
 
         try:
             # --- Exclusive Single Active Question Rule ---
-            # Automatically postpones regular queue deliveries if a live tournament showdown is underway [1].
-            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
-            has_active_tournament = any(t.get('status') == 'tournament_active' for t in tracks.values())
-            
+            # Automatically postpones regular queue deliveries if a live tournament showdown is underway.
+            # Checked directly against the DB (cache-free)
+            active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
+            has_active_tournament = len(active_rounds) > 0
+
             if has_active_tournament:
                 await asyncio.sleep(15)
                 continue
@@ -150,6 +152,7 @@ async def check_and_publish_scheduled(app):
                 print(f"{Style.YELLOW}[SCHEDULER] Found scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
                 channel = CONFIG.get("channel")
 
+                tracks = await asyncio.to_thread(engine.db_get_all_tracks)
                 last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
 
                 has_tikz = UIFactory.has_real_diagram(q)
@@ -350,7 +353,7 @@ async def start_command(update: Update, context):
                         async with httpx.AsyncClient() as client:
                             resp = await fetch_kroki_image(client, img_url, latex_code)
                             if resp and resp.status_code == 200:
-                                media_bytes = resp.content
+                                    media_bytes = resp.content
 
             m = await send_rich_message_safe(
                 context.bot,
@@ -545,15 +548,26 @@ def main():
 
     # --- Graceful Shutdown Signal Registration ---
     def sigterm_handler(signum, frame):
-        print(f"\n{Style.RED}[SYSTEM TERMINATION] Received SIGTERM signal. Shutting down gracefully...{Style.RESET}", flush=True)
-        raise KeyboardInterrupt()
+        print(f"\n{Style.RED}[SYSTEM TERMINATION] Received signal {signum}. Shutting down gracefully...{Style.RESET}", flush=True)
+        try:
+            from src.tournament import run_graceful_shutdown_sync
+            run_graceful_shutdown_sync()
+        except Exception as e:
+            print(f"Cleanup error: {e}", flush=True)
+        sys.exit(0)
 
     try:
         signal.signal(signal.SIGTERM, sigterm_handler)
+        signal.signal(signal.SIGINT, sigterm_handler)
     except ValueError:
         pass
 
     app = Application.builder().token(token).build()
+
+    # Register shared runtime references cleanly
+    import src.config
+    src.config.ACTIVE_APP = app
+    src.config.ACTIVE_ENGINE = engine
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("school", school_command))
@@ -568,6 +582,7 @@ def main():
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        src.config.ACTIVE_LOOP = loop
 
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
@@ -596,6 +611,7 @@ def main():
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        src.config.ACTIVE_LOOP = loop
 
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
