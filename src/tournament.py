@@ -107,7 +107,7 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
             question_preview = raw_q[:220] + ("…" if len(raw_q) > 220 else "")
         question_mid = own_track.get('message_id')
 
-        STOP_EDITING_WITHIN = 1
+        STOP_EDITING_WITHIN = 0
         remaining = round_seconds
 
         while remaining > STOP_EDITING_WITHIN:
@@ -374,7 +374,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
                     if not cached_file_id:
                         async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, img_url, sol_latex)
+                            resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
                             if resp and resp.status_code == 200:
                                 media_bytes = resp.content
 
@@ -416,30 +416,39 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         if dm_tasks:
             await asyncio.gather(*dm_tasks, return_exceptions=True)
 
+        # Wrap final scoreboard processing in a robust try-except to prevent conversion errors from blocking track closures
         try:
             queue = await asyncio.to_thread(db_get_tournament_queue)
             if not src.config.SHUTTING_DOWN and (not queue or not queue.get('remaining_ids')):
                 print(f"{Style.GREEN}[TOURNAMENT] Tournament complete. Rendering final report card...{Style.RESET}", flush=True)
-                target_grade = q.get('grade', 12)
-                top_scorers = await asyncio.to_thread(db_get_weekly_leaderboard, target_grade)
+                
+                grade_val = q.get('grade')
+                try:
+                    target_grade = int(grade_val) if grade_val is not None else 12
+                except (ValueError, TypeError):
+                    target_grade = 12
 
-                champions_lines = []
-                medals = ["🥇", "🥈", "🥉"]
-                for idx, row in enumerate(top_scorers[:3]):
-                    u_label = f"Scholar ...{str(row['user_id'])[-4:]}"
-                    champions_lines.append(f"  {medals[idx]} <b>{u_label}</b> — <b>{row['total_score']} Marks</b>")
-                champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""
+                try:
+                    top_scorers = await asyncio.to_thread(db_get_weekly_leaderboard, target_grade)
+                    champions_lines = []
+                    medals = ["🥇", "🥈", "🥉"]
+                    for idx, row in enumerate(top_scorers[:3]):
+                        u_label = f"Scholar ...{str(row['user_id'])[-4:]}"
+                        champions_lines.append(f"  {medals[idx]} <b>{u_label}</b> — <b>{row['total_score']} Marks</b>")
+                    champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""
 
-                final_completed_text = (
-                    f"🏁 <b>TOURNAMENT COMPLETED!</b> 🏁\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"All rounds in this showdown series have been resolved!\n"
-                    f"{champions_block}\n\n"
-                    f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
-                )
-                await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
-        except Exception as e:
-            print(f"{Style.RED}[TOURNAMENT] Series wrap-up failed: {e}{Style.RESET}", flush=True)
+                    final_completed_text = (
+                        f"🏁 <b>TOURNAMENT COMPLETED!</b> 🏁\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"All rounds in this showdown series have been resolved!\n"
+                        f"{champions_block}\n\n"
+                        f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
+                    )
+                    await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
+                except Exception as score_err:
+                    print(f"[TOURNAMENT ERROR] Failed to generate final report card: {score_err}", flush=True)
+        except Exception as queue_err:
+            print(f"[TOURNAMENT ERROR] Queue wrap-up failed: {queue_err}", flush=True)
 
         print(f"{Style.GREEN}[TOURNAMENT] Round REF: {last_seq} closed. {len(user_responses)} DMs processed.{Style.RESET}", flush=True)
     finally:
@@ -502,7 +511,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
             now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
 
-            # Continuous tick monitor visible directly in the local console
+            # Continuous watchdog loop ticks printed directly to console every 2 seconds
             print(f"[WATCHDOG-TICK] {now_utc.strftime('%H:%M:%S')} UTC | host_epoch={time.time():.1f} | db_epoch={db_epoch:.1f}", flush=True)
 
             overdue = await asyncio.to_thread(db_get_overdue_tournament_rounds)
