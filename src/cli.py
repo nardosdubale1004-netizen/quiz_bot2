@@ -26,21 +26,13 @@ import httpx
 from telegram import Poll, InputMediaPhoto
 from telegram.error import BadRequest
 
-# Phrases Telegram's Bot API returns when the target message/poll no longer
-# exists on the channel (deleted manually, deleted by another admin, expired,
-# etc). When we hit one of these, the RIGHT move is to self-heal by marking
-# the local track "deleted" so it stops being retried forever and stops
-# blocking/erroring out future range-close or clean operations. Previously
-# these just bubbled up as an unhandled exception, got caught by the generic
-# `except Exception` below, printed, and left the track stuck as "active"
-# permanently — meaning every future close attempt on it would fail the
-# exact same way.
+# Phrases Telegram's Bot API returns when the target message/poll no longer exists
 _MISSING_MESSAGE_PHRASES = [
     "message to edit not found",
     "message to delete not found",
     "message can't be edited",
     "message identifier is not specified",
-    "message is not modified",  # not fatal, but harmless to treat as "already fine"
+    "message is not modified",
 ]
 
 def _is_missing_message_error(err: Exception) -> bool:
@@ -51,32 +43,9 @@ def _is_not_modified_error(err: Exception) -> bool:
     return "message is not modified" in str(err).lower()
 
 def _parse_manage_selection(cmd: str, items: list, tracks: dict) -> list:
-    """
-    Parses a Manage Quizzes command string into a list of target message_id
-    strings. Previously this menu only accepted a single bare number per
-    token (e.g. "3"), so typing a range like "1-5" silently matched nothing
-    (the isdigit() check failed) and the loop below ran over an empty set --
-    no error, no action, just a confusing no-op re-render of the list.
-
-    Now supports, comma-separated and freely mixed:
-      - Single position:        "3"
-      - Position range:         "1-5"
-      - Direct REF targeting:   "r167" or "#167"  -- matches a question's
-        REF/display_id directly, found anywhere in the CURRENT filtered
-        `items` list regardless of which page is currently shown. This means
-        you no longer have to page all the way to page 14 to close REF 167 --
-        just type "r167" from page 1.
-      - Any mix: "1,3,5-7,r167"
-
-    Invalid or unmatched tokens are skipped with a warning printed to the
-    console, but any valid targets found are still returned -- one bad token
-    doesn't block the rest of a batch command.
-    """
     targets = []
     invalid_tokens = []
 
-    # REF (display_id) -> mid lookup, scoped to the currently filtered `items`
-    # (i.e. respects the active status/type filter you're currently viewing).
     ref_lookup = {}
     for mid in items:
         v = tracks.get(mid)
@@ -138,7 +107,6 @@ class CLI:
             return None
 
 async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, last_seq):
-    """Asynchronously evaluates student stats and edits their private DM placeholder message."""
     try:
         perf_card = await asyncio.to_thread(
             process_user_score,
@@ -222,7 +190,8 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [0] 🚪 Shutdown System")
 
         choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
-        if choice in [None, "0"]: break
+        if choice in [None, "0"]:
+            break
         if choice.lower() == 'c':
             clear_screen()
             continue
@@ -294,7 +263,6 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"    {i+1}. {diff_color} {m_tag}[{q['id']}] {q['question'][:45]}...")
 
             range_in = await cli.ask("<b>Selection (e.g. 1, 3-5 or easy:3): </b>")
-
             if not range_in:
                 continue
 
@@ -306,9 +274,11 @@ async def admin_panel(app, engine: QuizEngine):
                 pools = {"easy": [], "medium": [], "hard": []}
                 for q in target_list:
                     d = "easy" if q.get("difficulty", "medium").lower() == "weak" else q.get("difficulty", "medium").lower()
-                    if d in pools: pools[d].append(q)
+                    if d in pools:
+                        pools[d].append(q)
                 for diff, count in requested.items():
-                    if diff in pools: to_send.extend(pools[diff][:count])
+                    if diff in pools:
+                        to_send.extend(pools[diff][:count])
             else:
                 indices = []
                 try:
@@ -318,11 +288,12 @@ async def admin_panel(app, engine: QuizEngine):
                             indices.extend(range(start-1, end))
                         else:
                             indices.append(int(part)-1)
-                except:
+                except Exception:
                     print(f"{Style.RED}Invalid format.{Style.RESET}")
                     continue
                 for idx in indices:
-                    if 0 <= idx < len(target_list): to_send.append(target_list[idx])
+                    if 0 <= idx < len(target_list):
+                        to_send.append(target_list[idx])
 
             tracks = await asyncio.to_thread(engine.db_get_all_tracks)
             last_seq = tracks.get("last_seq", 100)
@@ -409,21 +380,25 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"{Style.CYAN}Nav: [n] Next | [p] Prev | [p<N>] Jump to page N | [sw] Status | [ft] Filter\nAction: [1,3,5-7] Index/Range | [r167] Direct REF (any page) | [all] Current page | [clean] Live Sync | [b] Back{Style.RESET}")
 
                 cmd = await cli.ask("<b>Command > </b>")
-                if not cmd or cmd == 'b': break
-                if cmd == 'n': page += 1; continue
-                if cmd == 'p': page -= 1; continue
+                if not cmd or cmd == 'b':
+                    break
+                if cmd == 'n':
+                    page += 1
+                    continue
+                if cmd == 'p':
+                    page -= 1
+                    continue
                 if cmd == 'sw':
                     curr_stat = "closed" if curr_stat == "active" else "active"
-                    page = 0; continue
+                    page = 0
+                    continue
                 if cmd == 'ft':
                     f_val = await cli.ask("<b>Filter [nap/prp/bop]: </b>")
                     if f_val in ['nap', 'prp', 'bop']:
                         curr_type = f_val
-                        page = 0; continue
+                        page = 0
+                        continue
 
-                # Direct page jump, e.g. "p14" -> page index 13. Checked after
-                # the exact "p" (prev page) match above so bare "p" still means
-                # "previous page" -- this only fires when a number follows it.
                 page_jump_match = re.match(r'^p(\d+)$', cmd, re.IGNORECASE)
                 if page_jump_match:
                     target_page_num = int(page_jump_match.group(1))
@@ -526,12 +501,12 @@ async def admin_panel(app, engine: QuizEngine):
                                             await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
                                             continue
                                         elif _is_not_modified_error(e):
-                                            # Content was already identical -- treat as a successful close.
                                             await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
                                         else:
                                             raise
                         else:
-                            if v.get('type') == 'native': continue
+                            if v.get('type') == 'native':
+                                continue
                             img_url, cap = UIFactory.create_question_assets(q, ref)
                             kb = UIFactory.build_keyboard(q, ref)
                             if v.get('msg_type') == "photo":
@@ -641,171 +616,21 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f"{Style.RED}No valid questions selected.{Style.RESET}")
                 continue
 
-            print(f"\n{Style.GREEN}Selected {len(tournament_qs)} questions. Starting tournament loop...{Style.RESET}")
+            print(f"\n{Style.GREEN}Selected {len(tournament_qs)} questions. Queuing showdown (crash-safe)...{Style.RESET}")
 
             tracks = await asyncio.to_thread(engine.db_get_all_tracks)
             last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100)
 
-            for step, q in enumerate(tournament_qs):
-                last_seq += 1
-                print(f"\n🚀 {Style.CYAN}Broadcasting Showdown Question {step+1}/{len(tournament_qs)}...{Style.RESET}")
+            from src.database import db_save_tournament_queue, db_get_question_by_id
+            from src.tournament import launch_tournament_round
 
-                # Send live round announcement header to Telegram
-                announcement_text = (
-                    f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • QUESTION {step+1}/{len(tournament_qs)}</b>\n"
-                    f"⏳ <b>60 SECONDS REMAINING</b>\n\n"
-                    f"<i>The lobby is open! Submit your answer before the timer expires! Speed wins bonus marks!</i>"
-                )
-                ann_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=announcement_text, parse_mode="HTML")
+            q_ids = [q['id'] for q in tournament_qs]
+            first_id = q_ids.pop(0)
+            
+            # Pass last_seq + 1 cleanly so next popped index increments sequentially
+            await asyncio.to_thread(db_save_tournament_queue, q_ids, last_seq + 1, 60)
 
-                # Send question option layout card
-                img_url, caption = UIFactory.create_question_assets(q, last_seq)
-                kb = UIFactory.build_keyboard(q, last_seq)
+            first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
+            await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=60)
 
-                cache_key = f"q:{q['id']}:diagram"
-                cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
-
-                media_bytes = None
-                if img_url and not cached_file_id:
-                    async with httpx.AsyncClient() as client:
-                        resp = await fetch_kroki_image(client, img_url)
-                        if resp and resp.status_code == 200:
-                            media_bytes = resp.content
-
-                m = await send_rich_message_safe(
-                    app.bot,
-                    chat_id=engine.config['channel'],
-                    html_content=caption,
-                    reply_markup=kb,
-                    media_bytes=media_bytes,
-                    file_id=cached_file_id
-                )
-
-                if img_url and not cached_file_id and m.photo:
-                    await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
-
-                await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "tournament_active", last_seq, "premium", "photo" if img_url else "text")
-
-                # Dynamic update loop to show ticking countdown inside Telegram channel
-                for remaining in range(50, -1, -10):
-                    await asyncio.sleep(10)
-                    print(f"  └─ Timer ticking: {remaining}s remaining for live showdown submissions...", flush=True)
-
-                    if remaining > 0:
-                        updated_text = (
-                            f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • QUESTION {step+1}/{len(tournament_qs)}</b>\n"
-                            f"⏳ <b>{remaining} SECONDS REMAINING</b>\n\n"
-                            f"<i>The lobby is open! Submit your answer before the timer expires! Speed wins bonus marks!</i>"
-                        )
-                    else:
-                        updated_text = (
-                            f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • QUESTION {step+1}/{len(tournament_qs)}</b>\n"
-                            f"🔒 <b>LOBBY CLOSED! PROCESSING SUBMISSIONS...</b>"
-                        )
-
-                    try:
-                        await app.bot.edit_message_text(
-                            chat_id=engine.config['channel'],
-                            message_id=ann_msg.message_id,
-                            text=updated_text,
-                            parse_mode="HTML"
-                        )
-                    except Exception:
-                        pass
-
-                print(f"🔒 {Style.YELLOW}Showdown round expired! Locking submissions & revealing answers for REF: {last_seq}...{Style.RESET}")
-
-                user_responses = await asyncio.to_thread(db_get_responses_for_message, m.message_id)
-                print(f"  ├─ Concluding round: Spawning background DM updates for {len(user_responses)} participants...", flush=True)
-
-                await asyncio.to_thread(engine.db_update_track_status, m.message_id, "closed")
-
-                try:
-                    closed_announcement = (
-                        f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • QUESTION {step+1}/{len(tournament_qs)}</b>\n"
-                        f"🏁 <b>ROUND FINISHED!</b>"
-                    )
-                    await app.bot.edit_message_text(
-                        chat_id=engine.config['channel'],
-                        message_id=ann_msg.message_id,
-                        text=closed_announcement,
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
-
-                final_msg_id = m.message_id
-                if img_url:
-                    try:
-                        try:
-                            await app.bot.delete_message(chat_id=engine.config['channel'], message_id=m.message_id)
-                        except Exception:
-                            pass
-
-                        fig_block = UIFactory.build_figure_block(q, add_strut=False)
-                        media_bytes = None
-                        cached_file_id = None
-
-                        if fig_block:
-                            channel_id = CONFIG.get("channel") or "@QuizOva"
-                            sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, last_seq, fig_block)
-                            sol_img_url = UIFactory.get_latex_url(sol_latex)
-
-                            cache_key = f"q:{q['id']}:closed_diag"
-                            cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
-
-                            if not cached_file_id:
-                                async with httpx.AsyncClient() as client:
-                                    resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
-                                    if resp and resp.status_code == 200:
-                                        media_bytes = resp.content
-
-                        closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
-                        new_msg = await send_rich_message_safe(
-                            app.bot,
-                            chat_id=engine.config['channel'],
-                            html_content=closed_view,
-                            reply_markup=None,
-                            media_bytes=media_bytes,
-                            file_id=cached_file_id
-                        )
-
-                        if media_bytes and new_msg and new_msg.photo and not cached_file_id:
-                            await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
-
-                        final_msg_id = new_msg.message_id
-                        await asyncio.to_thread(engine.db_swap_track_message_id, m.message_id, new_msg.message_id)
-                        await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed")
-                    except Exception as e:
-                        print(f"Error publishing solution for REF {last_seq}: {e}")
-                else:
-                    try:
-                        closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
-                        await edit_rich_message_safe(
-                            app.bot,
-                            chat_id=engine.config['channel'],
-                            message_id=m.message_id,
-                            html_content=closed_view,
-                            reply_markup=None
-                        )
-                    except Exception as e:
-                        print(f"Error publishing flat solution for REF {last_seq}: {e}")
-
-                tasks = []
-                for resp in user_responses:
-                    u_id = resp['user_id']
-                    p_mid = resp['private_message_id']
-                    sel_opt = resp['selected_option']
-
-                    if p_mid:
-                        task = asyncio.create_task(
-                            push_dm_update(
-                                app.bot, u_id, p_mid, sel_opt,
-                                resp['is_correct'], final_msg_id, q, last_seq
-                            )
-                        )
-                        tasks.append(task)
-
-                await asyncio.sleep(5)
-
-            print(f"\n🏆 {Style.GREEN}Live Showdown Tournament closed successfully.{Style.RESET}")
+            print(f"{Style.GREEN}🚀 Round 1 is live. The background watcher will handle subsequent progression.{Style.RESET}")

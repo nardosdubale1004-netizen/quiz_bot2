@@ -12,13 +12,6 @@ from src.config import CONFIG, Style
 from src.perf import timed_sync
 from src.cache import track_question_cache
 
-# fn_process_user_score collapses the 3-5 sequential round trips that
-# process_user_score used to make (check existing -> read user meta ->
-# count correct responses -> insert response -> upsert stats -> re-read stats)
-# into ONE network round trip. Every one of those round trips was paying the
-# same ~380-450ms network floor to Neon (confirmed via src/db_diag.py), so the
-# fix that actually matters is doing all of that logic server-side in a single
-# call, not making each individual step faster.
 _FN_PROCESS_USER_SCORE_SQL = """
 CREATE OR REPLACE FUNCTION fn_process_user_score(
     p_user_id text,
@@ -76,7 +69,7 @@ BEGIN
         ELSE
             v_last_active_date := v_last_active::date;
             v_days_diff := v_today - v_last_active_date;
-            IF v_days_diff = 1 THEN
+            if v_days_diff = 1 THEN
                 v_streak := v_streak + 1;
             ELSIF v_days_diff > 1 THEN
                 v_streak := 1;
@@ -129,8 +122,6 @@ BEGIN
                 last_active_at = NOW();
 
         EXCEPTION WHEN unique_violation THEN
-            -- Race: another request inserted the same (user_id, message_id) between
-            -- our check above and this insert. Fall back to reading what actually landed.
             v_first_try := false;
             SELECT ur.is_correct, ur.marks_awarded
               INTO v_existing_correct, v_existing_marks
@@ -160,6 +151,7 @@ class QuizEngine:
     _tracks_cache = {}
     _tracks_cache_time = 0
     _fn_ensured = False
+    _tournament_schema_ensured = False
 
     def __init__(self):
         self.config = CONFIG
@@ -170,14 +162,6 @@ class QuizEngine:
         if self.db_url:
             if not QuizEngine._pool:
                 try:
-                    # NOTE: minconn was previously 2. Under any concurrent load (multiple
-                    # asyncio.to_thread DB calls firing close together, which this app does
-                    # constantly per button tap), the pool would lazily grow past those 2
-                    # warm connections -- and EVERY new connection it opens costs 1.3-2.4s
-                    # (confirmed via src/db_diag.py "fresh connect+auth" measurement),
-                    # vs. ~380-450ms for reusing an already-open one. Pre-warming with a
-                    # much higher minconn means we pay that cold-connect cost ONCE at
-                    # startup instead of randomly mid-conversation.
                     prewarm_count = int(os.getenv("DB_POOL_PREWARM", "10"))
                     max_count = int(os.getenv("DB_POOL_MAX", "20"))
                     prewarm_count = min(prewarm_count, max_count)
@@ -197,6 +181,7 @@ class QuizEngine:
                     print(f"{Style.RED}[DATABASE ERROR] Failed to initialize connection pool: {e}{Style.RESET}")
 
             self._ensure_functions()
+            self._ensure_tournament_schema()
         else:
             print(f"{Style.YELLOW}[DATABASE] Running without cloud database environment.{Style.RESET}")
 
@@ -216,6 +201,34 @@ class QuizEngine:
             if conn:
                 conn.rollback()
             print(f"{Style.RED}[DATABASE ERROR] Failed to ensure fn_process_user_score: {e}{Style.RESET}")
+        finally:
+            if conn:
+                self.release_connection(conn)
+
+    def _ensure_tournament_schema(self):
+        """Idempotent. Adds the crash-safety columns/table used by src/tournament.py."""
+        if QuizEngine._tournament_schema_ensured:
+            return
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS round_deadline TIMESTAMPTZ;
+                    CREATE TABLE IF NOT EXISTS tournament_queue (
+                        id INT PRIMARY KEY DEFAULT 1,
+                        remaining_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        last_seq INT NOT NULL DEFAULT 100,
+                        round_seconds INT NOT NULL DEFAULT 60,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+                conn.commit()
+            QuizEngine._tournament_schema_ensured = True
+            print(f"{Style.GREEN}[DATABASE] Tournament crash-safety schema ensured.{Style.RESET}")
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"{Style.RED}[DATABASE ERROR] Failed to ensure tournament schema: {e}{Style.RESET}")
         finally:
             if conn:
                 self.release_connection(conn)
@@ -276,19 +289,20 @@ class QuizEngine:
 
     # --- TRACKING STATE METHODS ---
     @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
-    def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None):
+    def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None):
         QuizEngine._tracks_cache_time = 0
         conn = None
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (message_id) DO UPDATE SET
                         status = EXCLUDED.status,
-                        followup_mid = EXCLUDED.followup_mid;
-                """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid))
+                        followup_mid = EXCLUDED.followup_mid,
+                        round_deadline = EXCLUDED.round_deadline;
+                """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, round_deadline))
                 conn.commit()
             track_question_cache.invalidate(f"trackq:{display_id}")
         except Exception as e:
@@ -335,8 +349,6 @@ class QuizEngine:
                 else:
                     cur.execute("UPDATE sent_tracks SET status = %s WHERE message_id = %s;", (status, str(message_id)))
                 conn.commit()
-            # We don't know the display_id here cheaply, so drop the whole track/question
-            # cache namespace on any status change -- cheap relative to a DB round trip.
             track_question_cache.invalidate_prefix("trackq:")
         except Exception as e:
             if conn: conn.rollback()
@@ -347,7 +359,6 @@ class QuizEngine:
 
     @timed_sync(lambda self, old_mid, new_mid: f"db_swap_track_message_id({old_mid}->{new_mid})")
     def db_swap_track_message_id(self, old_mid, new_mid):
-        """Swaps the message ID inside both track records and user responses for deleted photo elements."""
         QuizEngine._tracks_cache_time = 0
         conn = None
         try:
@@ -421,8 +432,6 @@ class QuizEngine:
                     imported_count += 1
 
                 conn.commit()
-                # A re-imported question may have changed content -- drop the whole
-                # cache rather than tracking which display_ids reference which q_id.
                 track_question_cache.invalidate_prefix("trackq:")
                 return imported_count
         except Exception as e:
@@ -574,18 +583,149 @@ def db_get_responses_for_message(message_id: str):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_overdue_tournament_rounds():
+    """Tracks stuck in 'tournament_active' whose deadline has passed or is missing."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM sent_tracks
+                WHERE status = 'tournament_active'
+                  AND (round_deadline IS NULL OR round_deadline <= NOW());
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch overdue tournament rounds: {e}")
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_active_tournament_rounds():
+    """Fetch all tracks currently registered under active tournament status."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM sent_tracks
+                WHERE status = 'tournament_active';
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch active tournament rounds: {e}")
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds)
+                VALUES (1, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    remaining_ids = EXCLUDED.remaining_ids,
+                    last_seq = EXCLUDED.last_seq,
+                    round_seconds = EXCLUDED.round_seconds;
+            """, (Json(remaining_ids), last_seq, round_seconds))
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to save tournament queue: {e}")
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_tournament_queue():
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM tournament_queue WHERE id = 1;")
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch tournament queue: {e}")
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_pop_tournament_question():
+    """Atomically pops the next queued question id and advances display index."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT remaining_ids, last_seq FROM tournament_queue WHERE id = 1 FOR UPDATE;")
+            row = cur.fetchone()
+            if not row or not row['remaining_ids']:
+                conn.commit()
+                return None, None
+            remaining = row['remaining_ids']
+            next_id = remaining.pop(0)
+            new_last_seq = row['last_seq'] + 1
+            cur.execute(
+                "UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;",
+                (Json(remaining), new_last_seq)
+            )
+            conn.commit()
+            return next_id, new_last_seq
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to pop tournament question: {e}")
+        return None, None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_clear_tournament_queue():
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM tournament_queue WHERE id = 1;")
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to clear tournament queue: {e}")
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_question_by_id(q_id):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM questions WHERE id = %s;", (q_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            q = dict(row)
+            for field in ["poll_explanation", "options_analysis", "tags", "options", "native_options"]:
+                if field in q and isinstance(q[field], str):
+                    try:
+                        q[field] = json.loads(q[field])
+                    except Exception:
+                        pass
+            return q
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch question by id: {e}")
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
 def db_get_track_and_question(display_id: int):
-    """
-    Cached: track+question content is read on every single button tap but only
-    changes on send/import/status-change, all of which explicitly invalidate this
-    key above. A cache hit costs ~0ms instead of paying the ~400-700ms network
-    floor to Neon on every tap.
-    """
     cache_key = f"trackq:{display_id}"
     cached = track_question_cache.get(cache_key)
     if cached is not None:
-        # Return a shallow copy of the tuple's dicts so callers mutating the
-        # question dict (none currently do, but to be safe) can't corrupt the cache.
         track, row_dict = cached
         return dict(track), dict(row_dict)
 
@@ -818,16 +958,6 @@ def db_mark_question_as_sent(q_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
-    """
-    Previously this made 3-5 SEQUENTIAL round trips (check existing response ->
-    read user meta -> count correct responses -> insert response -> upsert stats ->
-    re-read stats), each paying the ~380-450ms network floor to Neon on its own.
-    That's why this single function was clocking 2-3+ seconds in the logs. It now
-    delegates the entire operation to fn_process_user_score (see top of this file),
-    executed as ONE round trip via a single cur.execute() + fetchone().
-
-    Return shape is UNCHANGED -- callers (callbacks.py, cli.py, bot.py) need no changes.
-    """
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()

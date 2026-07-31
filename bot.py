@@ -7,6 +7,7 @@ import threading
 import traceback
 import io
 import logging
+import signal
 from datetime import datetime, timezone
 
 logging.basicConfig(
@@ -41,17 +42,13 @@ from src.rendering.html_views import get_next_rank_info
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
+from src.tournament import tournament_watcher_loop, emergency_shutdown_cleanup
 import httpx
 from telegram import Poll
 from src.typography import lite_math
 
 engine = QuizEngine()
 
-# Commands registered via set_my_commands() below so Telegram shows them in
-# the "/" autocomplete menu inside a DM with the bot. Previously the handlers
-# were wired up with CommandHandler but Telegram was never told about them
-# via setMyCommands, so they worked when typed manually but never appeared
-# in the "/" popup.
 BOT_COMMANDS = [
     BotCommand("start", "Register your profile / view your stats"),
     BotCommand("school", "Set your school or study-alliance tag"),
@@ -118,7 +115,21 @@ async def handle_http_request(reader, writer, app):
 
 async def check_and_publish_scheduled(app):
     while True:
+        import src.config
+        if src.config.SHUTTING_DOWN:
+            print("[SCHEDULER] Scheduler loop detected shutdown. Exiting cleanly.", flush=True)
+            break
+
         try:
+            # --- Exclusive Single Active Question Rule ---
+            # Automatically postpones regular queue deliveries if a live tournament showdown is underway [1].
+            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
+            has_active_tournament = any(t.get('status') == 'tournament_active' for t in tracks.values())
+            
+            if has_active_tournament:
+                await asyncio.sleep(15)
+                continue
+
             q = await asyncio.to_thread(db_get_pending_scheduled_question)
             if q:
                 scheduled_val = q['scheduled_for']
@@ -139,7 +150,6 @@ async def check_and_publish_scheduled(app):
                 print(f"{Style.YELLOW}[SCHEDULER] Found scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
                 channel = CONFIG.get("channel")
 
-                tracks = await asyncio.to_thread(engine.db_get_all_tracks)
                 last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100) + 1
 
                 has_tikz = UIFactory.has_real_diagram(q)
@@ -398,8 +408,6 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
-        [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
-         InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
         [InlineKeyboardButton("🏷️ SET SCHOOL / ALLIANCE TAG", callback_data="prompt_alliance|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
@@ -511,6 +519,7 @@ async def run_cloud_server(app, port):
     print(f"Webhook is active on {PUBLIC_URL}/webhook.", flush=True)
 
     asyncio.create_task(check_and_publish_scheduled(app))
+    asyncio.create_task(tournament_watcher_loop(app, engine, poll_seconds=2))
 
     server = await asyncio.start_server(
         lambda r, w: handle_http_request(r, w, app),
@@ -533,6 +542,16 @@ def main():
     if not token or not channel:
         print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
         return
+
+    # --- Graceful Shutdown Signal Registration ---
+    def sigterm_handler(signum, frame):
+        print(f"\n{Style.RED}[SYSTEM TERMINATION] Received SIGTERM signal. Shutting down gracefully...{Style.RESET}", flush=True)
+        raise KeyboardInterrupt()
+
+    try:
+        signal.signal(signal.SIGTERM, sigterm_handler)
+    except ValueError:
+        pass
 
     app = Application.builder().token(token).build()
 
@@ -557,9 +576,6 @@ def main():
         CONFIG["bot_username"] = bot_info.username
         print(f"Registered Bot Username: @{bot_info.username}", flush=True)
 
-        # Register the "/" command menu with Telegram. Without this call the
-        # handlers still work when typed manually, but they never appear in
-        # the "/" autocomplete popup inside a chat with the bot.
         try:
             loop.run_until_complete(app.bot.set_my_commands(BOT_COMMANDS))
             print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
@@ -571,6 +587,7 @@ def main():
         except KeyboardInterrupt:
             pass
         finally:
+            loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
             loop.run_until_complete(app.stop())
             loop.run_until_complete(app.shutdown())
             print(f"System successfully shut down.", flush=True)
@@ -588,14 +605,14 @@ def main():
 
         loop.run_until_complete(app.updater.start_polling())
 
+        # Cleaned up duplicates: Schedule background processes cleanly
         asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
+        asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
         print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
 
-        # Register the "/" command menu with Telegram (same as the webhook
-        # branch above) so it also works when running the local CLI dashboard.
         try:
             loop.run_until_complete(app.bot.set_my_commands(BOT_COMMANDS))
             print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
@@ -609,6 +626,7 @@ def main():
             except KeyboardInterrupt:
                 pass
             finally:
+                loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
                 loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())
@@ -622,6 +640,7 @@ def main():
             except (KeyboardInterrupt, SystemExit):
                 pass
             finally:
+                loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
                 loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())

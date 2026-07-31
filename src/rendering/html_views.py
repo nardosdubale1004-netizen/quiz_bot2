@@ -12,12 +12,12 @@ def replace_code_with_italic(text: str) -> str:
 def smart_truncate_html(text: str, max_len: int) -> str:
     if not text or len(text) <= max_len:
         return text or ""
-        
+
     tokens = re.split(r'(<[^>]+>)', text)
     accumulated = ""
     char_count = 0
     open_tags = []
-    
+
     for token in tokens:
         if token.startswith("<") and token.endswith(">"):
             tag_match = re.match(r'</?([a-zA-Z1-6-]+)', token)
@@ -37,13 +37,13 @@ def smart_truncate_html(text: str, max_len: int) -> str:
                 break
             accumulated += token
             char_count += len(token)
-            
+
     for tag in reversed(open_tags):
         accumulated += f'</{tag}>'
-        
+
     if accumulated.count('$') % 2 != 0:
         accumulated += '$'
-        
+
     return accumulated
 
 def get_grade_mastery_title(marks: int) -> str:
@@ -79,38 +79,36 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     from src.rendering.latex_templates import has_real_diagram
     has_tikz = has_real_diagram(q)
 
-    # Compact View: Fits within Telegram's 1024-character photo caption limits
     if compact:
         raw_question = beautify_markdown_math(q['question'])
         body_plain = f"<b>PROBLEM PROPOSITION</b>\n{raw_question}"
-        
+
         opts_list = []
         for i, o in enumerate(q['options']):
             opts_list.append(f"• <b>{chr(65+i)})</b> {beautify_markdown_math(o)}")
         opts_block = "📋 <b>OPTIONS:</b>\n" + "\n".join(opts_list)
-        
+
         spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>"
         spoiler_block = f"🎯 <b>TAP TO REVEAL KEY ANSWER:</b>\n<tg-spoiler>{spoiler_content}</tg-spoiler>"
-        
+
         components = [body_plain, opts_block, spoiler_block, footer]
         caption_text = "\n\n".join(components)
-        
+
         from src.rendering.rich_helpers import convert_to_legacy_html
         legacy_text = convert_to_legacy_html(caption_text)
-        
+
         if len(legacy_text) > 1000:
             excess = len(legacy_text) - 980
             allowed_question_len = max(150, len(raw_question) - excess)
-            
+
             truncated_question = smart_truncate_html(raw_question, allowed_question_len)
             body_plain = f"<b>PROBLEM PROPOSITION</b>\n{truncated_question}"
-            
+
             components = [body_plain, opts_block, spoiler_block, footer]
             caption_text = "\n\n".join(components)
-            
+
         return caption_text
 
-    # Full View: (Used for text-only questions or DM sheets where size limit is 4096)
     body = (
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b><br/>"
@@ -284,6 +282,7 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         master = get_grade_mastery_title(perf_card['total_marks'])
         next_rank_info = get_next_rank_info(perf_card['total_marks'])
 
+        # CLOSED Table tag added cleanly at the end to prevent formatting crashes
         score_segment = (
             f"<hr/>\n"
             f"📊 <b>STUDY PERFORMANCE CARD</b>\n"
@@ -305,6 +304,7 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
             f"    <td>🎯 <b>Accuracy Rate:</b></td>"
             f"    <td><b>{perf_card['accuracy']}%</b> ({perf_card['correct']} of {perf_card['total']})</td>"
             f"  </tr>"
+            f"</table>"
         )
 
     if continuation:

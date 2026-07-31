@@ -34,3 +34,4 @@ CONFIG = {
 
 # --- Shared In-Memory Tracking for Lockout States ---
 LOCKOUT_MESSAGES = set()
+SHUTTING_DOWN = False
