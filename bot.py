@@ -122,9 +122,6 @@ async def check_and_publish_scheduled(app):
             break
 
         try:
-            # --- Exclusive Single Active Question Rule ---
-            # Automatically postpones regular queue deliveries if a live tournament showdown is underway.
-            # Checked directly against the DB (cache-free)
             active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
             has_active_tournament = len(active_rounds) > 0
 
@@ -411,7 +408,7 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
-        [InlineKeyboardButton("🏷️ SET SCHOOL / ALLIANCE TAG", callback_data="prompt_alliance|0")],
+        [InlineKeyboardButton("🎒 SET SCHOOL / ALLIANCE TAG", callback_data="prompt_alliance|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -616,14 +613,21 @@ def main():
         loop.run_until_complete(app.initialize())
         loop.run_until_complete(app.start())
 
-        print("Clearing active webhook to prevent polling conflict...", flush=True)
-        loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
+        # Check environment flag to determine side-by-side run compatibility
+        disable_polling = os.getenv("DISABLE_LOCAL_POLLING", "false").lower() == "true"
 
-        loop.run_until_complete(app.updater.start_polling())
+        if not disable_polling:
+            print("Clearing active webhook to prevent polling conflict...", flush=True)
+            loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
 
-        # Cleaned up duplicates: Schedule background processes cleanly
-        asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
-        asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
+            loop.run_until_complete(app.updater.start_polling())
+
+            # Schedule local background loops
+            asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
+            asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
+        else:
+            print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local polling and background loops are bypassed.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}The local cockpit will run as an OUTBOUND-ONLY controller. Cloud handles interactive tasks.{Style.RESET}", flush=True)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
@@ -643,7 +647,8 @@ def main():
                 pass
             finally:
                 loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
-                loop.run_until_complete(app.updater.stop())
+                if not disable_polling:
+                    loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
@@ -657,7 +662,8 @@ def main():
                 pass
             finally:
                 loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
-                loop.run_until_complete(app.updater.stop())
+                if not disable_polling:
+                    loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
