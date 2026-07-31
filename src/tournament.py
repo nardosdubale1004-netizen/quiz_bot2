@@ -438,6 +438,31 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         _FINALIZING_ROUNDS.discard(mid)
 
 
+async def emergency_shutdown_cleanup(app, engine: QuizEngine):
+    """Emergency finalization hook triggered immediately on SIGTERM/System Shutdown."""
+    import src.config
+    src.config.SHUTTING_DOWN = True
+    print(f"\n{Style.YELLOW}[SHUTDOWN] Signal trapped. Executing emergency round sweep...{Style.RESET}", flush=True)
+    try:
+        active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
+        queue = await asyncio.to_thread(db_get_tournament_queue)
+        has_more_queued = bool(queue and queue.get('remaining_ids'))
+
+        if active_rounds:
+            print(f"[SHUTDOWN] Resolving {len(active_rounds)} active round(s).", flush=True)
+            for track in active_rounds:
+                print(f"[SHUTDOWN] Forcing finalization on REF: {track['display_id']}", flush=True)
+                await finalize_tournament_round(app, engine, track, interrupted=True)
+            print(f"{Style.GREEN}[SHUTDOWN] Emergency finalization complete.{Style.RESET}", flush=True)
+        else:
+            print("[SHUTDOWN] No active tournament rounds were pending cleanup.", flush=True)
+
+        if has_more_queued:
+            print(f"{Style.GREEN}[SHUTDOWN] {len(queue['remaining_ids'])} queued question(s) preserved — will resume on restart.{Style.RESET}", flush=True)
+    except Exception as e:
+        print(f"{Style.RED}[SHUTDOWN ERROR] Sweep execution failed: {e}{Style.RESET}", flush=True)
+
+
 async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2):
     print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Executing startup recovery sweep...{Style.RESET}", flush=True)
     try:
@@ -455,7 +480,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
         queue = await asyncio.to_thread(db_get_tournament_queue)
         dropped_count = len(queue['remaining_ids']) if queue and queue.get('remaining_ids') else 0
         if dropped_count:
-            print(f"{Style.YELLOW}[TOURNAMENT] [PID {os.getpid()}] Dropping {dropped_count} queued question(s) after restart — series will NOT resume automatically.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[TOURNAMENT] Dropping {dropped_count} queued question(s) after restart — series will NOT resume automatically.{Style.RESET}", flush=True)
             try:
                 await app.bot.send_message(
                     chat_id=engine.config['channel'],
