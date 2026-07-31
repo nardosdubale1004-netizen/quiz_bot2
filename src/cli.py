@@ -57,7 +57,7 @@ def parse_duration_to_seconds(text: str, default: int) -> int:
     if not text:
         print(f"[DEBUG-PARSER] Empty duration input. Defaulting to: {default}s", flush=True)
         return default
-    
+
     text = text.strip().lower()
     if text in ['c', 'q', 'cancel', 'exit']:
         print(f"[DEBUG-PARSER] Cancel token detected during duration parse.", flush=True)
@@ -148,33 +148,25 @@ class CLI:
 
 
 async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, last_seq):
+    """Asynchronously evaluates student stats and delivers the resolved DM solution sheet."""
+    explanation_html, kb, media_bytes, cached_file_id = None, None, None, None
     try:
+        print(f"[DEBUG-DM-UPDATE-CLI] Initializing DM update for User ID: {u_id}, Placeholder Message ID: {p_mid}, Question ID: {q['id']}", flush=True)
         perf_card = await asyncio.to_thread(
-            process_user_score,
-            u_id, message_id, q['id'],
-            is_correct, sel_opt
+            process_user_score, u_id, message_id, q['id'], is_correct, sel_opt
         )
-
         explanation_html = UIFactory.build_answered_view(
-            q, str(last_seq), sel_opt,
-            show_derivation=True, show_perf=False,
-            perf_card=perf_card
+            q, str(last_seq), sel_opt, show_derivation=True, show_perf=False, perf_card=perf_card
         )
-
         kb = UIFactory.build_answered_keyboard(
-            last_seq, sel_opt,
-            show_derivation=True, show_perf=False,
-            is_photo=False, message_id=message_id
+            last_seq, sel_opt, show_derivation=True, show_perf=False, is_photo=False, message_id=message_id
         )
 
         has_tikz = UIFactory.has_real_diagram(q)
-        media_bytes = None
-        cached_file_id = None
 
         if has_tikz:
             cache_key = f"q:{q['id']}:exp:{sel_opt}"
             cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
-
             if not cached_file_id:
                 latex_code, _ = UIFactory.create_explanation_assets(q, sel_opt, last_seq)
                 if latex_code:
@@ -184,36 +176,43 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
                         if resp and resp.status_code == 200:
                             media_bytes = resp.content
 
-        m = await edit_rich_message_safe(
-            bot,
-            chat_id=u_id,
-            message_id=p_mid,
-            html_content=explanation_html,
-            reply_markup=kb,
-            media_bytes=media_bytes,
-            file_id=cached_file_id
-        )
+        # Safe transition layout fix:
+        # Since the placeholder message in the DM was text-only, if the solution has a diagram (photo),
+        # we must delete the text message and send a new photo message to avoid editing type constraints.
+        if has_tikz:
+            print(f"[DEBUG-DM-DELIVERY-CLI] Question {q['id']} contains a visual diagram. Deleting placeholder text message {p_mid} and pushing a fresh photo message.", flush=True)
+            try:
+                await bot.delete_message(chat_id=u_id, message_id=p_mid)
+            except Exception as del_err:
+                print(f"[DEBUG-DM-DELIVERY-CLI-WARNING] Could not delete placeholder text message {p_mid}: {del_err}", flush=True)
+
+            m = await send_rich_message_safe(
+                bot, chat_id=u_id, html_content=explanation_html,
+                reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
+            )
+        else:
+            print(f"[DEBUG-DM-DELIVERY-CLI] Question {q['id']} is text-only. Directly editing placeholder text message {p_mid}.", flush=True)
+            m = await edit_rich_message_safe(
+                bot, chat_id=u_id, message_id=p_mid, html_content=explanation_html,
+                reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
+            )
 
         if media_bytes and m and m.photo and not cached_file_id:
             await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+            print(f"[DEBUG-DM-DELIVERY-CLI] Successfully cached newly compiled file_id={m.photo[-1].file_id} for key={cache_key}", flush=True)
 
-    except Exception:
-        try:
-            kb = UIFactory.build_answered_keyboard(
-                last_seq, sel_opt,
-                show_derivation=True, show_perf=False,
-                is_photo=False, message_id=message_id
-            )
-            await send_rich_message_safe(
-                bot,
-                chat_id=u_id,
-                html_content=explanation_html,
-                reply_markup=kb,
-                media_bytes=media_bytes,
-                file_id=cached_file_id
-            )
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"[DEBUG-DM-DELIVERY-CLI-ERROR] push_dm_update failed for user {u_id}: {e}", flush=True)
+        traceback.print_exc()
+        if explanation_html:
+            try:
+                print(f"[DEBUG-DM-DELIVERY-CLI] Attempting ultimate delivery fallback to User ID {u_id}", flush=True)
+                await send_rich_message_safe(
+                    bot, chat_id=u_id, html_content=explanation_html,
+                    reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
+                )
+            except Exception as fallback_err:
+                print(f"[DEBUG-DM-DELIVERY-CLI-ERROR] DM fallback delivery also failed: {fallback_err}", flush=True)
 
 
 async def admin_panel(app, engine: QuizEngine):
@@ -843,7 +842,7 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
             print(f"  Remaining Question IDs ({rem_cnt}/{tourney_queue['total_count']}): {tourney_queue['remaining_ids']}")
             print(f"  Timing Bounds: {tourney_queue['round_seconds']}s round duration │ {tourney_queue['cooldown_seconds']}s rest interval")
 
-        print(f"\n{Style.CYAN}Menu Options:\n [1] 📝 Manage Scheduled Single Questions (Reschedule/Edit/Cancel)\n [2] ⚙️  Manage Pending Tournament Parameters & Timers\n [b] Back to Main Cockpit{Style.RESET}")
+        print(f"\n{Style.CYAN}Menu Options:\n [1] 📝 Manage Scheduled Single Questions (Reschedule/Edit/Cancel)\n [2] ⚙️  Manage Pending Tournament Parameters & Timers\n [b] Back to Control Center{Style.RESET}")
 
         sub_choice = await cli.ask("<b>Scheduler Command > </b>")
         if not sub_choice or sub_choice == 'b':
@@ -858,7 +857,7 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
             idx_in = await cli.ask("<b>Select question # to Manage: </b>")
             if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(sched_qs):
                 target_q = sched_qs[int(idx_in)-1]
-                
+
                 # Fetch full question details from database to work with raw fields
                 q_full = await asyncio.to_thread(db_get_question_by_id, target_q['id'])
                 if not q_full:

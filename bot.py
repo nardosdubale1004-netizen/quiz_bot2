@@ -8,6 +8,7 @@ import traceback
 import io
 import logging
 import signal
+import re
 from datetime import datetime, timezone
 
 logging.basicConfig(
@@ -221,9 +222,11 @@ async def start_command(update: Update, context):
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
+            print(f"[DEBUG-FIX-START] User {user_id} clicked answer link REF: {display_id}, Selection Index: {user_selection}", flush=True)
             track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
 
             if not track or not question_data:
+                print(f"[DEBUG-FIX-START] Track or question missing for REF: {display_id}", flush=True)
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
@@ -235,6 +238,7 @@ async def start_command(update: Update, context):
             mid_key = track['message_id']
 
             if track_status == "tournament_closed":
+                print(f"[DEBUG-FIX-START] User {user_id} attempted blocked submit for closed tournament REF: {display_id}", flush=True)
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -246,6 +250,7 @@ async def start_command(update: Update, context):
             if track_status == "tournament_active":
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
+                    print(f"[DEBUG-FIX-START] Lockout active. User {user_id} has already answered tournament question REF: {display_id}", flush=True)
                     await send_rich_message_safe(
                         context.bot,
                         chat_id=update.message.chat_id,
@@ -256,18 +261,20 @@ async def start_command(update: Update, context):
 
                 is_correct = (user_selection == question_data['correct_option'])
                 await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+                print(f"[DEBUG-FIX-START] Logged initial tournament score record for User {user_id}, message_id: {mid_key}", flush=True)
 
                 confirmation_msg = await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
                     html_content=(
-                        "COOLDOWN_REACHED\n"
+                        "<b>✅ Response Received!</b>\n\n"
                         "Your selection has been securely logged. The correct answer and step-by-step "
                         "explanation card will be automatically delivered here in your DMs once the round ends!"
                     ),
                     reply_markup=channel_kb
                 )
                 if confirmation_msg:
+                    print(f"[DEBUG-FIX-START] Storing placeholder message_id={confirmation_msg.message_id} in DM for User {user_id}, tournament message_id: {mid_key}", flush=True)
                     await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, confirmation_msg.message_id)
                 return
 
@@ -439,7 +446,7 @@ async def start_command(update: Update, context):
 async def school_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
-    
+
     # Sync profile parameters
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 

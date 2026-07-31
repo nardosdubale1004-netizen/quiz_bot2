@@ -165,9 +165,10 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
         print(f"[DEBUG-TIMER] Countdown task cleaned up for message {ann_mid}.", flush=True)
 
 async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, last_seq):
-    """Asynchronously evaluates student stats and edits their private DM placeholder message."""
+    """Asynchronously evaluates student stats and delivers the resolved DM solution sheet."""
     explanation_html, kb, media_bytes, cached_file_id = None, None, None, None
     try:
+        print(f"[DEBUG-DM-UPDATE] Initializing DM update for User ID: {u_id}, Placeholder Message ID: {p_mid}, Question ID: {q['id']}", flush=True)
         perf_card = await asyncio.to_thread(
             process_user_score, u_id, message_id, q['id'], is_correct, sel_opt
         )
@@ -178,7 +179,9 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
             last_seq, sel_opt, show_derivation=True, show_perf=False, is_photo=False, message_id=message_id
         )
 
-        if UIFactory.has_real_diagram(q):
+        has_tikz = UIFactory.has_real_diagram(q)
+
+        if has_tikz:
             cache_key = f"q:{q['id']}:exp:{sel_opt}"
             cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
             if not cached_file_id:
@@ -190,22 +193,43 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
                         if resp and resp.status_code == 200:
                             media_bytes = resp.content
 
-        m = await edit_rich_message_safe(
-            bot, chat_id=u_id, message_id=p_mid, html_content=explanation_html,
-            reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
-        )
+        # Safe transition layout fix:
+        # Since the placeholder message in the DM was text-only, if the solution has a diagram (photo),
+        # we must delete the text message and send a new photo message to avoid editing type constraints.
+        if has_tikz:
+            print(f"[DEBUG-DM-DELIVERY] Question {q['id']} contains a visual diagram. Deleting placeholder text message {p_mid} and pushing a fresh photo message.", flush=True)
+            try:
+                await bot.delete_message(chat_id=u_id, message_id=p_mid)
+            except Exception as del_err:
+                print(f"[DEBUG-DM-DELIVERY-WARNING] Could not delete placeholder text message {p_mid}: {del_err}", flush=True)
+
+            m = await send_rich_message_safe(
+                bot, chat_id=u_id, html_content=explanation_html,
+                reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
+            )
+        else:
+            print(f"[DEBUG-DM-DELIVERY] Question {q['id']} is text-only. Directly editing placeholder text message {p_mid}.", flush=True)
+            m = await edit_rich_message_safe(
+                bot, chat_id=u_id, message_id=p_mid, html_content=explanation_html,
+                reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
+            )
+
         if media_bytes and m and m.photo and not cached_file_id:
             await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
-    except Exception:
+            print(f"[DEBUG-DM-DELIVERY] Successfully cached newly compiled file_id={m.photo[-1].file_id} for key={cache_key}", flush=True)
+
+    except Exception as e:
+        print(f"[DEBUG-DM-DELIVERY-ERROR] push_dm_update failed for user {u_id}: {e}", flush=True)
         traceback.print_exc()
         if explanation_html:
             try:
+                print(f"[DEBUG-DM-DELIVERY] Attempting ultimate delivery fallback to User ID {u_id}", flush=True)
                 await send_rich_message_safe(
                     bot, chat_id=u_id, html_content=explanation_html,
                     reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id
                 )
-            except Exception:
-                pass
+            except Exception as fallback_err:
+                print(f"[DEBUG-DM-DELIVERY-ERROR] DM fallback delivery also failed: {fallback_err}", flush=True)
 
 async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: int, round_seconds: int = 60, current_round: int = 1, total_rounds: int = 1):
     """Sends the live tournament challenge to the main channel using pre-emptive database locking."""
@@ -289,7 +313,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         ann_mid = track.get('followup_mid')
         is_photo = (track.get('msg_type') == 'photo')
 
-        print(f"[DEBUG-FINALIZE] Step 1: Locating target question...", flush=True)
+        print(f"[DEBUG-FINALIZE] Step 1: Locating target question q_id={track['q_id']}...", flush=True)
         q = await asyncio.to_thread(db_get_question_by_id, track['q_id'])
         if not q:
             print(f"{Style.RED}[TOURNAMENT] Question {track['q_id']} missing for REF {last_seq}. Marking track deleted.{Style.RESET}")
@@ -339,7 +363,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             podium_lines = []
             medals = ["🥇", "🥈", "🥉"]
             for idx, r in enumerate(correct_responses[:3]):
-                # Uses fallback formatting chain
                 formatted_identity = format_public_name(r)
                 tag_suffix = f" (<b>#{r['alliance_tag']}</b>)" if r.get('alliance_tag') else ""
                 podium_lines.append(f"  {medals[idx]} <b>{formatted_identity}</b>{tag_suffix}")
@@ -415,7 +438,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 print(f"{Style.RED}[TOURNAMENT] Error publishing flat solution for REF {last_seq}: {e}{Style.RESET}")
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
-        print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
+        print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players. Count: {len(user_responses)}", flush=True)
         dm_tasks = []
         for resp in user_responses:
             u_id, p_mid, sel_opt = resp['user_id'], resp['private_message_id'], resp['selected_option']
@@ -441,7 +464,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     champions_lines = []
                     medals = ["🥇", "🥈", "🥉"]
                     for idx, row in enumerate(top_scorers[:3]):
-                        # Format champions using format_public_name
                         u_label = format_public_name(row)
                         champions_lines.append(f"  {medals[idx]} <b>{u_label}</b> — <b>{row['total_score']} Marks</b>")
                     champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""

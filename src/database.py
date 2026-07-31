@@ -218,10 +218,14 @@ class QuizEngine:
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS username text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
+
+                # Clear restrictive foreign key constraint to permit message ID swaps without violations
+                cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
             print(f"{Style.GREEN}[DATABASE] Production schema configuration & fallback username columns verified.{Style.RESET}")
+            print(f"{Style.GREEN}[DEBUG-SCHEMA-FIX] Successfully dropped restrictive FK constraint user_responses_message_id_fkey.{Style.RESET}", flush=True)
         except Exception as e:
             print(f"{Style.YELLOW}[DATABASE WARNING] Schema checks encountered: {e}. Ensure migrations have run.{Style.RESET}")
         finally:
@@ -418,10 +422,12 @@ class QuizEngine:
             with conn.cursor() as cur:
                 try:
                     cur.execute("UPDATE user_responses SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                    print(f"[DEBUG-DB-SWAP] Shifted answers in user_responses {old_mid} -> {new_mid}. Affected: {cur.rowcount}", flush=True)
                 except Exception as e:
                     print(f"[DB SWAP WARNING] user_responses update bypassed: {e}")
 
                 cur.execute("UPDATE sent_tracks SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                print(f"[DEBUG-DB-SWAP] Shifted tracks in sent_tracks {old_mid} -> {new_mid}. Affected: {cur.rowcount}", flush=True)
                 conn.commit()
             track_question_cache.invalidate_prefix("trackq:")
         except Exception as e:
@@ -635,7 +641,7 @@ def db_get_responses_for_message(message_id: str):
         with conn.cursor() as cur:
             # Query updated to fetch user nickname, Telegram username, and first name
             cur.execute("""
-                SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at, 
+                SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
                        us.alliance_tag, us.nickname, us.username, us.first_name
                 FROM user_responses ur
                 LEFT JOIN user_stats us ON ur.user_id = us.user_id
@@ -982,6 +988,7 @@ def db_update_private_message_id(user_id, message_id, private_message_id):
                 WHERE user_id = %s AND message_id = %s;
             """, (int(private_message_id), str(user_id), str(message_id)))
             conn.commit()
+            print(f"[DEBUG-DB-PM-ID] Modified private_message_id={private_message_id} for user_id={user_id}, message_id={message_id}. Rowcount: {cur.rowcount}", flush=True)
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to update private message ID: {e}")
@@ -1014,7 +1021,7 @@ def db_get_weekly_leaderboard(grade: int):
         with conn.cursor() as cur:
             # Query updated to join and retrieve public nickname, username, and first name
             cur.execute("""
-                SELECT ur.user_id, SUM(ur.marks_awarded) as total_score, 
+                SELECT ur.user_id, SUM(ur.marks_awarded) as total_score,
                        us.nickname, us.username, us.first_name, us.alliance_tag
                 FROM user_responses ur
                 JOIN user_stats us ON ur.user_id = us.user_id
