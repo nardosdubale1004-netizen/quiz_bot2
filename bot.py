@@ -260,7 +260,18 @@ async def start_command(update: Update, context):
                     return
 
                 is_correct = (user_selection == question_data['correct_option'])
-                await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+                # Defensively verify the database write was committed
+                perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+                if perf_card is None:
+                    print(f"[CRITICAL-BOT-ERROR] process_user_score returned None for User {user_id} on active tournament round! Database write blocked.", flush=True)
+                    await send_rich_message_safe(
+                        context.bot,
+                        chat_id=update.message.chat_id,
+                        html_content="⚠️ <b>Database Connection Error!</b>\n\nYour selection could not be saved to our secure database because the database was unreachable. Please try clicking the option again in a few seconds!",
+                        reply_markup=channel_kb
+                    )
+                    return
+
                 print(f"[DEBUG-FIX-START] Logged initial tournament score record for User {user_id}, message_id: {mid_key}", flush=True)
 
                 confirmation_msg = await send_rich_message_safe(
@@ -341,7 +352,17 @@ async def start_command(update: Update, context):
                 return
 
             is_correct = (user_selection == question_data['correct_option'])
+            # Defensively verify the database write was committed
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+            if perf_card is None:
+                print(f"[CRITICAL-BOT-ERROR] process_user_score returned None for User {user_id} on active quiz! Database write blocked.", flush=True)
+                await send_rich_message_safe(
+                    context.bot,
+                    chat_id=update.message.chat_id,
+                    html_content="⚠️ <b>Database Connection Error!</b>\n\nYour selection could not be saved to our secure database because the database was unreachable. Please try again!",
+                    reply_markup=channel_kb
+                )
+                return
 
             explanation_html = UIFactory.build_answered_view(
                 question_data, str(display_id), user_selection, show_derivation=False, show_perf=False, perf_card=perf_card
@@ -609,9 +630,15 @@ def main():
     config = engine.config
     token = config.get("token")
     channel = config.get("channel")
-    if not token or not channel:
-        print(f"{Style.RED}CRITICAL: .env or config is missing BOT_TOKEN or CHANNEL_ID.{Style.RESET}")
-        return
+    db_url = config.get("database_url")
+    
+    # Critical Startup Safety verification to protect against empty Cloud configurations
+    if not db_url:
+        print(f"\n{Style.RED}############################################################")
+        print(f"CRITICAL WARNING: DATABASE_URL IS NOT CONFIGURED!")
+        print(f"THE BOT IS RUNNING WITHOUT CLOUD DATABASE CONNECTIVITY.")
+        print(f"ALL STUDENT SUBMISSIONS WILL FAIL TO WRITE TO THE DATABASE!")
+        print(f"############################################################{Style.RESET}\n", flush=True)
 
     def sigterm_handler(signum, frame):
         print(f"\n{Style.RED}[SYSTEM TERMINATION] Received signal {signum}. Shutting down gracefully...{Style.RESET}", flush=True)
