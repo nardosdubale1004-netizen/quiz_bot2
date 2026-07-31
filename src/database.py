@@ -1141,8 +1141,9 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         }
     except Exception as e:
         if conn: conn.rollback()
-        print(f"[DB ERROR] Error in process_user_score: {e}")
-        return None
+        print(f"[DB ERROR] Error in process_user_score: {e}", flush=True)
+        # Fix: Unmute and raise the exception loudly to force Webhook logging diagnostics
+        raise e
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
