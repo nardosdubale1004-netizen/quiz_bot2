@@ -292,6 +292,21 @@ class QuizEngine:
         except Exception:
             pass
 
+    def db_get_current_epoch(self) -> float:
+        """Retrieves the true database server current epoch timestamp to protect against Docker clock drifts."""
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT EXTRACT(EPOCH FROM NOW()) AS now_epoch;")
+                row = cur.fetchone()
+                return float(row['now_epoch']) if row else time.time()
+        except Exception:
+            return time.time()
+        finally:
+            if conn:
+                self.release_connection(conn)
+
     @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
     def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None, round_seconds=None):
         QuizEngine._tracks_cache_time = 0
@@ -645,7 +660,7 @@ def db_get_overdue_tournament_rounds():
             rows = [dict(r) for r in cur.fetchall()]
 
             overdue = []
-            now_epoch = time.time()
+            now_epoch = GLOBAL_ENGINE.db_get_current_epoch()
             for r in rows:
                 deadline_epoch = r.get('deadline_epoch')
                 if deadline_epoch is None:
@@ -678,7 +693,7 @@ def db_get_active_tournament_rounds():
             """)
             rows = [dict(r) for r in cur.fetchall()]
 
-            now_epoch = time.time()
+            now_epoch = GLOBAL_ENGINE.db_get_current_epoch()
             active = []
             for r in rows:
                 deadline_epoch = r.get('deadline_epoch')
