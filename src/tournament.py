@@ -287,6 +287,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         ann_mid = track.get('followup_mid')
         is_photo = (track.get('msg_type') == 'photo')
 
+        print(f"[DEBUG-FINALIZE] Step 1: Locating target question...", flush=True)
         q = await asyncio.to_thread(db_get_question_by_id, track['q_id'])
         if not q:
             print(f"{Style.RED}[TOURNAMENT] Question {track['q_id']} missing for REF {last_seq}. Marking track deleted.{Style.RESET}")
@@ -300,6 +301,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
         import src.config
 
+        print(f"[DEBUG-FINALIZE] Step 2: Cancelling countdown task...", flush=True)
         if ann_mid:
             countdown_task = _ACTIVE_COUNTDOWNS.pop(int(ann_mid), None)
             if countdown_task and not countdown_task.done():
@@ -324,7 +326,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 except Exception:
                     pass
         else:
-            print(f"{Style.YELLOW}[TOURNAMENT] Closing round REF: {last_seq} normally...{Style.RESET}", flush=True)
+            print(f"[DEBUG-FINALIZE] Step 3: Fetching user responses from database...", flush=True)
             user_responses = await asyncio.to_thread(db_get_responses_for_message, mid)
             total_users = len(user_responses)
             correct_responses = [r for r in user_responses if r['is_correct']]
@@ -350,11 +352,13 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
             if ann_mid:
                 try:
+                    print(f"[DEBUG-FINALIZE] Step 3a: Editing announcement header card...", flush=True)
                     await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(ann_mid), text=normal_close_text, parse_mode="HTML")
-                except Exception:
-                    pass
+                except Exception as ann_err:
+                    print(f"[DEBUG-FINALIZE ERROR] Failed to edit announcement card: {ann_err}", flush=True)
 
         # Update main channel question asset & close DB status
+        print(f"[DEBUG-FINALIZE] Step 4: Refreshing and closing message assets on Telegram...", flush=True)
         user_responses = await asyncio.to_thread(db_get_responses_for_message, mid)
         final_msg_id = mid
         if is_photo:
@@ -408,6 +412,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
         # Deliver explanation DMs concurrently
+        print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
         dm_tasks = []
         for resp in user_responses:
             u_id, p_mid, sel_opt = resp['user_id'], resp['private_message_id'], resp['selected_option']
@@ -416,7 +421,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         if dm_tasks:
             await asyncio.gather(*dm_tasks, return_exceptions=True)
 
-        # Wrap final scoreboard processing in a robust try-except to prevent conversion errors from blocking track closures
+        print(f"[DEBUG-FINALIZE] Step 6: Checking and generating final tournament scoreboard...", flush=True)
         try:
             queue = await asyncio.to_thread(db_get_tournament_queue)
             if not src.config.SHUTTING_DOWN and (not queue or not queue.get('remaining_ids')):

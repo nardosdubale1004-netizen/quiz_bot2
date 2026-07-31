@@ -671,7 +671,11 @@ def db_get_overdue_tournament_rounds():
                 except (ValueError, TypeError):
                     overdue.append(r)
                     continue
-                if deadline_epoch <= now_epoch:
+                
+                is_overdue = deadline_epoch <= now_epoch
+                print(f"[DEBUG-OVERDUE] REF {r.get('display_id')} | deadline={deadline_epoch:.1f} | now={now_epoch:.1f} | diff={deadline_epoch - now_epoch:.1f}s | is_overdue={is_overdue}", flush=True)
+
+                if is_overdue:
                     overdue.append(r)
             return overdue
     except Exception as e:
@@ -1060,7 +1064,7 @@ def db_mark_question_as_sent(q_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, db_get_weekly_leaderboard=3):
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1069,7 +1073,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
                 (
                     str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
-                    private_message_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
+                    private_message_id, bool(show_derivation), bool(show_perf), int(db_get_weekly_leaderboard)
                 )
             )
             row = cur.fetchone()
