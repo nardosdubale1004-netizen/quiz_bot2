@@ -20,7 +20,7 @@ CREATE OR REPLACE FUNCTION fn_process_user_score(
     p_q_id text,
     p_is_correct boolean,
     p_selected_option int,
-    p_private_message_id bigint,
+    p_private_message_id bigint, -- Aligned to match the bigint schema column
     p_show_derivation boolean,
     p_show_perf boolean,
     p_bonus_limit int
@@ -243,6 +243,13 @@ class QuizEngine:
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
+                # Purge obsolete conflicting database functions before building the current signature
+                print("[DATABASE] Dropping obsolete conflicting definitions of fn_process_user_score...", flush=True)
+                cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, integer, boolean, boolean, integer);")
+                cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, bigint, boolean, boolean, integer);")
+                cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, bigint, boolean, boolean);")
+                cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, integer, boolean, boolean);")
+                
                 cur.execute(_FN_PROCESS_USER_SCORE_SQL)
                 conn.commit()
             QuizEngine._fn_ensured = True
