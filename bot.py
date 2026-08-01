@@ -447,7 +447,7 @@ async def start_command(update: Update, context):
                     file_id=cached_file_id
                 )
 
-                if media_bytes and m and m.photo && not cached_file_id:
+                if media_bytes and m and m.photo and not cached_file_id:
                     await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
                 LOCKOUT_MESSAGES.add((user_id, m.message_id))
