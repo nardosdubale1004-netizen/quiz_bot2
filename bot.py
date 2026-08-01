@@ -10,6 +10,7 @@ import logging
 import signal
 import re
 from datetime import datetime, timezone
+from src.debug_log import dlog, dlog_exception
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -319,7 +320,6 @@ async def start_command(update: Update, context):
                     ),
                     reply_markup=channel_kb
                 )
-                # ... existing bot.py logic ...
                 if confirmation_msg:
                     print(f" └─ Placeholder message delivered with ID: {confirmation_msg.message_id}. Saving message reference...", flush=True)
                     await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, confirmation_msg.message_id)
@@ -327,23 +327,8 @@ async def start_command(update: Update, context):
                 return
 
             except Exception as e:
-                print("\n" + "#"*80, flush=True)
-                print(f"{Style.RED}[TRACE-CRITICAL-EXCEPTION] An error occurred while submitting a live tournament response!{Style.RESET}", flush=True)
-                print(f" ├─ Error Message:      {e}", flush=True)
-                print(f" ├─ User ID:            {user_id}", flush=True)
-                print(f" ├─ display_id:         {display_id}", flush=True)
-                print(f" └─ mid_key:            {mid_key}", flush=True)
-                print(" └─ Stack Trace details:", flush=True)
-                traceback.print_exc()
-                print("#"*80 + "\n", flush=True)
-
-                # --- ADDED: Write traceback directly to file-backed debug log ---
-                try:
-                    from src.debug_log import dlog_exception
-                    dlog_exception(f"bot.py -> start_command (Tournament active submission failed) | User: {user_id} | Display ID: {display_id} | Message ID: {mid_key}", e)
-                except Exception:
-                    pass
-
+                dlog(f"[TRACE-CRITICAL-EXCEPTION] Tournament submission failed | user_id={user_id} | display_id={display_id} | mid_key={mid_key}")
+                dlog_exception("start_command tournament_active branch", e)
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,

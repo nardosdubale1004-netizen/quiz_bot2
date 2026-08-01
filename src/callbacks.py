@@ -216,12 +216,4 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     except Exception as e:
         traceback.print_exc()
         print(f" {Style.RED}└─ [EXCEPTION] Fatal error in callback thread: {e}{Style.RESET}")
-
-        # --- ADDED: Write traceback directly to file-backed debug log ---
-        try:
-            from src.debug_log import dlog_exception
-            dlog_exception(f"callbacks.py -> handle_callback (Action: {action} | Ref ID: {d_id})", e)
-        except Exception:
-            pass
-
         await query.answer("System Error: Could not render response.", show_alert=True)
