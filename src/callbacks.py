@@ -3,7 +3,7 @@ import asyncio
 import traceback
 import httpx
 import io
-from src.config import CONFIG, Style, LOCKOUT_MESSAGES
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.database import (
@@ -14,8 +14,17 @@ from src.database import (
     db_get_user_response,
     db_get_track_and_question,
     db_get_cached_file_id,
-    db_save_cached_file_id
+    db_save_cached_file_id,
+    db_get_user_profile,
+    db_update_user_consent_state,
+    db_leave_organization,
+    db_join_organization,
+    db_create_organization,
+    db_get_organization_roster,
+    db_dissolve_organization,
+    db_set_user_nickname,
 )
+from src.rendering.html_views import build_profile_card_text, build_organization_card_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -32,8 +41,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     query = update.callback_query
     data = query.data.split("|")
     action, d_id = data[0], data[1]
+    user_id = query.from_user.id
 
-    print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {query.from_user.id}")
+    print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {user_id}")
 
     if action == "set_grade":
         grade = int(d_id)
@@ -47,16 +57,152 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    if action == "prompt_alliance":
+    # --- ADVANCED PRIVACY & PROFILE BUILDER CRUD FLOWS ---
+
+    elif action == "privacy_menu":
         await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        text = build_profile_card_text(profile)
+        
+        # Build beautiful contextual buttons based on consent status
+        consent_btn_text = "🔴 OPT-OUT OF PUBLIC SCORING" if profile.get("public_consent_granted") else "🟢 OPT-IN TO PUBLIC SCORING"
+        consent_target = "0" if profile.get("public_consent_granted") else "1"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
+            [InlineKeyboardButton("📝 CONFIGURE PSEUDONYM", callback_data="set_nick_fsm|0")],
+            [InlineKeyboardButton("🏰 STUDY ALLIANCE PORTAL", callback_data="alliance_portal|0")],
+            [InlineKeyboardButton("🔙 CLOSE PORTAL", callback_data="close_portal|0")]
+        ])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif action == "toggle_consent":
+        consent_state = (d_id == "1")
+        await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
+        await query.answer("Dynamic consent status updated!", show_alert=True)
+        # Re-render the menu instantly
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        text = build_profile_card_text(profile)
+        consent_btn_text = "🔴 OPT-OUT OF PUBLIC SCORING" if profile.get("public_consent_granted") else "🟢 OPT-IN TO PUBLIC SCORING"
+        consent_target = "0" if profile.get("public_consent_granted") else "1"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
+            [InlineKeyboardButton("📝 CONFIGURE PSEUDONYM", callback_data="set_nick_fsm|0")],
+            [InlineKeyboardButton("🏰 STUDY ALLIANCE PORTAL", callback_data="alliance_portal|0")],
+            [InlineKeyboardButton("🔙 CLOSE PORTAL", callback_data="close_portal|0")]
+        ])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif action == "set_nick_fsm":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_NICKNAME"
+        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         await query.edit_message_text(
-            "✍️ <b>Type and send your School or Alliance Tag</b> directly as a message in this chat!\n\n"
-            "<i>Example: If your school is Abyssinia Academy, reply with:</i>\n"
-            "<code>/school ABYSSINIA</code>\n\n"
-            "Your correct answers will immediately start scoring points for your school!",
+            "✍️ <b>PROMPT: CONFIGURE scoreboard PSEUDONYM</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Please type your preferred student scoreboard display name directly into this chat.\n\n"
+            "⚠️ <b>Constraints:</b>\n"
+            "├─ Max 20 characters\n"
+            "├─ No special syntax characters\n"
+            "└─ Spaces and underscores allowed\n\n"
+            "<i>Type <code>/cancel</code> to abort configuration.</i>",
             parse_mode="HTML"
         )
         return
+
+    elif action == "alliance_portal":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        org_id = profile.get("org_id")
+        
+        if org_id:
+            roster = await asyncio.to_thread(db_get_organization_roster, org_id)
+            org_details = {
+                "org_name": profile.get("org_name"),
+                "org_tag": profile.get("org_tag"),
+                "org_type": profile.get("org_type")
+            }
+            text = build_organization_card_text(org_details, roster)
+            
+            buttons = [
+                [InlineKeyboardButton("🚪 LEAVE ALLIANCE GROUP", callback_data="leave_org_confirm|0")]
+            ]
+            if profile.get("org_role") == "creator":
+                buttons.append([InlineKeyboardButton("💥 DISSOLVE ALLIANCE", callback_data="dissolve_org_confirm|0")])
+                
+            buttons.append([InlineKeyboardButton("🔙 BACK TO DOSSIER", callback_data="privacy_menu|0")])
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        else:
+            text = (
+                "🏰 <b>ALLIANCE CLAN PORTAL</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "You are not registered in any Study Alliance. School alliances merge and rank scores collectively!\n\n"
+                "Choose an action below to establish or integrate with a group:"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
+                [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
+                [InlineKeyboardButton("🔙 BACK TO DOSSIER", callback_data="privacy_menu|0")]
+            ])
+            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif action == "fsm_create_org":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_ORG_NAME"
+        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        await query.edit_message_text(
+            "✍️ <b>ESTABLISH ALLIANCE: Full Name</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Please enter the formal name of your School, College, or study organization:\n"
+            "<i>(Example: Abyssinia Secondary School)</i>\n\n"
+            "<i>Type <code>/cancel</code> to abort.</i>",
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "fsm_join_org":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_ORG_JOIN"
+        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        await query.edit_message_text(
+            "✍️ <b>INTEGRATE ALLIANCE: Enter Group Tag</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Enter the unique, uppercase alphanumeric identifier Tag of the study organization you wish to join:\n"
+            "<i>(Example: ABYSSINIA)</i>\n\n"
+            "<i>Type <code>/cancel</code> to abort.</i>",
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "leave_org_confirm":
+        await query.answer()
+        await asyncio.to_thread(db_leave_organization, user_id)
+        await query.edit_message_text("🚪 You successfully exited the Organization roster. Alliance points cleared.", reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏰 PORTAL MAIN", callback_data="alliance_portal|0")
+        ]]))
+        return
+
+    elif action == "dissolve_org_confirm":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        org_id = profile.get("org_id")
+        if org_id and profile.get("org_role") == "creator":
+            await asyncio.to_thread(db_dissolve_organization, org_id)
+            await query.edit_message_text("💥 Alliance dissolved. All member references cleared from rosters.", reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏰 PORTAL MAIN", callback_data="alliance_portal|0")
+            ]]))
+        return
+
+    elif action == "close_portal":
+        await query.answer("Portal exited.")
+        await query.delete_message()
+        return
+
+
+    # --- ORIGINAL CORE ENGINE FLOWS ---
 
     track, question_data = await asyncio.to_thread(db_get_track_and_question, int(d_id))
 
@@ -77,7 +223,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 return
 
             if track_status == "tournament_active":
-                user_id = query.from_user.id
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
                     await query.answer("Lockout active! Your response has already been submitted.", show_alert=True)
@@ -85,7 +230,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
                 user_selection = int(data[2])
                 is_correct = (user_selection == question_data['correct_option'])
-                await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
+                
+                print(f" [CALLBACK-TOURNAMENT-TRACE] Submitting User: {user_id} | Option: {user_selection} | Is Correct: {is_correct}", flush=True)
+                
+                try:
+                    await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
+                except Exception as db_err:
+                    try:
+                        from src.debug_log import dlog_exception
+                        dlog_exception(f"callbacks.py -> handle_callback (process_user_score failed for User: {user_id}, Message ID: {mid_key})", db_err)
+                    except Exception:
+                        pass
+                    raise db_err
 
                 await query.answer("Response recorded!")
                 await query.edit_message_text(
@@ -106,9 +262,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             print(f" {Style.CYAN}├─ [DEBUG] Generating Answer Summary Sheet for REF: {d_id}{Style.RESET}")
             await query.answer("Generating Answer Sheet...")
 
-            user_id = query.from_user.id
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
+            
+            try:
+                perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
+            except Exception as db_err:
+                try:
+                    from src.debug_log import dlog_exception
+                    dlog_exception(f"callbacks.py -> handle_callback (Standard process_user_score failed for User: {user_id}, Message ID: {mid_key})", db_err)
+                except Exception:
+                    pass
+                raise db_err
 
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)
 
@@ -156,7 +320,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             user_selection = int(data[2])
             show_derivation = (int(data[3]) == 1)
             show_perf = (int(data[4]) == 1)
-            user_id = query.from_user.id
             await query.answer("Updating View...")
 
             is_correct_ans = (user_selection == question_data['correct_option'])
@@ -164,7 +327,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             state_task = asyncio.to_thread(db_update_response_view_state, user_id, mid_key, show_derivation, show_perf)
             score_task = asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct_ans, user_selection)
 
-            _, perf_card = await asyncio.gather(state_task, score_task)
+            try:
+                _, perf_card = await asyncio.gather(state_task, score_task)
+            except Exception as db_err:
+                try:
+                    from src.debug_log import dlog_exception
+                    dlog_exception(f"callbacks.py -> handle_callback toggle tasks failed for User: {user_id}, Message ID: {mid_key}", db_err)
+                except Exception:
+                    pass
+                raise db_err
 
             explanation_html = UIFactory.build_answered_view(
                 question_data,
@@ -216,4 +387,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     except Exception as e:
         traceback.print_exc()
         print(f" {Style.RED}└─ [EXCEPTION] Fatal error in callback thread: {e}{Style.RESET}")
+        
+        try:
+            from src.debug_log import dlog_exception
+            dlog_exception(f"callbacks.py -> handle_callback global catch (Action: {action} | Ref ID: {d_id})", e)
+        except Exception:
+            pass
+
         await query.answer("System Error: Could not render response.", show_alert=True)

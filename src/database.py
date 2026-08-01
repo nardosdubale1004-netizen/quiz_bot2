@@ -216,9 +216,26 @@ class QuizEngine:
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
 
+                # Setup Organizations Tables
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS organizations (
+                        org_id SERIAL PRIMARY KEY,
+                        org_name VARCHAR(50) NOT NULL,
+                        org_tag VARCHAR(15) UNIQUE NOT NULL,
+                        creator_id VARCHAR(20) NOT NULL,
+                        org_type VARCHAR(20) DEFAULT 'School',
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS username text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
+                
+                # Dynamic User Consent and Alliance Mapping Columns
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS public_consent_granted BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(org_id) ON DELETE SET NULL;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS org_role VARCHAR(15) DEFAULT 'member';")
 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
@@ -1025,7 +1042,12 @@ def db_get_user_profile(user_id):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            cur.execute("""
+                SELECT u.*, o.org_name, o.org_tag, o.org_type
+                FROM user_stats u
+                LEFT JOIN organizations o ON u.org_id = o.org_id
+                WHERE u.user_id = %s;
+            """, (str(user_id),))
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:
@@ -1097,12 +1119,12 @@ def db_get_weekly_leaderboard(grade: int):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT ur.user_id, SUM(ur.marks_awarded) as total_score,
-                       us.nickname, us.username, us.first_name, us.alliance_tag
+                       us.nickname, us.username, us.first_name, us.alliance_tag, us.public_consent_granted
                 FROM user_responses ur
                 JOIN user_stats us ON ur.user_id = us.user_id
                 WHERE us.grade = %s
                   AND ur.answered_at >= NOW() - INTERVAL '7 days'
-                GROUP BY ur.user_id, us.nickname, us.username, us.first_name, us.alliance_tag
+                GROUP BY ur.user_id, us.nickname, us.username, us.first_name, us.alliance_tag, us.public_consent_granted
                 ORDER BY total_score DESC
                 LIMIT 10;
             """, (int(grade),))
@@ -1438,6 +1460,170 @@ def db_update_tournament_meta_field(key: str, value):
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to update tournament_meta field {key}: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+# --- ORGANIZATIONAL CRUD OPERATION ENGINE ---
+
+def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School") -> int:
+    """Inserts a new school or academy mapping and returns its assigned org_id."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO organizations (org_name, org_tag, creator_id, org_type)
+                VALUES (%s, UPPER(%s), %s, %s)
+                RETURNING org_id;
+            """, (org_name, org_tag, str(creator_id), org_type))
+            row = cur.fetchone()
+            org_id = row['org_id']
+            
+            # Auto-assign the creator's profile mapping
+            cur.execute("""
+                INSERT INTO user_stats (user_id, org_id, org_role, total, correct, total_marks)
+                VALUES (%s, %s, 'creator', 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, org_role = EXCLUDED.org_role;
+            """, (str(creator_id), org_id))
+            
+            conn.commit()
+            return org_id
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Create organization failed: {e}", flush=True)
+        raise e
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_join_organization(user_id, org_tag: str) -> str:
+    """Maps a scholar to an existing organization based on its unique Tag."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT org_id, org_name FROM organizations WHERE org_tag = UPPER(%s);", (org_tag.strip(),))
+            row = cur.fetchone()
+            if not row:
+                return None
+            
+            org_id = row['org_id']
+            org_name = row['org_name']
+            
+            cur.execute("""
+                INSERT INTO user_stats (user_id, org_id, org_role, total, correct, total_marks)
+                VALUES (%s, %s, 'member', 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, org_role = EXCLUDED.org_role;
+            """, (str(user_id), org_id))
+            conn.commit()
+            return org_name
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Join failed: {e}", flush=True)
+        raise e
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_leave_organization(user_id):
+    """Unmaps a user from their active school or academy clan."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE user_stats 
+                SET org_id = NULL, org_role = 'member' 
+                WHERE user_id = %s;
+            """, (str(user_id),))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Leave failed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_organization_roster(org_id: int):
+    """Retrieves all mapped scholars and their score values inside an organization."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, nickname, username, first_name, total_marks, org_role, public_consent_granted
+                FROM user_stats
+                WHERE org_id = %s
+                ORDER BY total_marks DESC;
+            """, (int(org_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB-ORG-ERROR] Fetch roster failed: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: str = None) -> bool:
+    """Updates metadata profile fields for an active organization."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if new_name:
+                cur.execute("UPDATE organizations SET org_name = %s WHERE org_id = %s;", (new_name, int(org_id)))
+            if new_tag:
+                cur.execute("UPDATE organizations SET org_tag = UPPER(%s) WHERE org_id = %s;", (new_tag.strip(), int(org_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Update profile failed: {e}", flush=True)
+        raise e
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_dissolve_organization(org_id: int) -> bool:
+    """Completely dissolves an organization and wipes associated user role mappings."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # Stats updates are handled via foreign key cascade, but let's reset roles manually first
+            cur.execute("UPDATE user_stats SET org_role = 'member' WHERE org_id = %s;", (int(org_id),))
+            cur.execute("DELETE FROM organizations WHERE org_id = %s;", (int(org_id),))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Dissolution failed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_update_user_consent_state(user_id, consent: bool) -> bool:
+    """Commits user's chosen dynamic privacy opt-in consent state."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, public_consent_granted, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET public_consent_granted = EXCLUDED.public_consent_granted;
+            """, (str(user_id), bool(consent)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to store user consent update: {e}", flush=True)
         return False
     finally:
         if conn:

@@ -40,3 +40,7 @@ SHUTTING_DOWN = False
 ACTIVE_LOOP = None
 ACTIVE_APP = None
 ACTIVE_ENGINE = None
+
+# --- In-Memory FSM State Registries ---
+USER_STATES = {}       # Maps user_id -> Active State String
+USER_PAYLOADS = {}     # Maps user_id -> Temporary Session Dictionary dict
