@@ -83,7 +83,7 @@ def _render_challenge_text(current_round, total_rounds, ref, remaining_seconds, 
     mins, secs = divmod(remaining_seconds, 60)
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
 
-    # Premium simplified round countdown text
+    # Simplified countdown text block optimized for clean rendering
     lines = [
         f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • Round {curr_r}/{tot_r} • REF {ref}</b>",
         f"━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -512,14 +512,14 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                         if top_scorers[0].get('alliance_tag'):
                             ind_val = f"{ind_val} (#{top_scorers[0]['alliance_tag']})"
 
-                    sch_val = top_alliances[0]['alliance_tag'] if top_alliances else "None"
+                    sch_val = top_alliances[0]['org_name'] if top_alliances else "None"
                     city_val = top_cities[0]['city'] if top_cities else "None"
                     cnt_val = top_countries[0]['country'] if top_countries else "None"
 
                     # Aligned ASCII board formatted cleanly inside a monospaced block for all screens
                     champions_table = (
                         f"┌──────┬──────────────┬──────────────┬──────────────┬──────────────┐\n"
-                        f"│ RANK │ INDIVIDUAL   │ SCHOOL TEAM  │ CITY         │ COUNTRY      │\n"
+                        f"│ RANK │ PERSON       │ FOR SCHOOLS  │ FOR CITY     │ FOR COUNTRY  │\n"
                         f"├──────┼──────────────┼──────────────┼──────────────┼──────────────┤\n"
                         f"│ 1st  │ {pad_truncate(ind_val)} │ {pad_truncate(sch_val)} │ {pad_truncate(city_val)} │ {pad_truncate(cnt_val)} │\n"
                         f"└──────┴──────────────┴──────────────┴──────────────┴──────────────┘"
