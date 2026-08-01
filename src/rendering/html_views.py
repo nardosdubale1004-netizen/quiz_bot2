@@ -15,7 +15,7 @@ def format_public_name(row) -> str:
     1. Custom Nickname (User configured nickname)
     2. Real Telegram Username (Preceded with @, if available and consent is True)
     3. Real Telegram First Name (Sanitized, if available and consent is True)
-    4. Masked User ID (Default backup)
+    4. Masked User ID (Default fallback)
     """
     if not row:
         return "Scholar"
@@ -534,7 +534,12 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
     mastery = get_grade_mastery_title(marks)
     next_rank = get_next_rank_info(marks)
     
-    consent_status = "🟢 ON (Your real handle is shown on scoreboard)" if profile.get("public_consent_granted") else "🔴 OFF (You are shown as a masked anonymous id)"
+    # Highly simplified terminology for dynamic privacy settings
+    if profile.get("public_consent_granted"):
+        consent_status = "🟢 PUBLIC\n<i>(Your real Telegram handle is displayed on rankings)</i>"
+    else:
+        consent_status = "🕵️ PRIVATE\n<i>(Your real name is hidden. You will appear anonymously on scoreboards)</i>"
+        
     nickname_label = profile.get("nickname") or "<i>None set (using default masked id)</i>"
     
     org_tag = profile.get("org_tag")
@@ -551,7 +556,7 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
         f"👋 <b>Welcome!</b> Here is your live study profile and settings:\n\n"
         f"• <b>Custom score Name:</b> {nickname_label}\n"
         f"• <b>Academic Level:</b> <code>Grade {grade}</code>\n"
-        f"• <b>Public Consent:</b> {consent_status}\n\n"
+        f"• <b>Scoreboard Visibility:</b> {consent_status}\n\n"
         f"📊 <b>YOUR PRACTICE STATS:</b>\n"
         f"<blockquote expandable>"
         f"🏆 <b>Practice Score:</b> {marks} Marks\n"

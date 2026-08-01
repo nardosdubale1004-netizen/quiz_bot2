@@ -59,7 +59,7 @@ engine = QuizEngine()
 # Consolidated commands to simplify the user interface
 BOT_COMMANDS = [
     BotCommand("start", "Register your academic profile / level"),
-    BotCommand("profile", "Open scoreboard privacy, nickname & school alliance dashboard"),
+    BotCommand("profile", "Open scoreboard visibility, nickname & school alliance dashboard"),
     BotCommand("leaderboard", "View individual rank standings or school rankings"),
 ]
 
@@ -269,7 +269,7 @@ async def start_command(update: Update, context):
 
             try:
                 from src.debug_log import dlog_exception
-                dlog_exception(f"bot.py -> Parse deep-link/fetch track failed (payload={payload})", e)
+                dlog_exception(f"bot.py -> start_command deep link parse crash (Payload: {payload})", e)
             except Exception:
                 pass
 
@@ -731,6 +731,11 @@ async def handle_fsm_message(update: Update, context):
         return
 
     try:
+        # Dynamic return option to keep the navigation cycle alive
+        profile_nav_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")
+        ]])
+
         if state == "AWAITING_NICKNAME":
             clean_name = re.sub(r'[^\w\s\-@]', '', text_input)[:20].strip()
             if not clean_name:
@@ -741,35 +746,7 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ Nickname registered successfully: <b>{clean_name}</b>!", parse_mode="HTML")
-            
-            # Re-render dashboard dynamically
-            profile = await asyncio.to_thread(db_get_user_profile, user_id)
-            org_id = profile.get("org_id")
-            roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
-            dossier_text = build_profile_card_text(profile, roster)
-            consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
-            consent_target = "0" if profile.get("public_consent_granted") else "1"
-            
-            buttons = [
-                [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-                [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
-            ]
-            if org_id:
-                buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
-                if profile.get("org_role") == "creator":
-                    buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
-            else:
-                buttons.append([
-                    InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
-                    InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
-                ])
-            buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
-            if edit_mid:
-                try:
-                    await context.bot.edit_message_text(chat_id=user_id, message_id=edit_mid, text=dossier_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
-                except Exception:
-                    await context.bot.send_message(chat_id=user_id, text=dossier_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+            await update.message.reply_text(f"✅ Nickname registered successfully: <b>{clean_name}</b>!", reply_markup=profile_nav_kb, parse_mode="HTML")
 
         elif state == "AWAITING_ORG_NAME":
             clean_org_name = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
@@ -805,6 +782,7 @@ async def handle_fsm_message(update: Update, context):
                     f"🏫 Institution: <b>{org_name}</b>\n"
                     f"🔑 Short Domain Tag: <code>#{clean_tag}</code>\n\n"
                     f"Provide this Tag to your student members so they can link and aggregate scores collectively!",
+                    reply_markup=profile_nav_kb,
                     parse_mode="HTML"
                 )
             except Exception as e:
@@ -823,7 +801,8 @@ async def handle_fsm_message(update: Update, context):
                 await update.message.reply_text(
                     f"✅ <b>Integrated Successfully!</b>\n\n"
                     f"You are now registered as a student member of <b>{org_name}</b> (<code>#{clean_tag}</code>).\n"
-                    f"Your correct answers will automatically scale points for your alliance global leaderboard!",
+                    f"Your correct answers will automatically scale points for your alliance global scoreboard!",
+                    reply_markup=profile_nav_kb,
                     parse_mode="HTML"
                 )
             else:
