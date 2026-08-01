@@ -23,6 +23,9 @@ from src.database import (
     db_clear_tournament_queue,
     db_set_tournament_pause_state,
     db_get_active_tournament_rounds,
+    db_get_city_leaderboard,
+    db_get_country_leaderboard,
+    db_get_alliance_leaderboard,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
@@ -737,7 +740,10 @@ async def admin_panel(app, engine: QuizEngine):
             print(convert_to_legacy_html(proposed_ann_text))
 
             confirm_commit = await cli.ask("<ansiyellow><b>Confirm and launch/schedule this tournament? (y/n) > </b></ansiyellow>")
-            if not confirm_commit or confirm_commit.lower() not in ['y', 'yes']:
+            
+            # Typo-Safe Confirmation parser to strip any trailing backslashes, numbers, or spaces
+            clean_confirm = re.sub(r'[^a-zA-Z]', '', confirm_commit).lower().strip() if confirm_commit else ""
+            if not clean_confirm or clean_confirm not in ['y', 'yes']:
                 print(f"\n{Style.RED}[ABORT] Transaction canceled. No updates made. Returning to Main Cockpit...{Style.RESET}\n")
                 await asyncio.sleep(1.5)
                 continue
