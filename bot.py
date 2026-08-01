@@ -207,6 +207,14 @@ async def start_command(update: Update, context):
     user_id = user.id
     args = context.args
 
+    print("\n" + "="*80, flush=True)
+    print(f"{Style.CYAN}[TRACE-START] Entered start_command for User ID: {user_id}{Style.RESET}", flush=True)
+    print(f" ├─ Chat ID:            {update.effective_chat.id}", flush=True)
+    print(f" ├─ Username:           {user.username}", flush=True)
+    print(f" ├─ First Name:         {user.first_name}", flush=True)
+    print(f" └─ Command Arguments:  {args}", flush=True)
+    print("="*80, flush=True)
+
     # Sync latest Telegram attributes on command start
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
@@ -217,18 +225,28 @@ async def start_command(update: Update, context):
 
     if args and args[0].startswith("ans_"):
         payload = args[0]
+        print(f"\n{Style.YELLOW}[TRACE-STEP 1] Detected deep-linked answering argument payload: '{payload}'{Style.RESET}", flush=True)
         try:
             _, ref_id, choice_idx_str = payload.split("_")
             display_id = int(ref_id)
             user_selection = int(choice_idx_str)
 
-            print(f"[DEBUG-FIX-START] User {user_id} clicked answer link REF: {display_id}, Selection Index: {user_selection}", flush=True)
+            print(f" ├─ Parsed Display ID:   {display_id}", flush=True)
+            print(f" └─ Parsed User Choice:  {user_selection}", flush=True)
+
+            print(f"[TRACE-STEP 2] Fetching track & question data from database for display_id: {display_id}...", flush=True)
             track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
 
             if not track or not question_data:
-                print(f"[DEBUG-FIX-START] Track or question missing for REF: {display_id}", flush=True)
+                print(f"{Style.RED}[TRACE-FAILURE] Lookups failed. track found: {track is not None}, question_data found: {question_data is not None}{Style.RESET}", flush=True)
                 await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
+
+            print(f"{Style.GREEN}[TRACE-SUCCESS] DB track found.{Style.RESET}", flush=True)
+            print(f" ├─ Track Message ID:   {track.get('message_id')}", flush=True)
+            print(f" ├─ Track Status:       {track.get('status')}", flush=True)
+            print(f" ├─ Question ID:        {question_data.get('id')}", flush=True)
+            print(f" └─ Correct Option:     {question_data.get('correct_option')}", flush=True)
 
             channel_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")
@@ -238,7 +256,7 @@ async def start_command(update: Update, context):
             mid_key = track['message_id']
 
             if track_status == "tournament_closed":
-                print(f"[DEBUG-FIX-START] User {user_id} attempted blocked submit for closed tournament REF: {display_id}", flush=True)
+                print(f"[TRACE-STEP 3] Locked out: Round is closed for display_id: {display_id}", flush=True)
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -248,9 +266,10 @@ async def start_command(update: Update, context):
                 return
 
             if track_status == "tournament_active":
+                print(f"[TRACE-STEP 3] Active tournament round detected. Reading student history...", flush=True)
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
-                    print(f"[DEBUG-FIX-START] Lockout active. User {user_id} has already answered tournament question REF: {display_id}", flush=True)
+                    print(f" └─ Already Answered: User {user_id} is locked out of further responses.", flush=True)
                     await send_rich_message_safe(
                         context.bot,
                         chat_id=update.message.chat_id,
@@ -259,11 +278,13 @@ async def start_command(update: Update, context):
                     )
                     return
 
+                print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
                 is_correct = (user_selection == question_data['correct_option'])
-                # Defensively verify the database write was committed
+                
+                print(f"[TRACE-STEP 5] Calling process_user_score in database module...", flush=True)
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
                 if perf_card is None:
-                    print(f"[CRITICAL-BOT-ERROR] process_user_score returned None for User {user_id} on active tournament round! Database write blocked.", flush=True)
+                    print(f"{Style.RED}[TRACE-FAILURE] process_user_score returned None! Database transaction failed.{Style.RESET}", flush=True)
                     await send_rich_message_safe(
                         context.bot,
                         chat_id=update.message.chat_id,
@@ -272,8 +293,9 @@ async def start_command(update: Update, context):
                     )
                     return
 
-                print(f"[DEBUG-FIX-START] Logged initial tournament score record for User {user_id}, message_id: {mid_key}", flush=True)
+                print(f"{Style.GREEN}[TRACE-SUCCESS] Score processed successfully. Total score: {perf_card.get('total_marks')} Marks.{Style.RESET}", flush=True)
 
+                print(f"[TRACE-STEP 6] Sending DM response receipt...", flush=True)
                 confirmation_msg = await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -285,13 +307,16 @@ async def start_command(update: Update, context):
                     reply_markup=channel_kb
                 )
                 if confirmation_msg:
-                    print(f"[DEBUG-FIX-START] Storing placeholder message_id={confirmation_msg.message_id} in DM for User {user_id}, tournament message_id: {mid_key}", flush=True)
+                    print(f" └─ Placeholder message delivered with ID: {confirmation_msg.message_id}. Saving message reference...", flush=True)
                     await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, confirmation_msg.message_id)
+                print(f"{Style.GREEN}[TRACE-COMPLETE] Answering sequence finished cleanly for tournament round.{Style.RESET}", flush=True)
                 return
 
+            print(f"[TRACE-STEP 3] Standard (non-tournament) active quiz path. Fetching history...", flush=True)
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
 
             if existing_response:
+                print(f" ├─ History found. Selected Option: {existing_response.get('selected_option')} | Is Correct: {existing_response.get('is_correct')}", flush=True)
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
 
@@ -306,8 +331,10 @@ async def start_command(update: Update, context):
 
                 asyncio.create_task(delete_msg_safe(update.message.chat_id, update.message.message_id))
                 if old_private_mid:
+                    print(f" ├─ Deleting stale static message ID: {old_private_mid}", flush=True)
                     asyncio.create_task(delete_msg_safe(update.message.chat_id, old_private_mid))
 
+                print(f" ├─ Computing latest scoreboard metadata...", flush=True)
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
                 warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
                                  "<i>Your original selection and score have been securely locked.</i>\n\n"
@@ -327,6 +354,7 @@ async def start_command(update: Update, context):
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
                     if not cached_file_id:
+                        print(f" ├─ [CACHE MISS] Solution sheet not cached. Generating LaTeX...", flush=True)
                         latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
                         if latex_code:
                             img_url = UIFactory.get_latex_url(latex_code)
@@ -335,6 +363,7 @@ async def start_command(update: Update, context):
                                 if resp and resp.status_code == 200:
                                     media_bytes = resp.content
 
+                print(f" ├─ Sending updated explanation card...", flush=True)
                 m = await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -349,13 +378,14 @@ async def start_command(update: Update, context):
 
                 LOCKOUT_MESSAGES.add((user_id, m.message_id))
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                print(f"{Style.GREEN}[TRACE-COMPLETE] History fallback view successfully displayed.{Style.RESET}", flush=True)
                 return
 
+            print(f"[TRACE-STEP 4] Standard active path. Calculating first-time response...", flush=True)
             is_correct = (user_selection == question_data['correct_option'])
-            # Defensively verify the database write was committed
             perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
             if perf_card is None:
-                print(f"[CRITICAL-BOT-ERROR] process_user_score returned None for User {user_id} on active quiz! Database write blocked.", flush=True)
+                print(f"{Style.RED}[TRACE-FAILURE] process_user_score returned None! Database transaction failed.{Style.RESET}", flush=True)
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -379,6 +409,7 @@ async def start_command(update: Update, context):
                 cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
                 if not cached_file_id:
+                    print(f" ├─ [CACHE MISS] Solution sheet not cached. Generating LaTeX...", flush=True)
                     latex_code, _ = UIFactory.create_explanation_assets(question_data, user_selection, display_id)
                     if latex_code:
                         img_url = UIFactory.get_latex_url(latex_code)
@@ -387,6 +418,7 @@ async def start_command(update: Update, context):
                             if resp and resp.status_code == 200:
                                     media_bytes = resp.content
 
+            print(f" ├─ Sending new explanation card...", flush=True)
             m = await send_rich_message_safe(
                 context.bot,
                 chat_id=update.message.chat_id,
@@ -400,10 +432,19 @@ async def start_command(update: Update, context):
                 await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
             await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+            print(f"{Style.GREEN}[TRACE-COMPLETE] First-time answering completed successfully.{Style.RESET}", flush=True)
             return
         except Exception as e:
+            print("\n" + "#"*80, flush=True)
+            print(f"{Style.RED}[TRACE-CRITICAL] An error occurred inside deep-link answering handler!{Style.RESET}", flush=True)
+            print(f" ├─ Error Message:      {e}", flush=True)
+            print(f" ├─ User ID:            {user_id}", flush=True)
+            print(f" ├─ display_id variable: {display_id if 'display_id' in locals() else 'None'}", flush=True)
+            print(f" ├─ mid_key variable:    {mid_key if 'mid_key' in locals() else 'None'}", flush=True)
+            print(" └─ Stack Trace details:", flush=True)
             traceback.print_exc()
-            print(f" {Style.RED}[ERROR] Failed to process linked answer: {e}{Style.RESET}")
+            print("#"*80 + "\n", flush=True)
+
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
 
@@ -631,7 +672,7 @@ def main():
     token = config.get("token")
     channel = config.get("channel")
     db_url = config.get("database_url")
-    
+
     # Critical Startup Safety verification to protect against empty Cloud configurations
     if not db_url:
         print(f"\n{Style.RED}############################################################")
