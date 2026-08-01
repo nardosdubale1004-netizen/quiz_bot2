@@ -24,8 +24,13 @@ from src.database import (
     db_dissolve_organization,
     db_set_user_nickname,
     db_get_user_organizations,
+    db_update_organization_profile,
+    db_get_pending_org_requests,
+    db_approve_member_request,
+    db_promote_member,
+    db_get_alliance_leaderboard,
 )
-from src.rendering.html_views import build_profile_card_text, build_organization_card_text
+from src.rendering.html_views import build_profile_card_text, build_organization_card_text, build_comparative_standings_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -147,6 +152,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 InlineKeyboardButton("✨ ESTABLISH TEAM", callback_data="fsm_create_org|0"),
                 InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
             ])
+            buttons.append([InlineKeyboardButton("📊 COMPARE TEAMS", callback_data="compare_alliances|0")])
             buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         else:
@@ -159,16 +165,38 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
                 [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
+                [InlineKeyboardButton("📊 COMPARE TEAMS", callback_data="compare_alliances|0")],
                 [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
             ])
             await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif action == "compare_alliances":
+        await query.answer()
+        
+        # Get team standings globally
+        db_alliances = await asyncio.to_thread(db_get_alliance_leaderboard)
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        
+        user_org = None
+        if profile.get("org_id"):
+            user_org = {
+                "org_id": profile.get("org_id"),
+                "org_tag": profile.get("org_tag")
+            }
+            
+        text = build_comparative_standings_text(db_alliances, user_org)
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 BACK TO ALLIANCE PORTAL", callback_data="alliance_portal|0")
+        ]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
         return
 
     elif action == "view_org":
         await query.answer()
         org_id = int(d_id)
         
-        # Pull team details from DB
         conn = engine.get_db_connection()
         org_details = None
         try:
@@ -185,18 +213,157 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         roster = await asyncio.to_thread(db_get_organization_roster, org_id)
         text = build_organization_card_text(org_details, roster)
         
-        # Find user's role in this specific organization
         user_membership = next((m for m in roster if int(m['user_id']) == int(user_id)), None)
         user_role = user_membership.get("org_role") if user_membership else "member"
         
-        buttons = [
-            [InlineKeyboardButton("🚪 LEAVE School TEAM", callback_data=f"leave_org_warn|{org_id}")]
-        ]
+        buttons = []
+        
+        # Creator and Admin options
+        if user_role in ["creator", "admin"]:
+            # Query queue count
+            queue = await asyncio.to_thread(db_get_pending_org_requests, org_id)
+            if queue:
+                buttons.append([InlineKeyboardButton(f"📥 PENDING ADMISSIONS ({len(queue)})", callback_data=f"org_queue|{org_id}")])
+                
+            buttons.append([InlineKeyboardButton("⚙️  MANAGE TEAM ROSTER", callback_data=f"manage_roster|{org_id}")])
+            
+            # Creator exclusive settings
+            if user_role == "creator":
+                toggle_txt = "🌐 SWITCH TO PUBLIC (APPROVALS)" if not org_details.get("is_public") else "🔒 SWITCH TO PRIVATE (DIRECT CODE)"
+                toggle_target = "1" if not org_details.get("is_public") else "0"
+                buttons.append([InlineKeyboardButton(toggle_txt, callback_data=f"toggle_org_privacy|{org_id}|{toggle_target}")])
+
+        buttons.append([InlineKeyboardButton("🚪 LEAVE School TEAM", callback_data=f"leave_org_warn|{org_id}")])
+        
         if user_role == "creator":
             buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
             
         buttons.append([InlineKeyboardButton("🔙 BACK TO TEAM LIST", callback_data="alliance_portal|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    elif action == "toggle_org_privacy":
+        org_id = int(d_id)
+        target_state = (data[2] == "1")
+        
+        await asyncio.to_thread(db_update_organization_profile, org_id, is_public=target_state)
+        await query.answer("Team admission privacy updated!", show_alert=True)
+        
+        # Redirect back to view org instantly
+        query.data = f"view_org|{org_id}"
+        await handle_callback(update, context, engine)
+        return
+
+    elif action == "org_queue":
+        await query.answer()
+        org_id = int(d_id)
+        
+        queue = await asyncio.to_thread(db_get_pending_org_requests, org_id)
+        if not queue:
+            await query.edit_message_text("📥 Admission queue is empty.", reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")
+            ]]))
+            return
+            
+        target_req = queue[0]
+        text = (
+            f"📥 <b>PENDING ALLIANCE ADMISSION REQUEST</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"A student is requesting access to join your school team:\n\n"
+            f"• <b>Student Display ID:</b> <code>{target_req['first_name']}</code>\n"
+            f"• <b>Practice Score:</b> <b>{target_req['total_marks']} Marks</b>\n\n"
+            f"Would you like to approve their entry on your roster?"
+        )
+        buttons = [
+            [InlineKeyboardButton("🟢 APPROVE ADMISSION", callback_data=f"process_req|{org_id}|{target_req['user_id']}|1"),
+             InlineKeyboardButton("🔴 REJECT ENTRY", callback_data=f"process_req|{org_id}|{target_req['user_id']}|0")],
+            [InlineKeyboardButton("🔙 RETURN TO TEAM", callback_data=f"view_org|{org_id}")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    elif action == "process_req":
+        org_id = int(d_id)
+        target_user = data[2]
+        is_approved = (data[3] == "1")
+        
+        await asyncio.to_thread(db_approve_member_request, target_user, org_id, is_approved)
+        await query.answer("Request resolved successfully!")
+        
+        # Check if there are more
+        query.data = f"org_queue|{org_id}"
+        await handle_callback(update, context, engine)
+        return
+
+    elif action == "manage_roster":
+        await query.answer()
+        org_id = int(d_id)
+        
+        roster = await asyncio.to_thread(db_get_organization_roster, org_id)
+        text = (
+            f"⚙️  <b>MANAGE TEAM ROSTER</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Select a student member below to promote to Admin, demote, or remove from your team roster:"
+        )
+        buttons = []
+        for r in roster:
+            if int(r['user_id']) == int(user_id):
+                continue
+            lbl = f"👤 {format_public_name(r)} ({r['org_role'].capitalize()})"
+            buttons.append([InlineKeyboardButton(lbl, callback_data=f"roster_act|{org_id}|{r['user_id']}")])
+            
+        buttons.append([InlineKeyboardButton("🔙 RETURN TO TEAM", callback_data=f"view_org|{org_id}")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    elif action == "roster_act":
+        await query.answer()
+        org_id = int(d_id)
+        target_user_id = data[2]
+        
+        roster = await asyncio.to_thread(db_get_organization_roster, org_id)
+        target_member = next((m for m in roster if int(m['user_id']) == int(target_user_id)), None)
+        
+        if not target_member:
+            await query.edit_message_text("⚠️ Member not found.", reply_markup=return_kb)
+            return
+            
+        text = (
+            f"👤 <b>ROSTER ADMINISTRATOR PANEL</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"• <b>Member Identity:</b> <code>{format_public_name(target_member)}</code>\n"
+            f"• <b>Roster Role Status:</b> <b>{target_member['org_role'].capitalize()}</b>\n\n"
+            f"Select an administrative command action:"
+        )
+        
+        buttons = []
+        if target_member['org_role'] == "member":
+            buttons.append([InlineKeyboardButton("👑 PROMOTE TO ADMIN", callback_data=f"roster_commit|{org_id}|{target_user_id}|promote")])
+        elif target_member['org_role'] == "admin":
+            buttons.append([InlineKeyboardButton("📉 DEMOTE TO MEMBER", callback_data=f"roster_commit|{org_id}|{target_user_id}|demote")])
+            
+        buttons.append([InlineKeyboardButton("🚪 REMOVE / KICK MEMBER", callback_data=f"roster_commit|{org_id}|{target_user_id}|kick")])
+        buttons.append([InlineKeyboardButton("🔙 BACK TO ROSTER", callback_data=f"manage_roster|{org_id}")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    elif action == "roster_commit":
+        org_id = int(d_id)
+        target_user_id = data[2]
+        operation = data[3]
+        
+        if operation == "promote":
+            await asyncio.to_thread(db_promote_member, target_user_id, org_id, True)
+            await query.answer("Member promoted to Admin!", show_alert=True)
+        elif operation == "demote":
+            await asyncio.to_thread(db_promote_member, target_user_id, org_id, False)
+            await query.answer("Admin demoted back to Member.", show_alert=True)
+        elif operation == "kick":
+            await asyncio.to_thread(db_leave_organization, target_user_id, org_id)
+            await query.answer("Member removed from team roster.", show_alert=True)
+            
+        query.data = f"manage_roster|{org_id}"
+        await handle_callback(update, context, engine)
         return
 
     elif action == "leave_org_warn":

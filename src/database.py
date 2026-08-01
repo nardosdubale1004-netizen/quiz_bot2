@@ -224,6 +224,7 @@ class QuizEngine:
                         org_tag VARCHAR(15) UNIQUE NOT NULL,
                         creator_id VARCHAR(20) NOT NULL,
                         org_type VARCHAR(20) DEFAULT 'School',
+                        is_public BOOLEAN DEFAULT TRUE,
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
@@ -260,6 +261,9 @@ class QuizEngine:
                     """)
                     cur.execute("ALTER TABLE user_stats DROP COLUMN IF EXISTS org_id CASCADE;")
                     cur.execute("ALTER TABLE user_stats DROP COLUMN IF EXISTS org_role CASCADE;")
+                
+                # Check for is_public column inside organizations
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;")
                 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
@@ -662,6 +666,7 @@ def db_get_alliance_leaderboard():
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
                 JOIN user_stats u ON m.user_id = u.user_id
+                WHERE m.org_role != 'pending'
                 GROUP BY o.org_tag
                 ORDER BY total_score DESC
                 LIMIT 10;
@@ -1147,12 +1152,12 @@ def db_get_weekly_leaderboard(grade: int):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT ur.user_id, SUM(ur.marks_awarded) as total_score,
-                       us.nickname, us.username, us.first_name, us.alliance_tag, us.public_consent_granted
+                       us.nickname, us.username, us.first_name, us.public_consent_granted
                 FROM user_responses ur
                 JOIN user_stats us ON ur.user_id = us.user_id
                 WHERE us.grade = %s
                   AND ur.answered_at >= NOW() - INTERVAL '7 days'
-                GROUP BY ur.user_id, us.nickname, us.username, us.first_name, us.alliance_tag, us.public_consent_granted
+                GROUP BY ur.user_id, us.nickname, us.username, us.first_name, us.public_consent_granted
                 ORDER BY total_score DESC
                 LIMIT 10;
             """, (int(grade),))
@@ -1496,17 +1501,17 @@ def db_update_tournament_meta_field(key: str, value):
 
 # --- MANY-TO-MANY ROSTER RELATION ENGINE ---
 
-def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School") -> int:
+def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School", is_public: bool = True) -> int:
     """Inserts a new school or academy mapping and returns its assigned org_id."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO organizations (org_name, org_tag, creator_id, org_type)
-                VALUES (%s, UPPER(%s), %s, %s)
+                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public)
+                VALUES (%s, UPPER(%s), %s, %s, %s)
                 RETURNING org_id;
-            """, (org_name, org_tag, str(creator_id), org_type))
+            """, (org_name, org_tag, str(creator_id), org_type, is_public))
             row = cur.fetchone()
             org_id = row['org_id']
             
@@ -1527,27 +1532,41 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_join_organization(user_id, org_tag: str) -> str:
-    """Maps a student to an existing organization based on its Code Tag."""
+def db_join_organization(user_id, org_tag: str) -> dict:
+    """
+    Attempts to register/link a student to an organization based on Tag.
+    If org is public (is_public = True), sets membership state to 'pending' (requires approval).
+    If org is private (is_public = False), joins immediately as a standard member.
+    """
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name FROM organizations WHERE org_tag = UPPER(%s);", (org_tag.strip(),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE org_tag = UPPER(%s);", (org_tag.strip(),))
             row = cur.fetchone()
             if not row:
                 return None
             
             org_id = row['org_id']
             org_name = row['org_name']
+            is_public = row['is_public']
+            creator_id = row['creator_id']
+            
+            role = "pending" if is_public else "member"
             
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, 'member')
+                VALUES (%s, %s, %s)
                 ON CONFLICT (user_id, org_id) DO NOTHING;
-            """, (str(user_id), org_id))
+            """, (str(user_id), org_id, role))
             conn.commit()
-            return org_name
+            
+            return {
+                "org_id": org_id,
+                "org_name": org_name,
+                "role_assigned": role,
+                "creator_id": creator_id
+            }
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Join failed: {e}", flush=True)
@@ -1597,7 +1616,7 @@ def db_get_user_organizations(user_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_organization_roster(org_id: int):
-    """Retrieves all mapped scholars and their scores inside an organization."""
+    """Retrieves all mapped scholars and their scores inside an organization (excluding pending requests)."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1606,7 +1625,7 @@ def db_get_organization_roster(org_id: int):
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks, m.org_role, u.public_consent_granted
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_id = %s
+                WHERE m.org_id = %s AND m.org_role != 'pending'
                 ORDER BY u.total_marks DESC;
             """, (int(org_id),))
             return cur.fetchall()
@@ -1617,7 +1636,7 @@ def db_get_organization_roster(org_id: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: str = None) -> bool:
+def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: str = None, is_public: bool = None) -> bool:
     """Updates metadata profile fields for an active organization."""
     conn = None
     try:
@@ -1627,6 +1646,8 @@ def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: s
                 cur.execute("UPDATE organizations SET org_name = %s WHERE org_id = %s;", (new_name, int(org_id)))
             if new_tag:
                 cur.execute("UPDATE organizations SET org_tag = UPPER(%s) WHERE org_id = %s;", (new_tag.strip(), int(org_id)))
+            if is_public is not None:
+                cur.execute("UPDATE organizations SET is_public = %s WHERE org_id = %s;", (bool(is_public), int(org_id)))
             conn.commit()
             return True
     except Exception as e:
@@ -1671,6 +1692,79 @@ def db_update_user_consent_state(user_id, consent: bool) -> bool:
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to store user consent update: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+# --- SECURITY & ACCESS PRIVILEGES CONTROLLER ---
+
+def db_get_pending_org_requests(org_id: int):
+    """Retrieves all pending student join requests for verification."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks
+                FROM org_memberships m
+                JOIN user_stats u ON m.user_id = u.user_id
+                WHERE m.org_id = %s AND m.org_role = 'pending'
+                ORDER BY m.joined_at ASC;
+            """, (int(org_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB-ORG-ERROR] Fetch pending failed: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_approve_member_request(user_id, org_id: int, approve: bool) -> bool:
+    """Approves or rejects a student's pending team registration request."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if approve:
+                cur.execute("""
+                    UPDATE org_memberships 
+                    SET org_role = 'member' 
+                    WHERE user_id = %s AND org_id = %s;
+                """, (str(user_id), int(org_id)))
+            else:
+                cur.execute("""
+                    DELETE FROM org_memberships 
+                    WHERE user_id = %s AND org_id = %s;
+                """, (str(user_id), int(org_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Approval processing failed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_promote_member(user_id, org_id: int, promote: bool) -> bool:
+    """Promotes a standard member to Administrator or demotes an Admin back to Member."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            role = "admin" if promote else "member"
+            cur.execute("""
+                UPDATE org_memberships 
+                SET org_role = %s 
+                WHERE user_id = %s AND org_id = %s;
+            """, (role, str(user_id), int(org_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Role promotion failed: {e}", flush=True)
         return False
     finally:
         if conn:

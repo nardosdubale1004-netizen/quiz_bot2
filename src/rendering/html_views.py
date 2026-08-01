@@ -286,7 +286,6 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
-        breakdown_parts.append(analysis_line)
     breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
@@ -534,11 +533,11 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
     mastery = get_grade_mastery_title(marks)
     next_rank = get_next_rank_info(marks)
     
-    # Simple and clear visibility configurations
+    # Reassuring and precise vocabulary surrounding the Privacy Toggle
     if profile.get("public_consent_granted"):
-        consent_status = "🟢 PUBLIC\n<i>(Your actual Telegram name is displayed on weekly leaderboards)</i>"
+        consent_status = "🟢 PUBLIC ACCESS\n<i>(Your actual Telegram handle is displayed publicly on scoreboards)</i>"
     else:
-        consent_status = "🕵️ PRIVATE\n<i>(Your real name is completely hidden. You appear anonymously as an ID)</i>"
+        consent_status = "🕵️ PRIVATE ACCESS\n<i>(Your real name is completely hidden. You appear anonymously as an ID)</i>"
         
     nickname_label = profile.get("nickname") or "<i>None set (using default masked id)</i>"
     
@@ -569,7 +568,7 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
 
     if org_tag:
         text += (
-            f"🏫 <b>YOUR SCHOOL ALLIANCE:</b>\n"
+            f"🏫 <b>YOUR ACTIVE SCHOOL ALLIANCE:</b>\n"
             f"• <b>Institution:</b> {org_name}\n"
             f"• <b>Domain Code:</b> <code>#{org_tag}</code> (Role: {org_role.capitalize()})\n\n"
         )
@@ -603,6 +602,7 @@ def build_organization_card_text(org: dict, roster: list) -> str:
     name = org.get("org_name", "UNKNOWN").upper()
     tag = org.get("org_tag", "UNKNOWN")
     org_type = org.get("org_type", "School")
+    privacy = "🌐 PUBLIC TEAM (Requires manual admission confirmation)" if org.get("is_public", True) else "🔒 PRIVATE TEAM (Direct access passcode Tag)"
     
     total_score = sum(r.get("total_marks", 0) for r in roster)
     avg_score = int(total_score / len(roster)) if roster else 0
@@ -620,6 +620,7 @@ def build_organization_card_text(org: dict, roster: list) -> str:
         f"🏫 <b>SCHOOL TEAM: {name}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"• <b>Domain Code:</b> <code>#{tag}</code>\n"
+        f"• <b>Admission Protocol:</b> {privacy}\n"
         f"• <b>Alliance Category:</b> {org_type}\n\n"
         f"📊 <b>TEAM STATS:</b>\n"
         f" ├─ Members: <code>{len(roster)} registered</code>\n"
@@ -629,6 +630,39 @@ def build_organization_card_text(org: dict, roster: list) -> str:
         f"<blockquote expandable>\n"
         f"{roster_block}\n"
         f"</blockquote>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    return text
+
+
+def build_comparative_standings_text(top_alliances: list, user_org: dict = None) -> str:
+    """
+    Renders an exceptionally beautiful league table comparing registered study groups.
+    """
+    lines = []
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    
+    user_rank_str = "<i>You are not currently linked to any listed school teams.</i>"
+    
+    for idx, org in enumerate(top_alliances[:10]):
+        is_user_team = user_org and (int(org['org_id']) == int(user_org['org_id']))
+        tag_marker = f" <b>(Your Team)</b>" if is_user_team else ""
+        lines.append(f" {medals[idx]} <code>#{org['org_tag']}</code> — <b>{org['total_score']} Marks</b> ({org['active_members']} members){tag_marker}")
+        
+        if is_user_team:
+            user_rank_str = f"🏆 Your group <code>#{org['org_tag']}</code> is currently ranked <b>#{idx+1} globally</b>!"
+
+    league_block = "\n".join(lines) if lines else "<i>No alliances have registered competitive scores yet.</i>"
+
+    text = (
+        f"📊 <b>GLOBAL ALLIANCE COMPARATIVE LEAGUE</b> 📊\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Review how school teams across the nation compare in collective academic mastery:\n\n"
+        f"<blockquote expandable>\n"
+        f"{league_block}\n"
+        f"</blockquote>\n\n"
+        f"<b>Your Comparative Standing:</b>\n"
+        f"└─ {user_rank_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━"
     )
     return text

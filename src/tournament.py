@@ -28,7 +28,7 @@ from src.database import (
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
-from src.rendering.html_views import format_public_name, build_tournament_announcement_text
+from src.rendering.html_views import format_public_name
 
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
@@ -370,6 +370,15 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             correct_count = len(correct_responses)
             accuracy_pct = int((correct_count / total_users) * 100) if total_users > 0 else 0
 
+            # Dynamic Alliance/School Score Aggregator for Guild Wars Standings
+            alliance_scores = {}
+            for r in correct_responses:
+                tag = r.get('alliance_tag')
+                if tag:
+                    alliance_scores[tag] = alliance_scores.get(tag, 0) + r.get('marks_awarded', 0)
+            
+            sorted_alliances = sorted(alliance_scores.items(), key=lambda x: x[1], reverse=True)
+
             podium_lines = []
             medals = ["🥇", "🥈", "🥉"]
             for idx, r in enumerate(correct_responses[:3]):
@@ -380,11 +389,26 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             podium_block = ("\n🏆 <b>ROUND PODIUM (FASTEST CORRECT):</b>\n" + "\n".join(podium_lines)) if podium_lines else \
                 "\n🏆 <b>ROUND PODIUM:</b>\n  <i>No correct answers recorded this round.</i>"
 
+            # Render dynamic Alliance standings inside an expandable block
+            alliance_podium_lines = []
+            for idx, (tag, score) in enumerate(sorted_alliances[:3]):
+                alliance_podium_lines.append(f"  {medals[idx]} <code>#{tag}</code> — <b>+{score} collective Marks</b>")
+            
+            alliance_block = ""
+            if alliance_podium_lines:
+                alliance_block = (
+                    f"\n🏫 <b>ALLIANCE TEAM STANDINGS (ROUND GAIN):</b>\n"
+                    f"<blockquote expandable>\n"
+                    f"{chr(10).join(alliance_podium_lines)}\n"
+                    f"</blockquote>"
+                )
+
             normal_close_text = (
                 f"{header}\n"
                 f"🏁 <b>ROUND CLOSED!</b>\n\n"
                 f"👥 <b>{total_users}</b> submission(s) • ✅ <b>{accuracy_pct}%</b> correct\n"
                 f"{podium_block}"
+                f"{alliance_block}"
             )
 
             if ann_mid:
@@ -409,11 +433,11 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     channel_id = CONFIG.get("channel") or "@QuizOva"
                     sol_latex = UIFactory.assemble_diagram_only_layout(channel_id, last_seq, fig_block)
                     sol_img_url = UIFactory.get_latex_url(sol_latex)
-                    cache_key = f"q:{q['id']}:closed_diag"
+                    cache_key = f"q:{q['id']}:exp:{last_seq}"
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
                     if not cached_file_id:
                         async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
+                            resp = await fetch_kroki_image(client, img_url)
                             if resp and resp.status_code == 200:
                                 media_bytes = resp.content
 
