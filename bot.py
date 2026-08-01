@@ -182,7 +182,7 @@ async def check_and_publish_scheduled(app):
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
                     media_bytes = None
-                    if img_url && not cached_file_id:
+                    if img_url and not cached_file_id:
                         async with httpx.AsyncClient() as client:
                             resp = await fetch_kroki_image(client, img_url)
                             if resp and resp.status_code == 200:
@@ -782,7 +782,7 @@ async def handle_fsm_message(update: Update, context):
             # Form conversational prompt with direct return navigation buttons
             await update.message.reply_text(
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍ Enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
+                "✍ Enter a short, uppercase Code Tag identifier for your group (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
