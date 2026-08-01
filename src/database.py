@@ -100,15 +100,7 @@ BEGIN
         END IF;
 
         BEGIN
-            INSERT INTO user_responses (
-                user_id, message_id, q_id, is_correct, marks_awarded,
-                selected_option, private_message_id, show_derivation, show_perf
-            )
-            VALUES (
-                p_user_id, p_message_id, p_q_id, p_is_correct, v_marks,
-                p_selected_option, p_private_message_id, p_show_derivation, p_show_perf
-            );
-
+            -- [FIX VALIDATION LOG]: Insert the stats record first to avoid foreign key errors on user_responses.user_id references user_stats(user_id)
             INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
             VALUES (
                 p_user_id, 1,
@@ -122,6 +114,15 @@ BEGIN
                 current_streak = v_streak,
                 last_active_at = NOW();
 
+            INSERT INTO user_responses (
+                user_id, message_id, q_id, is_correct, marks_awarded,
+                selected_option, private_message_id, show_derivation, show_perf
+            )
+            VALUES (
+                p_user_id, p_message_id, p_q_id, p_is_correct, v_marks,
+                p_selected_option, p_private_message_id, p_show_derivation, p_show_perf
+            );
+
         EXCEPTION WHEN unique_violation THEN
             v_first_try := false;
             SELECT ur.is_correct, ur.marks_awarded
@@ -134,7 +135,7 @@ BEGIN
             ELSE
                 v_marks := 0;
                 v_is_bonus := false;
-            END IF;
+            END If;
         END;
     END IF;
 
@@ -759,7 +760,7 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # FIX: Force strict list sanitization check before writing to PostgreSQL JSON column type to prevent parsing collisions.
+            # FORCE strict list sanitization check before writing to PostgreSQL JSON column type to prevent parsing collisions.
             if isinstance(remaining_ids, str):
                 try:
                     remaining_ids = json.loads(remaining_ids)
@@ -767,7 +768,7 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
                     remaining_ids = []
 
             print(f"[DEBUG-DB-SAVE-QUEUE] Saving remaining_ids: {remaining_ids} (total={total_count}, display_id_offset={last_seq}) to database.", flush=True)
-            
+
             cur.execute("""
                 INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds)
                 VALUES (1, %s, %s, %s, %s, %s, %s, %s)
@@ -798,14 +799,14 @@ def db_get_tournament_queue():
             if not row:
                 return None
             res = dict(row)
-            
-            # FIX: Robust fallback translation. If driver retrieves JSON column as standard string, force deserialize back to list.
+
+            # Robust fallback translation. If driver retrieves JSON column as standard string, force deserialize back to list.
             if isinstance(res.get('remaining_ids'), str):
                 try:
                     res['remaining_ids'] = json.loads(res['remaining_ids'])
                 except Exception:
                     res['remaining_ids'] = []
-            
+
             print(f"[DEBUG-DB-GET-QUEUE] Retrieved row from DB: {res}", flush=True)
             return res
     except Exception as e:
@@ -825,14 +826,14 @@ def db_pop_tournament_question():
             if not row:
                 conn.commit()
                 return None, None
-            
+
             remaining = row['remaining_ids']
             if isinstance(remaining, str):
                 try:
                     remaining = json.loads(remaining)
                 except Exception:
                     remaining = []
-                    
+
             if not remaining:
                 print("[DEBUG-DB-POP] Remaining ids is empty. Aborting pop.", flush=True)
                 conn.commit()
@@ -846,7 +847,7 @@ def db_pop_tournament_question():
 
             next_id = remaining.pop(0)
             new_last_seq = row['last_seq'] + 1
-            
+
             print(f"[DEBUG-DB-POP] Popped next tournament question: '{next_id}'. New remaining queue: {remaining}", flush=True)
             cur.execute(
                 "UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;",
@@ -1143,7 +1144,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             pm_id = int(private_message_id) if private_message_id is not None else None
-            print(f"[DEBUG-DB-SCORE] Inserting/Processing user score: user={user_id}, message_id={message_id}, q_id={q_id}, correct={is_correct}", flush=True)
+            print(f"[DEBUG-DB-SCORE] DB-FK safe evaluation. Processing score: user={user_id}, message_id={message_id}, q_id={q_id}, correct={is_correct}", flush=True)
             cur.execute(
                 "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
                 (
@@ -1153,7 +1154,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             )
             row = cur.fetchone()
             conn.commit()
-            print(f"[DEBUG-DB-SCORE] Successfully processed user score. Row results: {dict(row) if row else 'None'}", flush=True)
+            print(f"[DEBUG-DB-SCORE] Transaction commit finished. Row output: {dict(row) if row else 'None'}", flush=True)
 
         if not row:
             return None
@@ -1174,7 +1175,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
         }
     except Exception as e:
         if conn: conn.rollback()
-        print(f"[DB ERROR] Error in process_user_score: {e}", flush=True)
+        print(f"[DB ERROR] Error inside process_user_score transaction: {e}", flush=True)
         raise e
     finally:
         if conn:

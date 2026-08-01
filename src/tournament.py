@@ -39,7 +39,7 @@ _COOLDOWN_MID = None
 _LAST_COOLDOWN_VAL = -1
 _LAST_DELAY_VAL = -1
 
-# FIX: Initialize the global closed tracking value to 0.0, referencing the shared database clock environment.
+# [FIX INITIALIZATION]: Initialize the global closed tracking value referencing the shared database clock.
 _LAST_ROUND_CLOSED_AT = 0.0
 
 def run_graceful_shutdown_sync():
@@ -125,9 +125,7 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 print(f"[DEBUG-TIMER] Track status changed from tournament_active or track deleted. Stopping countdown for message {ann_mid}.", flush=True)
                 return
 
-            # FIX: Dynamically read 'remaining' strictly from the database's actual deadline on every tick!
-            # This completely eliminates timer collisions/skips/jitter because any running task across any instance
-            # reads from the exact same central source of truth (the Neon database clock).
+            # Read 'remaining' from the database's actual deadline on every tick.
             remaining = live_track.get('remaining_seconds', 0)
             if remaining <= STOP_EDITING_WITHIN:
                 print(f"[DEBUG-TIMER-FINISH] Remaining seconds achieved threshold ({remaining}s <= {STOP_EDITING_WITHIN}s). Ending countdown loop.", flush=True)
@@ -135,9 +133,7 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
 
             question_mid = live_track.get('message_id')
             submission_count = 0
-            # Ensure we only query once swap has registered a real numeric message ID
             if question_mid and str(question_mid).isdigit():
-                # Retrieve submission counts utilizing dual active/placeholder query matching
                 responses = await asyncio.to_thread(db_get_responses_for_message, question_mid, display_id)
                 submission_count = len(responses)
                 print(f"[DEBUG-TIMER-TICK] Track {display_id} (mid={question_mid}) has {submission_count} submissions. Remaining: {remaining}s", flush=True)
@@ -203,9 +199,8 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
                         if resp and resp.status_code == 200:
                             media_bytes = resp.content
 
-        # Safe transition layout fix:
         # Since the placeholder message in the DM was text-only, if the solution has a diagram (photo),
-        # we must delete the text message and send a new photo message to avoid editing type constraints.
+        # delete the text message and send a new photo message to avoid editing type constraints.
         if has_tikz:
             print(f"[DEBUG-DM-DELIVERY] Question {q['id']} contains a visual diagram. Deleting placeholder text message {p_mid} and pushing a fresh photo message.", flush=True)
             try:
@@ -305,9 +300,8 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
 async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False, halt_reason: str = None):
     """Concludes the round on the channel and resolves pending student DMs concurrently with complete diagnostics."""
     global _LAST_ROUND_CLOSED_AT
-    
-    # FIX: Fetch the database-side clock timestamp immediately to strictly preserve timezone alignment.
-    # This prevents timing logic lockups across multiple hosts.
+
+    # Synchronize database-side clock timestamp immediately to strictly preserve timezone alignment.
     _LAST_ROUND_CLOSED_AT = await asyncio.to_thread(engine.db_get_current_epoch)
     print(f"[DEBUG-FINALIZE-CLOCK] Logged database-side round closure time: {_LAST_ROUND_CLOSED_AT}", flush=True)
 
@@ -368,7 +362,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     pass
         else:
             print(f"[DEBUG-FINALIZE] Step 3: Fetching user responses from database...", flush=True)
-            # Use display_id fallback parameter to fetch any records captured under the launching placeholder ID
             user_responses = await asyncio.to_thread(db_get_responses_for_message, mid, last_seq)
             total_users = len(user_responses)
             correct_responses = [r for r in user_responses if r['is_correct']]
@@ -432,7 +425,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     await asyncio.to_thread(db_save_cached_file_id, cache_key, new_msg.photo[-1].file_id)
 
                 final_msg_id = new_msg.message_id
-                # Shift database references to point to closed static answer card
                 await asyncio.to_thread(engine.db_swap_track_message_id, mid, new_msg.message_id)
                 await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
             except Exception as e:
@@ -454,7 +446,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
 
         print(f"[DEBUG-FINALIZE] Step 5: Delivering explanation DM sheets to players...", flush=True)
-        # Query user responses using final_msg_id (post-swap) to ensure we fetch all records successfully!
         user_responses = await asyncio.to_thread(db_get_responses_for_message, final_msg_id, last_seq)
         print(f"[DEBUG-FINALIZE-FIX] Querying user responses using final_msg_id={final_msg_id} (post-swap) instead of old mid={mid} to ensure we load all student records successfully. Count found: {len(user_responses)}", flush=True)
 
@@ -545,7 +536,7 @@ async def halt_active_tournament(app, engine: QuizEngine, clear_queue: bool = Fa
         print(f"{Style.RED}[TOURNAMENT] Remaining queue deleted successfully.{Style.RESET}", flush=True)
     else:
         await asyncio.to_thread(db_set_tournament_pause_state, True)
-        print(f"{Style.YELLOW}[TOURNAMENT] Tournament queue execution paused.{Style.RESET}", flush=True)
+        print(f"[TOURNAMENT] Tournament queue execution paused.{Style.RESET}", flush=True)
 
 async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2):
     global _COOLDOWN_MID, _LAST_COOLDOWN_VAL, _LAST_DELAY_VAL
@@ -675,8 +666,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 pass
 
                 cooldown = queue.get('cooldown_seconds', 15)
-                
-                # FIX: Set 'time_since_close' using synchronized database epochs to keep calculations locked.
+
                 time_since_close = db_epoch - _LAST_ROUND_CLOSED_AT
 
                 if _LAST_ROUND_CLOSED_AT > 0.0 and time_since_close < cooldown:
@@ -748,8 +738,10 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         else:
                             print(f"{Style.RED}[TOURNAMENT] Question {next_qid} not found. Skipping.{Style.RESET}")
                     else:
-                        await asyncio.to_thread(db_clear_tournament_queue)
-                        print(f"{Style.GREEN}[TOURNAMENT] Queue completed.{Style.RESET}", flush=True)
+                        # [FIX TOURNAMENT TIMING INTERRUPT]: Do not wipe out the tournament queue on None return signals.
+                        # Active rounds returning None temporarily are normal loop states, not end-of-queue triggers.
+                        print(f"[DEBUG-TOURNAMENT-FIX] Pop returned None (active live round or lock is blocking). Queue preserved.", flush=True)
+
         except Exception as e:
             traceback.print_exc()
             print(f"{Style.RED}[TOURNAMENT WATCHER ERROR] {e}{Style.RESET}", flush=True)
