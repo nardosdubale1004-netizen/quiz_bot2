@@ -216,10 +216,12 @@ class QuizEngine:
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
 
+                # Self-healing Schema Updates to track nicknames and Telegram attributes
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS username text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
 
+                # Clear restrictive foreign key constraint to permit message ID swaps without violations
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
 
@@ -1147,6 +1149,86 @@ def db_mark_question_as_sent(q_id):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
+    from src.debug_log import dlog, dlog_exception
+    max_attempts = 2
+    last_exc = None
+
+    for attempt in range(1, max_attempts + 1):
+        conn = None
+        try:
+            dlog(f"[DEBUG-DB-SCORE] Attempt {attempt}/{max_attempts} | user={user_id}, "
+                 f"message_id={message_id}, q_id={q_id}, correct={is_correct}, "
+                 f"selected_option={selected_option}")
+            conn = GLOBAL_ENGINE.get_db_connection()
+            with conn.cursor() as cur:
+                pm_id = int(private_message_id) if private_message_id is not None else None
+                cur.execute(
+                    "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
+                    (
+                        str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
+                        pm_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
+                    )
+                )
+                row = cur.fetchone()
+                conn.commit()
+                dlog(f"[DEBUG-DB-SCORE] Attempt {attempt} succeeded for user={user_id}, "
+                     f"message_id={message_id}. Row output: {dict(row) if row else 'None'}")
+
+            if not row:
+                dlog(f"[DEBUG-DB-SCORE] fn_process_user_score returned NO ROW for "
+                     f"user={user_id}, message_id={message_id}. Returning None.")
+                return None
+
+            total = row['o_total']
+            correct = row['o_correct']
+            accuracy = int((correct / total) * 100) if total and total > 0 else 0
+            return {
+                "total": total,
+                "correct": correct,
+                "accuracy": accuracy,
+                "total_marks": row['o_total_marks'],
+                "marks_awarded": row['o_marks_awarded'],
+                "first_try": row['o_first_try'],
+                "is_bonus_winner": row['o_is_bonus_winner'],
+                "grade": row['o_grade'],
+                "current_streak": row['o_current_streak'],
+            }
+        except Exception as e:
+            last_exc = e
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            print(f"\n{Style.RED}[DATABASE EXCEPTION IN process_user_score]{Style.RESET}", flush=True)
+            print(f" ├─ Attempt:          {attempt}/{max_attempts}", flush=True)
+            print(f" ├─ Error Type:       {type(e).__name__}", flush=True)
+            print(f" ├─ Error Message:    {e}", flush=True)
+            if isinstance(e, psycopg2.Error):
+                print(f" ├─ PgSQL State Code: {e.pgcode}", flush=True)
+                print(f" ├─ PgSQL Error Msg:  {e.pgerror}", flush=True)
+            print(f" └─ Parameters:       user_id={user_id}, message_id={message_id}, q_id={q_id}, is_correct={is_correct}, selected_option={selected_option}", flush=True)
+
+            dlog_exception(
+                f"process_user_score (attempt {attempt}/{max_attempts}, "
+                f"user={user_id}, message_id={message_id}, q_id={q_id})",
+                e
+            )
+            if attempt < max_attempts:
+                dlog(f"[DEBUG-DB-SCORE] Retrying process_user_score for user={user_id}, "
+                     f"message_id={message_id} after transient failure...")
+                time.sleep(0.5)
+                continue
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+    dlog(f"[DEBUG-DB-SCORE] All {max_attempts} attempts failed for user={user_id}, "
+         f"message_id={message_id}. Raising last exception to caller.")
+    raise last_exc
 
 def db_try_start_tournament_round(message_id, q_id, display_id, round_seconds, round_number, total_rounds):
     conn = None
