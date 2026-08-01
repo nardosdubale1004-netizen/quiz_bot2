@@ -80,13 +80,17 @@ def _render_challenge_text(current_round, total_rounds, ref, remaining_seconds, 
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
 
     lines = [
-        f"⚔️ <b>LIVE TOURNAMENT CHALLENGE</b> • REF {ref} • Round <b>{curr_r}/{tot_r}</b>",
-        f"⏳ <b>{time_str} remaining</b>",
+        f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • Round {curr_r}/{tot_r} • REF {ref}</b>",
+        f"━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"⏳ <b>TIME REMAINING:</b> <code>{time_str}</code>",
+        f"<blockquote expandable>",
+        f"📖 <b>Question Canvas Preview:</b>\n<i>{question_preview}</i>",
+        f"</blockquote>"
     ]
     if submission_count is not None:
-        lines.append(f"\n✍️ <b>{submission_count}</b> submission(s) so far. Speed wins bonus marks!")
+        lines.append(f"\n✍️ <b>{submission_count} submissions logged.</b> Speed earns early bird bonuses!")
     else:
-        lines.append("\n<i>The lobby is open! Submit your answer before the timer expires!</i>")
+        lines.append("\n<i>Tap an option below to submit your answer! Your personal timer is running.</i>")
     return "\n".join(lines)
 
 
@@ -404,10 +408,13 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 )
 
             normal_close_text = (
-                f"{header}\n"
-                f"🏁 <b>ROUND CLOSED!</b>\n\n"
-                f"👥 <b>{total_users}</b> submission(s) • ✅ <b>{accuracy_pct}%</b> correct\n"
-                f"{podium_block}"
+                f"🏁 <b>ROUND COMPLETED • REF {last_seq}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"👥 <b>Submissions:</b> <code>{total_users} logged</code> │ ✅ <b>Accuracy:</b> <code>{accuracy_pct}% correct</code>\n\n"
+                f"🏆 <b>ROUND PODIUM (FASTEST):</b>\n"
+                f"<blockquote>\n"
+                f"{podium_block}\n"
+                f"</blockquote>\n"
                 f"{alliance_block}"
             )
 
@@ -507,10 +514,13 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""
 
                     final_completed_text = (
-                        f"🏁 <b>TOURNAMENT COMPLETED!</b> 🏁\n"
+                        f"🏆 <b>TOURNAMENT SERIES COMPLETED!</b> 🏆\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"All rounds in this showdown series have been resolved!\n"
-                        f"{champions_block}\n\n"
+                        f"All rounds in this competitive showdown series have been resolved!\n\n"
+                        f"🥇 <b>FINAL CHAMPIONS PODIUM:</b>\n"
+                        f"<blockquote expandable>\n"
+                        f"{champions_block}\n"
+                        f"</blockquote>\n\n"
                         f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
                     )
                     await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")

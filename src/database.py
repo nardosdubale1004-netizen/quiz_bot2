@@ -1577,17 +1577,17 @@ def db_update_tournament_meta_field(key: str, value):
 
 # --- MANY-TO-MANY ROSTER RELATION ENGINE ---
 
-def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School", is_public: bool = True) -> int:
+def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School", is_public: bool = True, city: str = "Addis Ababa", country: str = "Ethiopia") -> int:
     """Inserts a new school or academy mapping and returns its assigned org_id."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public)
-                VALUES (%s, UPPER(%s), %s, %s, %s)
+                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country)
+                VALUES (%s, UPPER(%s), %s, %s, %s, %s, %s)
                 RETURNING org_id;
-            """, (org_name, org_tag, str(creator_id), org_type, is_public))
+            """, (org_name, org_tag, str(creator_id), org_type, is_public, city, country))
             row = cur.fetchone()
             org_id = row['org_id']
             

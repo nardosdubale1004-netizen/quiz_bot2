@@ -9,6 +9,7 @@ import io
 import logging
 import signal
 import re
+import html
 from datetime import datetime, timezone
 
 logging.basicConfig(
@@ -343,6 +344,10 @@ async def start_command(update: Update, context):
                 return
 
             except Exception as e:
+                # Upgraded dynamic diagnostic pipeline to report actual Python tracebacks to user's Telegram DM
+                tb_str = traceback.format_exc()
+                error_class = type(e).__name__
+                
                 print("\n" + "#"*80, flush=True)
                 print(f"{Style.RED}[TRACE-CRITICAL-EXCEPTION] An error occurred while submitting a live tournament response!{Style.RESET}", flush=True)
                 print(f" ├─ Error Message:      {e}", flush=True)
@@ -353,17 +358,28 @@ async def start_command(update: Update, context):
                 traceback.print_exc()
                 print("#"*80 + "\n", flush=True)
 
-                # Send deep diagnostic traceback to standard log file on disk
                 try:
                     from src.debug_log import dlog_exception
                     dlog_exception(f"bot.py -> start_command active tournament crash (User={user_id}, DisplayID={display_id}, Mid={mid_key})", e)
                 except Exception:
                     pass
 
+                diagnostic_html = (
+                    f"⚠️ <b>Submission Error!</b>\n\n"
+                    f"Your response could not be saved right now. Please tap the option again in a few seconds — your round timer is still running.\n\n"
+                    f"🛠️ <b>DEVELOPER DIAGNOSTIC LOG:</b>\n"
+                    f"<blockquote>"
+                    f"<b>Error Class:</b> <code>{error_class}</code>\n"
+                    f"<b>Details:</b> <code>{html.escape(str(e))}</code>\n\n"
+                    f"<b>Traceback snippet:</b>\n"
+                    f"<code>{html.escape(tb_str[-400:])}</code>"
+                    f"</blockquote>"
+                )
+
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
-                    html_content="⚠️ <b>Submission Error!</b>\n\nYour response could not be saved right now. Please tap the option again in a few seconds — your round timer is still running.",
+                    html_content=diagnostic_html,
                     reply_markup=channel_kb
                 )
                 return
@@ -493,6 +509,9 @@ async def start_command(update: Update, context):
             print(f"{Style.GREEN}[TRACE-COMPLETE] First-time answering completed successfully.{Style.RESET}", flush=True)
             return
         except Exception as e:
+            tb_str = traceback.format_exc()
+            error_class = type(e).__name__
+            
             print("\n" + "#"*80, flush=True)
             print(f"{Style.RED}[CONSOLIDATED-FIX] Critical exception occurred inside standard explanation-rendering!{Style.RESET}", flush=True)
             print(f" ├─ Error Message:      {e}", flush=True)
@@ -509,7 +528,19 @@ async def start_command(update: Update, context):
             except Exception:
                 pass
 
-            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
+            diagnostic_html = (
+                f"⚠️ <b>Submission Error!</b>\n\n"
+                f"Your response could not be saved right now. Please try again in a few seconds.\n\n"
+                f"🛠️ <b>DEVELOPER DIAGNOSTIC LOG:</b>\n"
+                f"<blockquote>"
+                f"<b>Error Class:</b> <code>{error_class}</code>\n"
+                f"<b>Details:</b> <code>{html.escape(str(e))}</code>\n\n"
+                f"<b>Traceback snippet:</b>\n"
+                f"<code>{html.escape(tb_str[-400:])}</code>"
+                f"</blockquote>"
+            )
+
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=diagnostic_html, reply_markup=channel_kb)
             return
 
     # Check and render fallback grade profile if mapped
@@ -751,7 +782,7 @@ async def handle_fsm_message(update: Update, context):
             # Form conversational prompt with direct return navigation buttons
             await update.message.reply_text(
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍ Pals, enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
+                "✍ Enter a short, uppercase Code Tag identifier for your group (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
@@ -768,14 +799,64 @@ async def handle_fsm_message(update: Update, context):
             org_name = USER_PAYLOADS[user_id]["org_name"]
             
             try:
-                org_id = await asyncio.to_thread(db_create_organization, org_name, clean_tag, user_id)
+                # Add support for geographic location variables during Team Registration
+                USER_PAYLOADS[user_id]["org_tag"] = clean_tag
+                USER_STATES[user_id] = "AWAITING_ORG_CITY"
+                
+                await update.message.reply_text(
+                    f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
+                    "✍ <b>PROMPT: Team City Location</b>\n"
+                    "Please enter the city where your school or academy is located:\n"
+                    "<i>(Example: Addis Ababa)</i>",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+                    ]]),
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                await update.message.reply_text("⚠️ Setup failed due to a database exception. Please try again.")
+
+        elif state == "AWAITING_ORG_CITY":
+            clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            if not clean_city:
+                await update.message.reply_text("⚠️ Invalid city name. Please try again.")
+                return
+            
+            USER_PAYLOADS[user_id]["org_city"] = clean_city
+            USER_STATES[user_id] = "AWAITING_ORG_COUNTRY"
+            
+            await update.message.reply_text(
+                f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
+                "✍ <b>PROMPT: Team Country Location</b>\n"
+                "Please enter the country where your school or academy is located:\n"
+                "<i>(Example: Ethiopia)</i>",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+                ]]),
+                parse_mode="HTML"
+            )
+
+        elif state == "AWAITING_ORG_COUNTRY":
+            clean_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            if not clean_country:
+                await update.message.reply_text("⚠️ Invalid country name. Please try again.")
+                return
+            
+            org_name = USER_PAYLOADS[user_id]["org_name"]
+            org_tag = USER_PAYLOADS[user_id]["org_tag"]
+            org_city = USER_PAYLOADS[user_id]["org_city"]
+            
+            try:
+                # Create the organization with full geographic variables
+                org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "School", True, org_city, clean_country)
                 USER_STATES[user_id] = "IDLE"
                 USER_PAYLOADS.pop(user_id, None)
                 
                 await update.message.reply_text(
                     f"✅ <b>Alliance Registered Successfully!</b>\n\n"
                     f"🏫 Institution: <b>{org_name}</b>\n"
-                    f"🔑 Short Domain Tag: <code>#{clean_tag}</code>\n\n"
+                    f"🔑 Short Domain Tag: <code>#{org_tag}</code>\n"
+                    f"📍 Location: <b>{org_city}, {clean_country}</b>\n\n"
                     f"Provide this Tag to your student members so they can link and aggregate scores collectively!",
                     reply_markup=profile_nav_kb,
                     parse_mode="HTML"
@@ -783,7 +864,7 @@ async def handle_fsm_message(update: Update, context):
             except Exception as e:
                 if "unique" in str(e).lower() or "duplicate" in str(e).lower():
                     await update.message.reply_text(
-                        f"⚠️ Error: The tag <code>#{clean_tag}</code> is already registered. Enter a unique tag:",
+                        f"⚠️ Error: The tag <code>#{org_tag}</code> is already registered. Enter a unique tag:",
                         reply_markup=InlineKeyboardMarkup([[
                             InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
                         ]]),
@@ -795,17 +876,46 @@ async def handle_fsm_message(update: Update, context):
         elif state == "AWAITING_ORG_JOIN":
             clean_tag = re.sub(r'\W', '', text_input).upper().strip()
             
-            org_name = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
-            if org_name:
+            # Map join response to structural anti-cheat pipeline
+            join_data = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
+            if join_data:
                 USER_STATES[user_id] = "IDLE"
                 USER_PAYLOADS.pop(user_id, None)
-                await update.message.reply_text(
-                    f"✅ <b>Integrated Successfully!</b>\n\n"
-                    f"You are now registered as a student member of <b>{org_name}</b> (<code>#{clean_tag}</code>).\n"
-                    f"Your correct answers will automatically scale points for your alliance global scoreboard!",
-                    reply_markup=profile_nav_kb,
-                    parse_mode="HTML"
-                )
+                
+                if join_data["role_assigned"] == "pending":
+                    response_text = (
+                        f"📥 <b>ADMISSION REQ SENT!</b>\n\n"
+                        f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>).\n"
+                        f"Since this is a Public Team, the group Creator/Admin has been notified. You will appear on their roster once they approve your admission!"
+                    )
+                    
+                    # Notify organization creator of pending admission request with direct approve buttons
+                    try:
+                        approve_kb = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🟢 APPROVE MEMBER", callback_data=f"process_req|{join_data['org_id']}|{user_id}|1"),
+                             InlineKeyboardButton("🔴 REJECT MEMBER", callback_data=f"process_req|{join_data['org_id']}|{user_id}|0")]
+                        ])
+                        await context.bot.send_message(
+                            chat_id=int(join_data["creator_id"]),
+                            text=(
+                                f"📥 <b>NEW ADMISSION REQUEST DETECTED!</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                                f"Student <b>{html.escape(user.first_name)}</b> is requesting to join your team: <b>{join_data['org_name']}</b>.\n"
+                                f"Review and process their request below:"
+                            ),
+                            reply_markup=approve_kb,
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                else:
+                    response_text = (
+                        f"✅ <b>Integrated Successfully!</b>\n\n"
+                        f"You are now registered as a student member of <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>).\n"
+                        f"Your correct answers will automatically scale points for your alliance global scoreboard!"
+                    )
+                
+                await update.message.reply_text(response_text, reply_markup=profile_nav_kb, parse_mode="HTML")
             else:
                 await update.message.reply_text(
                     f"⚠️ Alliance code <code>#{clean_tag}</code> does not exist on our records. Please enter a valid Tag:",
