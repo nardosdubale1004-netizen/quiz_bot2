@@ -227,7 +227,6 @@ async def start_command(update: Update, context):
         payload = args[0]
         print(f"\n{Style.YELLOW}[TRACE-STEP 1] Detected deep-linked answering argument payload: '{payload}'{Style.RESET}", flush=True)
 
-        # --- Parse the payload first, outside any answer-specific try/except ---
         try:
             _, ref_id, choice_idx_str = payload.split("_")
             display_id = int(ref_id)
@@ -277,7 +276,7 @@ async def start_command(update: Update, context):
             )
             return
 
-        # --- TOURNAMENT BRANCH: its own try/except with a submission-specific message ---
+        # --- TOURNAMENT BRANCH: Answering block ---
         if track_status == "tournament_active":
             try:
                 print(f"[TRACE-STEP 3] Active tournament round detected. Reading student history...", flush=True)
@@ -328,7 +327,7 @@ async def start_command(update: Update, context):
 
             except Exception as e:
                 print("\n" + "#"*80, flush=True)
-                print(f"{Style.RED}[TRACE-CRITICAL] An error occurred while submitting a live tournament response!{Style.RESET}", flush=True)
+                print(f"{Style.RED}[TRACE-CRITICAL-EXCEPTION] An error occurred while submitting a live tournament response!{Style.RESET}", flush=True)
                 print(f" ├─ Error Message:      {e}", flush=True)
                 print(f" ├─ User ID:            {user_id}", flush=True)
                 print(f" ├─ display_id:         {display_id}", flush=True)
@@ -344,7 +343,7 @@ async def start_command(update: Update, context):
                 )
                 return
 
-        # --- STANDARD (non-tournament) BRANCH: its own try/except, original "explanation" message ---
+        # --- STANDARD (non-tournament) BRANCH ---
         try:
             print(f"[TRACE-STEP 3] Standard (non-tournament) active quiz path. Fetching history...", flush=True)
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
@@ -470,7 +469,7 @@ async def start_command(update: Update, context):
             return
         except Exception as e:
             print("\n" + "#"*80, flush=True)
-            print(f"{Style.RED}[TRACE-CRITICAL] An error occurred inside standard explanation-rendering handler!{Style.RESET}", flush=True)
+            print(f"{Style.RED}[CONSOLIDATED-FIX] Critical exception occurred inside standard explanation-rendering!{Style.RESET}", flush=True)
             print(f" ├─ Error Message:      {e}", flush=True)
             print(f" ├─ User ID:            {user_id}", flush=True)
             print(f" ├─ display_id variable: {display_id if 'display_id' in locals() else 'None'}", flush=True)
@@ -490,7 +489,6 @@ async def start_command(update: Update, context):
         accuracy = int((profile['correct'] / profile['total']) * 100) if profile['total'] > 0 else 0
         streak = profile.get('current_streak', 0)
 
-        # Uses fallback helper for profile layout
         public_name = format_public_name(profile)
         alliance_info = f"├─ Study Alliance:  <b>#{profile['alliance_tag']}</b>\n" if profile.get('alliance_tag') else ""
 
@@ -543,7 +541,6 @@ async def school_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
 
-    # Sync profile parameters
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     if not context.args:
@@ -567,7 +564,6 @@ async def name_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
 
-    # Sync real Telegram details
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     if not context.args:
@@ -577,7 +573,7 @@ async def name_command(update: Update, context):
             "<i>Example:</i> <code>/name Einstein_12</code>\n\n"
             "If you want to clear your custom nickname and use your Telegram username or first name instead, type <code>/name clear</code>.",
             parse_mode="HTML"
-        )
+                )
         return
 
     nickname = " ".join(context.args).strip()
@@ -586,7 +582,6 @@ async def name_command(update: Update, context):
         await update.message.reply_text("✅ Your custom nickname has been cleared. The system will fall back to your Telegram username or first name on public standings.", parse_mode="HTML")
         return
 
-    # Sanitize input to prevent styling injection or overflow
     clean_name = re.sub(r'[^\w\s\-@]', '', nickname)[:20].strip()
     if not clean_name:
         await update.message.reply_text("⚠️ Invalid nickname format. Please use alphanumeric characters, underscores, or dashes (max 20 characters).")
@@ -604,7 +599,6 @@ async def leaderboard_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
 
-    # Auto-sync real Telegram parameters
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     args = context.args
@@ -662,7 +656,6 @@ async def leaderboard_command(update: Update, context):
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, row in enumerate(weekly_top):
-        # Format the top list profiles using format_public_name
         user_label = format_public_name(row)
         leaderboard_text.append(f" {medals[i]} {user_label} — <b>{row['total_score']} Marks</b>")
 
@@ -793,17 +786,6 @@ def main():
         else:
             print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local getUpdates polling is bypassed (Cloud handles incoming webhook/callbacks).{Style.RESET}", flush=True)
 
-        # FIX: These two background loops must ALWAYS run locally, independent of
-        # DISABLE_LOCAL_POLLING. That flag only controls whether THIS process
-        # polls Telegram for incoming updates (which would conflict with a
-        # webhook-based Cloud instance) — it has nothing to do with who advances
-        # the tournament queue or publishes scheduled questions. Both loops are
-        # safe to run concurrently with a Cloud instance because they coordinate
-        # through DB-level locking (pg_advisory_xact_lock, ON CONFLICT DO NOTHING,
-        # _LAUNCH_LOCK). Previously, when DISABLE_LOCAL_POLLING=true, NOBODY ran
-        # these loops locally, so a tournament launched from the local CLI would
-        # get stuck after round 1 forever if no separate Cloud instance was
-        # actually deployed and running.
         asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
         asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
         print(f"{Style.GREEN}[DEBUG-FIX] Background loops (scheduler + tournament watcher) are running locally.{Style.RESET}", flush=True)
