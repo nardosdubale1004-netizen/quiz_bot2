@@ -34,13 +34,13 @@ _FINALIZING_ROUNDS = set()
 _LAST_COUNTDOWN_TEXT = {}
 _LAUNCH_LOCK = asyncio.Lock()
 
-# FIX: Initialize the central tracking reference to float 0.0 using database-side clock checks.
-_LAST_ROUND_CLOSED_AT = 0.0
-
 # Central tracking for live interval and delay countdown messaging
 _COOLDOWN_MID = None
 _LAST_COOLDOWN_VAL = -1
 _LAST_DELAY_VAL = -1
+
+# FIX: Initialize the global closed tracking value to 0.0, referencing the shared database clock environment.
+_LAST_ROUND_CLOSED_AT = 0.0
 
 def run_graceful_shutdown_sync():
     """Synchronous wrapper to execute emergency_shutdown_cleanup from any thread/context."""
@@ -526,7 +526,7 @@ async def emergency_shutdown_cleanup(app, engine: QuizEngine):
         if has_more_queued:
             print(f"{Style.GREEN}[SHUTDOWN] {len(queue['remaining_ids'])} queued question(s) preserved — will resume on restart.{Style.RESET}", flush=True)
     except Exception as e:
-        print(f"{Style.RED}[SHUTDOWN ERROR] Sweep execution failed: {e}{Style.RESET}", flush=True)
+        print(f"[SHUTDOWN ERROR] Sweep execution failed: {e}{Style.RESET}", flush=True)
 
 async def halt_active_tournament(app, engine: QuizEngine, clear_queue: bool = False, halt_reason: str = None):
     """Gracefully halts the currently executing tournament round and updates its status."""

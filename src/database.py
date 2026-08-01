@@ -759,6 +759,15 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # FIX: Force strict list sanitization check before writing to PostgreSQL JSON column type to prevent parsing collisions.
+            if isinstance(remaining_ids, str):
+                try:
+                    remaining_ids = json.loads(remaining_ids)
+                except Exception:
+                    remaining_ids = []
+
+            print(f"[DEBUG-DB-SAVE-QUEUE] Saving remaining_ids: {remaining_ids} (total={total_count}, display_id_offset={last_seq}) to database.", flush=True)
+            
             cur.execute("""
                 INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds)
                 VALUES (1, %s, %s, %s, %s, %s, %s, %s)
@@ -786,7 +795,19 @@ def db_get_tournament_queue():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM tournament_queue WHERE id = 1;")
             row = cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            res = dict(row)
+            
+            # FIX: Robust fallback translation. If driver retrieves JSON column as standard string, force deserialize back to list.
+            if isinstance(res.get('remaining_ids'), str):
+                try:
+                    res['remaining_ids'] = json.loads(res['remaining_ids'])
+                except Exception:
+                    res['remaining_ids'] = []
+            
+            print(f"[DEBUG-DB-GET-QUEUE] Retrieved row from DB: {res}", flush=True)
+            return res
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch tournament queue: {e}")
         return None
@@ -801,18 +822,32 @@ def db_pop_tournament_question():
         with conn.cursor() as cur:
             cur.execute("SELECT remaining_ids, last_seq FROM tournament_queue WHERE id = 1 FOR UPDATE;")
             row = cur.fetchone()
-            if not row or not row['remaining_ids']:
+            if not row:
+                conn.commit()
+                return None, None
+            
+            remaining = row['remaining_ids']
+            if isinstance(remaining, str):
+                try:
+                    remaining = json.loads(remaining)
+                except Exception:
+                    remaining = []
+                    
+            if not remaining:
+                print("[DEBUG-DB-POP] Remaining ids is empty. Aborting pop.", flush=True)
                 conn.commit()
                 return None, None
 
             cur.execute("SELECT 1 FROM sent_tracks WHERE status = 'tournament_active' LIMIT 1;")
             if cur.fetchone():
+                print("[DEBUG-DB-POP] Active live round already detected in tracks table. Bypassing popping.", flush=True)
                 conn.commit()
                 return None, None
 
-            remaining = row['remaining_ids']
             next_id = remaining.pop(0)
             new_last_seq = row['last_seq'] + 1
+            
+            print(f"[DEBUG-DB-POP] Popped next tournament question: '{next_id}'. New remaining queue: {remaining}", flush=True)
             cur.execute(
                 "UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;",
                 (Json(remaining), new_last_seq)
