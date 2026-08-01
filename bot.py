@@ -226,6 +226,8 @@ async def start_command(update: Update, context):
     if args and args[0].startswith("ans_"):
         payload = args[0]
         print(f"\n{Style.YELLOW}[TRACE-STEP 1] Detected deep-linked answering argument payload: '{payload}'{Style.RESET}", flush=True)
+
+        # --- Parse the payload first, outside any answer-specific try/except ---
         try:
             _, ref_id, choice_idx_str = payload.split("_")
             display_id = int(ref_id)
@@ -255,17 +257,29 @@ async def start_command(update: Update, context):
             track_status = track.get('status')
             mid_key = track['message_id']
 
-            if track_status == "tournament_closed":
-                print(f"[TRACE-STEP 3] Locked out: Round is closed for display_id: {display_id}", flush=True)
-                await send_rich_message_safe(
-                    context.bot,
-                    chat_id=update.message.chat_id,
-                    html_content="⚠️ <b>Round Closed!</b>\n\nSubmissions are no longer accepted for this tournament question.",
-                    reply_markup=channel_kb
-                )
-                return
+        except Exception as e:
+            print("\n" + "#"*80, flush=True)
+            print(f"{Style.RED}[TRACE-CRITICAL] Failed to parse deep-link payload or fetch track/question!{Style.RESET}", flush=True)
+            print(f" ├─ Error Message:      {e}", flush=True)
+            print(f" └─ Raw Payload:        {payload}", flush=True)
+            traceback.print_exc()
+            print("#"*80 + "\n", flush=True)
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This link appears to be invalid or expired. Please try again from the channel.", reply_markup=channel_kb)
+            return
 
-            if track_status == "tournament_active":
+        if track_status == "tournament_closed":
+            print(f"[TRACE-STEP 3] Locked out: Round is closed for display_id: {display_id}", flush=True)
+            await send_rich_message_safe(
+                context.bot,
+                chat_id=update.message.chat_id,
+                html_content="⚠️ <b>Round Closed!</b>\n\nSubmissions are no longer accepted for this tournament question.",
+                reply_markup=channel_kb
+            )
+            return
+
+        # --- TOURNAMENT BRANCH: its own try/except with a submission-specific message ---
+        if track_status == "tournament_active":
+            try:
                 print(f"[TRACE-STEP 3] Active tournament round detected. Reading student history...", flush=True)
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
@@ -280,7 +294,7 @@ async def start_command(update: Update, context):
 
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
                 is_correct = (user_selection == question_data['correct_option'])
-                
+
                 print(f"[TRACE-STEP 5] Calling process_user_score in database module...", flush=True)
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
                 if perf_card is None:
@@ -312,6 +326,26 @@ async def start_command(update: Update, context):
                 print(f"{Style.GREEN}[TRACE-COMPLETE] Answering sequence finished cleanly for tournament round.{Style.RESET}", flush=True)
                 return
 
+            except Exception as e:
+                print("\n" + "#"*80, flush=True)
+                print(f"{Style.RED}[TRACE-CRITICAL] An error occurred while submitting a live tournament response!{Style.RESET}", flush=True)
+                print(f" ├─ Error Message:      {e}", flush=True)
+                print(f" ├─ User ID:            {user_id}", flush=True)
+                print(f" ├─ display_id:         {display_id}", flush=True)
+                print(f" └─ mid_key:            {mid_key}", flush=True)
+                print(" └─ Stack Trace details:", flush=True)
+                traceback.print_exc()
+                print("#"*80 + "\n", flush=True)
+                await send_rich_message_safe(
+                    context.bot,
+                    chat_id=update.message.chat_id,
+                    html_content="⚠️ <b>Submission Error!</b>\n\nYour response could not be saved right now. Please tap the option again in a few seconds — your round timer is still running.",
+                    reply_markup=channel_kb
+                )
+                return
+
+        # --- STANDARD (non-tournament) BRANCH: its own try/except, original "explanation" message ---
+        try:
             print(f"[TRACE-STEP 3] Standard (non-tournament) active quiz path. Fetching history...", flush=True)
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
 
@@ -436,7 +470,7 @@ async def start_command(update: Update, context):
             return
         except Exception as e:
             print("\n" + "#"*80, flush=True)
-            print(f"{Style.RED}[TRACE-CRITICAL] An error occurred inside deep-link answering handler!{Style.RESET}", flush=True)
+            print(f"{Style.RED}[TRACE-CRITICAL] An error occurred inside standard explanation-rendering handler!{Style.RESET}", flush=True)
             print(f" ├─ Error Message:      {e}", flush=True)
             print(f" ├─ User ID:            {user_id}", flush=True)
             print(f" ├─ display_id variable: {display_id if 'display_id' in locals() else 'None'}", flush=True)
@@ -755,15 +789,24 @@ def main():
         if not disable_polling:
             print("Clearing active webhook to prevent polling conflict...", flush=True)
             loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
-
             loop.run_until_complete(app.updater.start_polling())
-
-            asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
-            asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
         else:
-            print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local Telegram polling is bypassed.{Style.RESET}", flush=True)
-            print(f"{Style.YELLOW}Outbound dashboard active. Cloud handles webhook/callbacks for students.{Style.RESET}", flush=True)
-            print(f"{Style.YELLOW}[DEBUG-FIX] Local background loop runners are disabled here. Ensure your Cloud server instance is up and active to process scheduled items!{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local getUpdates polling is bypassed (Cloud handles incoming webhook/callbacks).{Style.RESET}", flush=True)
+
+        # FIX: These two background loops must ALWAYS run locally, independent of
+        # DISABLE_LOCAL_POLLING. That flag only controls whether THIS process
+        # polls Telegram for incoming updates (which would conflict with a
+        # webhook-based Cloud instance) — it has nothing to do with who advances
+        # the tournament queue or publishes scheduled questions. Both loops are
+        # safe to run concurrently with a Cloud instance because they coordinate
+        # through DB-level locking (pg_advisory_xact_lock, ON CONFLICT DO NOTHING,
+        # _LAUNCH_LOCK). Previously, when DISABLE_LOCAL_POLLING=true, NOBODY ran
+        # these loops locally, so a tournament launched from the local CLI would
+        # get stuck after round 1 forever if no separate Cloud instance was
+        # actually deployed and running.
+        asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
+        asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
+        print(f"{Style.GREEN}[DEBUG-FIX] Background loops (scheduler + tournament watcher) are running locally.{Style.RESET}", flush=True)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
