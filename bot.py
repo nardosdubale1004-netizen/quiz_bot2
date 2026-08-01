@@ -182,7 +182,7 @@ async def check_and_publish_scheduled(app):
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
                     media_bytes = None
-                    if img_url and not cached_file_id:
+                    if img_url && not cached_file_id:
                         async with httpx.AsyncClient() as client:
                             resp = await fetch_kroki_image(client, img_url)
                             if resp and resp.status_code == 200:
@@ -782,7 +782,7 @@ async def handle_fsm_message(update: Update, context):
             # Form conversational prompt with direct return navigation buttons
             await update.message.reply_text(
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍ Enter a short, uppercase Code Tag identifier for your group (2-15 characters, no spaces):\n"
+                "✍ Enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
@@ -1033,55 +1033,53 @@ def main():
             loop.run_until_complete(app.shutdown())
             print(f"System successfully shut down.", flush=True)
     else:
-        print("Starting local Admin Dashboard cockpit...", flush=True)
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        src.config.ACTIVE_LOOP = loop
-
-        loop.run_until_complete(app.initialize())
-        loop.run_until_complete(app.start())
-
-        disable_polling = os.getenv("DISABLE_LOCAL_POLLING", "false").lower() == "true"
-
-        if not disable_polling:
-            print("Clearing active webhook to prevent polling conflict...", flush=True)
-            loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
-            loop.run_until_complete(app.updater.start_polling())
-
-            # Bypassed local loop setups to restrict running active watchdog/schedulers 
-            # only when this cockpit is in true standalone local polling mode.
-            asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
-            asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
-            print(f"{Style.GREEN}[DEBUG-FIX] Background loops (scheduler + tournament watcher) are running locally.{Style.RESET}", flush=True)
-        else:
-            print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local getUpdates polling is bypassed (Cloud handles incoming webhook/callbacks).{Style.RESET}", flush=True)
-            print(f"{Style.YELLOW}⚠️  [COLLISION-PREVENTION] Background scheduler + watcher loops are bypassed locally because Cloud acts as active watchdog.{Style.RESET}", flush=True)
-
-        bot_info = loop.run_until_complete(app.bot.get_me())
-        CONFIG["bot_username"] = bot_info.username
-        print(f"Quiz Master Pro Admin Client is online and connected to {channel}.", flush=True)
-
-        try:
-            loop.run_until_complete(app.bot.set_my_commands(BOT_COMMANDS))
-            print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
-        except Exception as e:
-            print(f"{Style.YELLOW}[WARNING] Failed to register bot commands: {e}{Style.RESET}", flush=True)
-
+        # Prevent the local dashboard from starting loops when attached as TTY Client
         run_cli = sys.stdin.isatty()
         if run_cli:
+            print("Starting local Admin Dashboard cockpit...", flush=True)
+            print(f"{Style.YELLOW}⚠️  [COLLISION-PREVENTION] Local background loops (scheduler + tournament watcher) are BYPASSED in interactive TTY mode.{Style.RESET}", flush=True)
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            src.config.ACTIVE_LOOP = loop
+
+            loop.run_until_complete(app.initialize())
+            loop.run_until_complete(app.start())
+
+            bot_info = loop.run_until_complete(app.bot.get_me())
+            CONFIG["bot_username"] = bot_info.username
+            print(f"Quiz Master Pro Admin Client is online and connected to @{bot_info.username}.", flush=True)
+
+            try:
+                loop.run_until_complete(app.bot.set_my_commands(BOT_COMMANDS))
+                print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
+            except Exception as e:
+                print(f"{Style.YELLOW}[WARNING] Failed to register bot commands: {e}{Style.RESET}", flush=True)
+
             try:
                 loop.run_until_complete(admin_panel(app, engine))
             except KeyboardInterrupt:
                 pass
             finally:
                 loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
-                if not disable_polling:
-                    loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
         else:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            src.config.ACTIVE_LOOP = loop
+
+            loop.run_until_complete(app.initialize())
+            loop.run_until_complete(app.start())
+
+            # Only run background watchers on non-interactive instances (Cloud web service container)
+            asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
+            asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
+
+            bot_info = loop.run_until_complete(app.bot.get_me())
+            CONFIG["bot_username"] = bot_info.username
+
             async def keep_alive():
                 while True:
                     await asyncio.sleep(3600)
@@ -1091,8 +1089,6 @@ def main():
                 pass
             finally:
                 loop.run_until_complete(emergency_shutdown_cleanup(app, engine))
-                if not disable_polling:
-                    loop.run_until_complete(app.updater.stop())
                 loop.run_until_complete(app.stop())
                 loop.run_until_complete(app.shutdown())
                 print(f"System successfully shut down.", flush=True)
