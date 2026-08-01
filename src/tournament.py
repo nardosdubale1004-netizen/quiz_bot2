@@ -243,7 +243,8 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             round_seconds, current_round, total_rounds
         )
         if not claimed:
-            print(f"{Style.YELLOW}[DEBUG-LAUNCH] Round already active elsewhere — aborting duplicate launch for REF {last_seq}.{Style.RESET}", flush=True)
+            from src.debug_log import dlog
+            dlog(f"[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.")
             return
 
         from src.typography import lite_math
@@ -736,6 +737,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         await asyncio.to_thread(db_clear_tournament_queue)
                         continue
 
+                    dlog(f"[DEBUG-POP-ATTEMPT] Watcher attempting to pop from queue. remaining_ids={fresh_queue.get('remaining_ids')}")
                     next_qid, next_seq = await asyncio.to_thread(db_pop_tournament_question)
                     dlog(f"[DEBUG-WATCHER] db_pop_tournament_question returned next_qid={next_qid}, next_seq={next_seq}")
                     if next_qid:
