@@ -10,7 +10,6 @@ import logging
 import signal
 import re
 from datetime import datetime, timezone
-from src.debug_log import dlog, dlog_exception
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -259,11 +258,18 @@ async def start_command(update: Update, context):
 
         except Exception as e:
             print("\n" + "#"*80, flush=True)
-            print(f"{Style.RED}[TRACE-CRITICAL] Failed to parse deep-link payload or fetch track/question!{Style.RESET}", flush=True)
+            print(f"{Style.RED}[TRACE-CRITICAL-EXCEPTION] Failed to parse deep-link payload or fetch track/question!{Style.RESET}", flush=True)
             print(f" ├─ Error Message:      {e}", flush=True)
             print(f" └─ Raw Payload:        {payload}", flush=True)
             traceback.print_exc()
             print("#"*80 + "\n", flush=True)
+
+            try:
+                from src.debug_log import dlog_exception
+                dlog_exception(f"bot.py -> Parse deep-link/fetch track failed (payload={payload})", e)
+            except Exception:
+                pass
+
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This link appears to be invalid or expired. Please try again from the channel.", reply_markup=channel_kb)
             return
 
@@ -299,6 +305,13 @@ async def start_command(update: Update, context):
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
                 if perf_card is None:
                     print(f"{Style.RED}[TRACE-FAILURE] process_user_score returned None! Database transaction failed.{Style.RESET}", flush=True)
+                    
+                    try:
+                        from src.debug_log import dlog
+                        dlog(f"[TRACE-ERROR] process_user_score returned None for user {user_id}, mid {mid_key}")
+                    except Exception:
+                        pass
+
                     await send_rich_message_safe(
                         context.bot,
                         chat_id=update.message.chat_id,
@@ -327,8 +340,23 @@ async def start_command(update: Update, context):
                 return
 
             except Exception as e:
-                dlog(f"[TRACE-CRITICAL-EXCEPTION] Tournament submission failed | user_id={user_id} | display_id={display_id} | mid_key={mid_key}")
-                dlog_exception("start_command tournament_active branch", e)
+                print("\n" + "#"*80, flush=True)
+                print(f"{Style.RED}[TRACE-CRITICAL-EXCEPTION] An error occurred while submitting a live tournament response!{Style.RESET}", flush=True)
+                print(f" ├─ Error Message:      {e}", flush=True)
+                print(f" ├─ User ID:            {user_id}", flush=True)
+                print(f" ├─ display_id:         {display_id}", flush=True)
+                print(f" └─ mid_key:            {mid_key}", flush=True)
+                print(" └─ Stack Trace details:", flush=True)
+                traceback.print_exc()
+                print("#"*80 + "\n", flush=True)
+
+                # Send deep diagnostic traceback to standard log file on disk
+                try:
+                    from src.debug_log import dlog_exception
+                    dlog_exception(f"bot.py -> start_command active tournament crash (User={user_id}, DisplayID={display_id}, Mid={mid_key})", e)
+                except Exception:
+                    pass
+
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -471,6 +499,12 @@ async def start_command(update: Update, context):
             print(" └─ Stack Trace details:", flush=True)
             traceback.print_exc()
             print("#"*80 + "\n", flush=True)
+
+            try:
+                from src.debug_log import dlog_exception
+                dlog_exception(f"bot.py -> start_command standard answering crash (User={user_id}, DisplayID={display_id if 'display_id' in locals() else 'None'})", e)
+            except Exception:
+                pass
 
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Failed to load your explanation. Please try again.", reply_markup=channel_kb)
             return
@@ -777,12 +811,15 @@ def main():
             print("Clearing active webhook to prevent polling conflict...", flush=True)
             loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
             loop.run_until_complete(app.updater.start_polling())
+
+            # Bypassed local loop setups to restrict running active watchdog/schedulers 
+            # only when this cockpit is in true standalone local polling mode.
+            asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
+            asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
+            print(f"{Style.GREEN}[DEBUG-FIX] Background loops (scheduler + tournament watcher) are running locally.{Style.RESET}", flush=True)
         else:
             print(f"{Style.YELLOW}⚠️  DISABLE_LOCAL_POLLING is active. Local getUpdates polling is bypassed (Cloud handles incoming webhook/callbacks).{Style.RESET}", flush=True)
-
-        asyncio.ensure_future(check_and_publish_scheduled(app), loop=loop)
-        asyncio.ensure_future(tournament_watcher_loop(app, engine, poll_seconds=2), loop=loop)
-        print(f"{Style.GREEN}[DEBUG-FIX] Background loops (scheduler + tournament watcher) are running locally.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}⚠️  [COLLISION-PREVENTION] Background scheduler + watcher loops are bypassed locally because Cloud acts as active watchdog.{Style.RESET}", flush=True)
 
         bot_info = loop.run_until_complete(app.bot.get_me())
         CONFIG["bot_username"] = bot_info.username
