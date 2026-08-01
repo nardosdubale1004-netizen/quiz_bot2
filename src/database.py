@@ -352,6 +352,8 @@ class QuizEngine:
             for _ in range(3):
                 try:
                     conn = QuizEngine._pool.getconn()
+                    # FORCE AUTOCOMMIT TO PREVENT STALE TRANSACTION LOCKS & LEAKS ACROSS DUAL PROCESSES
+                    conn.autocommit = True
                     conn.cursor_factory = RealDictCursor
 
                     if conn.closed == 0:
@@ -371,11 +373,13 @@ class QuizEngine:
                     print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool checkout failed: {e}{Style.RESET}")
                     break
 
-        return psycopg2.connect(
+        conn = psycopg2.connect(
             self.db_url,
             cursor_factory=RealDictCursor,
             connect_timeout=5
         )
+        conn.autocommit = True
+        return conn
 
     def release_connection(self, conn):
         if not conn:
