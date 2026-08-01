@@ -319,6 +319,7 @@ async def start_command(update: Update, context):
                     ),
                     reply_markup=channel_kb
                 )
+                # ... existing bot.py logic ...
                 if confirmation_msg:
                     print(f" └─ Placeholder message delivered with ID: {confirmation_msg.message_id}. Saving message reference...", flush=True)
                     await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, confirmation_msg.message_id)
@@ -335,6 +336,14 @@ async def start_command(update: Update, context):
                 print(" └─ Stack Trace details:", flush=True)
                 traceback.print_exc()
                 print("#"*80 + "\n", flush=True)
+
+                # --- ADDED: Write traceback directly to file-backed debug log ---
+                try:
+                    from src.debug_log import dlog_exception
+                    dlog_exception(f"bot.py -> start_command (Tournament active submission failed) | User: {user_id} | Display ID: {display_id} | Message ID: {mid_key}", e)
+                except Exception:
+                    pass
+
                 await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
