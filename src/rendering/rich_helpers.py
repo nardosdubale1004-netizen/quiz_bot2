@@ -6,27 +6,11 @@ from src.config import CONFIG, Style
 from src.typography import lite_math
 from src.http_client import get_shared_client
 from src.perf import timed
+from src.rendering.html_views import smart_truncate_html
 
 def convert_to_legacy_html(rich_html: str) -> str:
     """
     Converts advanced Rich HTML tags to standard, safe legacy Telegram HTML tags.
-
-    IMPORTANT: <tg-math> and <tg-math-block> are NOT real Telegram Bot API tags.
-    They are only understood by the custom sendRichMessage/editMessageText
-    endpoint used in TIER 1 of send_rich_message_safe/edit_rich_message_safe.
-    The real api.telegram.org HTML parser (used by python-telegram-bot's
-    bot.send_message / bot.edit_message_text, i.e. TIER 2/3 here) has never
-    heard of <tg-math> and will reject the entire request with:
-        "Can't parse entities: unsupported start tag "tg-math""
-    Previously this function just passed <tg-math>/<tg-math-block> straight
-    through as if they were "supported legacy tags", which meant any time
-    TIER 1 failed (e.g. stale message ID -> "message to edit not found")
-    the TIER 2/3 fallback would ALSO fail on any question containing formulas,
-    crashing bulk operations like `clean` or ranged closes.
-
-    Fix: convert <tg-math>/<tg-math-block> content to plain unicode math via
-    lite_math() BEFORE the generic tag-stripping pass runs, and remove them
-    from the "supported" whitelist so they are never passed through raw.
     """
     if not rich_html:
         return ""
@@ -56,10 +40,8 @@ def convert_to_legacy_html(rich_html: str) -> str:
     text = re.sub(r'</li>', "\n", text)
     text = re.sub(r'</?u[lo](?:\s+[^>]*)?>', "", text)
 
-    # FIX: Convert line breaks, paragraph tags, and image elements to standard formats
-    # supported natively by the Telegram Bot API HTML parser. This prevents TIER 3 
-    # fallback crashes from entity parsing errors.
-    print(f"[DEBUG-LEGACY-CONVERT] Sanitizing and stripping layout tags (<br>, <p>, <img>) from payload of size {len(rich_html)}", flush=True)
+    # Convert line breaks, paragraph tags, and image elements to standard formats
+    # supported natively by the Telegram Bot API HTML parser.
     text = text.replace("<br/>", "\n").replace("<br>", "\n")
     text = text.replace("<p>", "").replace("</p>", "\n")
     text = re.sub(r'<img[^>]*>', "", text)
@@ -84,8 +66,6 @@ def convert_to_legacy_html(rich_html: str) -> str:
     text = re.sub(r'<table>(.*?)</table>', table_sub, text, flags=re.DOTALL)
 
     # Safe allowed standard formatting elements supported by Telegram Bot API.
-    # tg-math / tg-math-block intentionally REMOVED — they are converted above,
-    # not passed through, since the real parser doesn't understand them.
     supported_legacy_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
         "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote"
@@ -112,7 +92,7 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
 
     print(f"\033[96m[RICH MESSENGER]\033[0m Attempting rich delivery to Chat: {chat_id} (media present: {has_media}, file_id cached: {file_id is not None})", flush=True)
 
-    # --- TIER 1: native python-telegram-bot library helper, if this build of the library has it ---
+    # --- TIER 1: native python-telegram-bot library helper ---
     for method_name in ["send_rich_message", "sendRichMessage"]:
         if hasattr(bot, method_name):
             try:
@@ -143,56 +123,79 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
 
     # --- TIER 2: raw HTTP POST to /sendRichMessage using the SHARED pooled client ---
     try:
-        client = get_shared_client()
-        url = f"https://api.telegram.org/bot{bot.token}/sendRichMessage"
-        rich_html = normalized_content.replace("\n", "<br/>")
-
-        rich_message_dict = {
-            "html": rich_html
-        }
-        if has_media:
-            rich_message_dict["media"] = [
-                {
-                    "id": "quiz_diagram",
-                    "media": {
-                        "type": "photo",
-                        "media": file_id if file_id else "attach://quiz_diagram"
-                    }
-                }
-            ]
-
-        data_payload = {
-            "chat_id": str(chat_id),
-            "rich_message": json.dumps(rich_message_dict)
-        }
-        if reply_to_message_id:
-            data_payload["reply_to_message_id"] = str(reply_to_message_id)
-
-        if reply_markup:
-            data_payload["reply_markup"] = json.dumps(reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup)
-
-        for k, v in kwargs.items():
-            data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
-
-        files_payload = {}
-        if has_media and not file_id:
-            files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
-
-        with timed(f"TIER2 sendRichMessage -> {chat_id}"):
-            resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
-
-        if resp.status_code == 200:
-            resp_json = resp.json()
-            if resp_json.get("ok"):
-                return Message.de_json(resp_json["result"], bot)
-        else:
-            print(f"[RICH MSG] sendRichMessage raw HTTP returned status {resp.status_code}: {resp.text[:300]}", flush=True)
+                        client = get_shared_client()
+                        url = f"https://api.telegram.org/bot{bot.token}/sendRichMessage"
+                        rich_html = normalized_content.replace("\n", "<br/>")
+                
+                        rich_message_dict = {
+                            "html": rich_html
+                        }
+                        if has_media:
+                            rich_message_dict["media"] = [
+                                {
+                                    "id": "quiz_diagram",
+                                    "media": {
+                                        "type": "photo",
+                                        "media": file_id if file_id else "attach://quiz_diagram"
+                                    }
+                                }
+                            ]
+                
+                        data_payload = {
+                            "chat_id": str(chat_id),
+                            "rich_message": json.dumps(rich_message_dict)
+                        }
+                        if reply_to_message_id:
+                            data_payload["reply_to_message_id"] = str(reply_to_message_id)
+                
+                        if reply_markup:
+                            data_payload["reply_markup"] = json.dumps(reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup)
+                
+                        for k, v in kwargs.items():
+                            data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
+                
+                        files_payload = {}
+                        if has_media and not file_id:
+                            files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
+                
+                        with timed(f"TIER2 sendRichMessage -> {chat_id}"):
+                            resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
+                
+                        if resp.status_code == 200:
+                            resp_json = resp.json()
+                            if resp_json.get("ok"):
+                                return Message.de_json(resp_json["result"], bot)
+                        else:
+                            print(f"[RICH MSG] sendRichMessage raw HTTP returned status {resp.status_code}: {resp.text[:300]}", flush=True)
     except Exception as e:
-        print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
+                        print(f"[RICH MSG] HTTP multipart fallback connection failed: {e}", flush=True)
 
-    # --- TIER 3: ultimate fallback to standard HTML legacy delivery ---
+    # --- TIER 3: legacy HTML delivery ---
     print(f"{Style.YELLOW}[RICH MSG] Falling back to standard HTML legacy delivery.{Style.RESET}", flush=True)
     legacy_html = convert_to_legacy_html(normalized_content)
+
+    # CONSOLIDATED-FIX: Caption length limit check
+    if has_media and len(legacy_html) > 1024:
+        ref_match = re.search(r'REF\s*<code>(\d+)</code>', normalized_content)
+        ref_str = ref_match.group(1) if ref_match else ""
+        print(f"{Style.YELLOW}[CONSOLIDATED-FIX] Caption length ({len(legacy_html)}) exceeds 1024. Safely splitting into photo + detailed follow-up text. REF: {ref_str}{Style.RESET}", flush=True)
+        
+        short_caption = f"🎨 <b>DIAGRAM CANVAS • REF {ref_str}</b>"
+        photo_msg = await bot.send_photo(
+            chat_id=chat_id,
+            photo=file_id if file_id else media_bytes,
+            caption=short_caption,
+            parse_mode="HTML",
+            reply_to_message_id=reply_to_message_id,
+        )
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=legacy_html,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+            reply_to_message_id=photo_msg.message_id,
+            **kwargs
+        )
 
     with timed(f"TIER3 legacy send -> {chat_id}"):
         if has_media:
@@ -223,74 +226,74 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
 
     print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id} (media present: {has_media})", flush=True)
 
-    # --- TIER 1: raw HTTP POST with correctly serialized JSON strings, using the SHARED pooled client ---
+    # --- TIER 1: raw HTTP POST with serialized JSON strings ---
     try:
-        client = get_shared_client()
-        
-        # FIX: Dynamically select endpoint based on media context.
-        # This keeps the custom server layout synchronized without triggering bad requests on photo nodes.
-        endpoint = "editMessageCaption" if has_media else "editMessageText"
-        url = f"https://api.telegram.org/bot{bot.token}/{endpoint}"
-
-        rich_message_dict = {
-            "html": rich_html
-        }
-        if has_media:
-            rich_message_dict["media"] = [
-                {
-                    "id": "quiz_diagram",
-                    "media": {
-                        "type": "photo",
-                        "media": file_id if file_id else "attach://quiz_diagram"
-                    }
-                }
-            ]
-
-        data_payload = {
-            "chat_id": str(chat_id),
-            "message_id": str(message_id),
-            "rich_message": json.dumps(rich_message_dict)
-        }
-        if reply_markup:
-            data_payload["reply_markup"] = json.dumps(reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup)
-
-        for k, v in kwargs.items():
-            data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
-
-        files_payload = {}
-        if has_media and not file_id:
-            files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
-
-        print(f"[DEBUG-FIX-EDIT-API] Dispatching TIER 1 API request using endpoint: '{endpoint}' to modify message_id: {message_id}", flush=True)
-        resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
-
-        if resp.status_code == 200:
-            resp_json = resp.json()
-            if resp_json.get("ok"):
-                print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on primary endpoint '{endpoint}'.", flush=True)
-                return Message.de_json(resp_json["result"], bot)
-
-        # Fallback to the alternate endpoint if the primary request failed.
-        fallback_endpoint = "editMessageText" if has_media else "editMessageCaption"
-        print(f"[DEBUG-FIX-EDIT-FALLBACK] Primary endpoint '{endpoint}' failed (HTTP {resp.status_code}). Retrying with: '{fallback_endpoint}'", flush=True)
-        fallback_url = f"https://api.telegram.org/bot{bot.token}/{fallback_endpoint}"
-        resp = await client.post(fallback_url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
-        
-        if resp.status_code == 200:
-            resp_json = resp.json()
-            if resp_json.get("ok"):
-                print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on fallback endpoint '{fallback_endpoint}'.", flush=True)
-                return Message.de_json(resp_json["result"], bot)
-        else:
-            print(f"[RICH MSG] editMessage HTTP raw request returned status {resp.status_code}: {resp.text[:300]}", flush=True)
+                        client = get_shared_client()
+                
+                        endpoint = "editMessageCaption" if has_media else "editMessageText"
+                        url = f"https://api.telegram.org/bot{bot.token}/{endpoint}"
+                
+                        rich_message_dict = {
+                            "html": rich_html
+                        }
+                        if has_media:
+                            rich_message_dict["media"] = [
+                                {
+                                    "id": "quiz_diagram",
+                                    "media": {
+                                        "type": "photo",
+                                        "media": file_id if file_id else "attach://quiz_diagram"
+                                    }
+                                }
+                            ]
+                
+                        data_payload = {
+                            "chat_id": str(chat_id),
+                            "message_id": str(message_id),
+                            "rich_message": json.dumps(rich_message_dict)
+                        }
+                        if reply_markup:
+                            data_payload["reply_markup"] = json.dumps(reply_markup.to_dict() if hasattr(reply_markup, "to_dict") else reply_markup)
+                
+                        for k, v in kwargs.items():
+                            data_payload[k] = json.dumps(v.to_dict() if hasattr(v, "to_dict") else v)
+                
+                        files_payload = {}
+                        if has_media and not file_id:
+                            files_payload["quiz_diagram"] = ("diagram.png", media_bytes, "image/png")
+                
+                        print(f"[DEBUG-FIX-EDIT-API] Dispatching TIER 1 API request using endpoint: '{endpoint}' to modify message_id: {message_id}", flush=True)
+                        resp = await client.post(url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
+                
+                        if resp.status_code == 200:
+                            resp_json = resp.json()
+                            if resp_json.get("ok"):
+                                print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on primary endpoint '{endpoint}'.", flush=True)
+                                return Message.de_json(resp_json["result"], bot)
+                
+                        fallback_endpoint = "editMessageText" if has_media else "editMessageCaption"
+                        print(f"[DEBUG-FIX-EDIT-FALLBACK] Primary endpoint '{endpoint}' failed (HTTP {resp.status_code}). Retrying with: '{fallback_endpoint}'", flush=True)
+                        fallback_url = f"https://api.telegram.org/bot{bot.token}/{fallback_endpoint}"
+                        resp = await client.post(fallback_url, data=data_payload, files=files_payload if (has_media and not file_id) else None, timeout=30.0)
+                
+                        if resp.status_code == 200:
+                            resp_json = resp.json()
+                            if resp_json.get("ok"):
+                                print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on fallback endpoint '{fallback_endpoint}'.", flush=True)
+                                return Message.de_json(resp_json["result"], bot)
+                        else:
+                            print(f"[RICH MSG] editMessage HTTP raw request returned status {resp.status_code}: {resp.text[:300]}", flush=True)
     except Exception as e:
-        print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
+                        print(f"[RICH MSG] HTTP edit fallback connection failed: {e}", flush=True)
 
-    # --- TIER 2: ultimate fallback to standard legacy HTML editing ---
+    # --- TIER 2: legacy HTML editing fallback ---
     legacy_html = convert_to_legacy_html(normalized_content)
+    if has_media and len(legacy_html) > 1024:
+        print(f"{Style.YELLOW}[CONSOLIDATED-FIX] Edit caption exceeds 1024 limit. Safely truncating to 1000 characters to prevent API overflow. Msg ID: {message_id}{Style.RESET}", flush=True)
+        legacy_html = smart_truncate_html(legacy_html, 1000)
+
     print(f"[DEBUG-FIX-EDIT-FALLBACK] Falling back to TIER 2 legacy editing for message_id: {message_id}", flush=True)
 
-    # Try editing text-only first. If it fails, fallback to updating caption.
     try:
         with timed(f"TIER2 legacy edit_message_text msg={message_id}"):
             return await bot.edit_message_text(

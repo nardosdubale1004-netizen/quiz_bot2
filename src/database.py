@@ -100,7 +100,7 @@ BEGIN
         END IF;
 
         BEGIN
-            -- [FIX VALIDATION LOG]: Insert the stats record first to avoid foreign key errors on user_responses.user_id references user_stats(user_id)
+            -- Insert the stats record first to avoid foreign key errors on user_responses.user_id references user_stats(user_id)
             INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
             VALUES (
                 p_user_id, 1,
@@ -452,7 +452,6 @@ class QuizEngine:
                     if not q.get("id") or not q.get("subject"):
                         continue
 
-                    # Handled directly as native Python list inputs for PostgreSQL arrays (text[])
                     tags = q.get("tags")
                     if not isinstance(tags, list):
                         tags = [tags] if tags else []
@@ -549,7 +548,6 @@ class QuizEngine:
 
                     for row in rows:
                         q = dict(row)
-                        # psycopg2 directly loads text[] to list; we only deserialize string fields.
                         for field in ["poll_explanation", "options_analysis"]:
                             if field in q and isinstance(q[field], str):
                                 try:
@@ -642,7 +640,6 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # --- ADVANCED GLOBAL DIAGNOSTIC DUMP ---
             try:
                 cur.execute("SELECT * FROM user_responses ORDER BY answered_at DESC LIMIT 5;")
                 recent = cur.fetchall()
@@ -652,7 +649,6 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
             except Exception as diag_err:
                 print(f"[DEBUG-DB-DIAGNOSTIC-ERROR] Failed to run diagnostic: {diag_err}", flush=True)
 
-            # Fix: If display_id is specified, query against both message_id and placeholder_id.
             if display_id is not None:
                 placeholder_id = f"launching_{display_id}"
                 print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id} OR placeholder_id={placeholder_id}", flush=True)
@@ -685,6 +681,7 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_overdue_tournament_rounds():
+    from src.debug_log import dlog, dlog_exception
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -696,27 +693,44 @@ def db_get_overdue_tournament_rounds():
             """)
             rows = [dict(r) for r in cur.fetchall()]
 
-            overdue = []
-            now_epoch = GLOBAL_ENGINE.db_get_current_epoch()
-            for r in rows:
-                deadline_epoch = r.get('deadline_epoch')
-                if deadline_epoch is None:
-                    overdue.append(r)
-                    continue
-                try:
-                    deadline_epoch = float(deadline_epoch)
-                except (ValueError, TypeError):
-                    overdue.append(r)
-                    continue
+        dlog(f"[DEBUG-OVERDUE-SCAN] Query returned {len(rows)} row(s) with status='tournament_active'.")
 
-                is_overdue = deadline_epoch <= now_epoch
-                print(f"[DEBUG-OVERDUE] REF {r.get('display_id')} | deadline={deadline_epoch:.1f} | now={now_epoch:.1f} | diff={deadline_epoch - now_epoch:.1f}s | is_overdue={is_overdue}", flush=True)
+        overdue = []
+        now_epoch = GLOBAL_ENGINE.db_get_current_epoch()
+        for r in rows:
+            deadline_epoch = r.get('deadline_epoch')
+            display_id = r.get('display_id')
+            message_id = r.get('message_id')
 
-                if is_overdue:
-                    overdue.append(r)
-            return overdue
+            if deadline_epoch is None:
+                dlog(f"[DEBUG-OVERDUE] REF {display_id} (mid={message_id}) | "
+                     f"round_deadline is NULL in DB -> treating as OVERDUE immediately.")
+                overdue.append(r)
+                continue
+            try:
+                deadline_epoch = float(deadline_epoch)
+            except (ValueError, TypeError) as cast_err:
+                dlog(f"[DEBUG-OVERDUE] REF {display_id} (mid={message_id}) | "
+                     f"deadline_epoch '{r.get('deadline_epoch')}' could not be cast to float "
+                     f"({cast_err}) -> treating as OVERDUE immediately.")
+                overdue.append(r)
+                continue
+
+            is_overdue = deadline_epoch <= now_epoch
+            print(f"[DEBUG-OVERDUE] REF {display_id} | deadline={deadline_epoch:.1f} | "
+                  f"now={now_epoch:.1f} | diff={deadline_epoch - now_epoch:.1f}s | "
+                  f"is_overdue={is_overdue}", flush=True)
+
+            if is_overdue:
+                overdue.append(r)
+
+        if overdue:
+            dlog(f"[DEBUG-OVERDUE-SCAN] {len(overdue)} round(s) flagged overdue this tick: "
+                 f"{[o.get('display_id') for o in overdue]}")
+
+        return overdue
     except Exception as e:
-        print(f"[DB ERROR] Failed to fetch overdue tournament rounds: {e}")
+        dlog_exception("db_get_overdue_tournament_rounds", e)
         return []
     finally:
         if conn:
@@ -760,7 +774,6 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # FORCE strict list sanitization check before writing to PostgreSQL JSON column type to prevent parsing collisions.
             if isinstance(remaining_ids, str):
                 try:
                     remaining_ids = json.loads(remaining_ids)
@@ -800,7 +813,6 @@ def db_get_tournament_queue():
                 return None
             res = dict(row)
 
-            # Robust fallback translation. If driver retrieves JSON column as standard string, force deserialize back to list.
             if isinstance(res.get('remaining_ids'), str):
                 try:
                     res['remaining_ids'] = json.loads(res['remaining_ids'])
@@ -1139,47 +1151,74 @@ def db_mark_question_as_sent(q_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            pm_id = int(private_message_id) if private_message_id is not None else None
-            print(f"[DEBUG-DB-SCORE] DB-FK safe evaluation. Processing score: user={user_id}, message_id={message_id}, q_id={q_id}, correct={is_correct}", flush=True)
-            cur.execute(
-                "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
-                (
-                    str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
-                    pm_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
+    from src.debug_log import dlog, dlog_exception
+    max_attempts = 2
+    last_exc = None
+
+    for attempt in range(1, max_attempts + 1):
+        conn = None
+        try:
+            dlog(f"[DEBUG-DB-SCORE] Attempt {attempt}/{max_attempts} | user={user_id}, "
+                 f"message_id={message_id}, q_id={q_id}, correct={is_correct}, "
+                 f"selected_option={selected_option}")
+            conn = GLOBAL_ENGINE.get_db_connection()
+            with conn.cursor() as cur:
+                pm_id = int(private_message_id) if private_message_id is not None else None
+                cur.execute(
+                    "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
+                    (
+                        str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
+                        pm_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
+                    )
                 )
+                row = cur.fetchone()
+                conn.commit()
+                dlog(f"[DEBUG-DB-SCORE] Attempt {attempt} succeeded for user={user_id}, "
+                     f"message_id={message_id}. Row output: {dict(row) if row else 'None'}")
+
+            if not row:
+                dlog(f"[DEBUG-DB-SCORE] fn_process_user_score returned NO ROW for "
+                     f"user={user_id}, message_id={message_id}. Returning None.")
+                return None
+
+            total = row['o_total']
+            correct = row['o_correct']
+            accuracy = int((correct / total) * 100) if total and total > 0 else 0
+            return {
+                "total": total,
+                "correct": correct,
+                "accuracy": accuracy,
+                "total_marks": row['o_total_marks'],
+                "marks_awarded": row['o_marks_awarded'],
+                "first_try": row['o_first_try'],
+                "is_bonus_winner": row['o_is_bonus_winner'],
+                "grade": row['o_grade'],
+                "current_streak": row['o_current_streak'],
+            }
+        except Exception as e:
+            last_exc = e
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            dlog_exception(
+                f"process_user_score (attempt {attempt}/{max_attempts}, "
+                f"user={user_id}, message_id={message_id}, q_id={q_id})",
+                e
             )
-            row = cur.fetchone()
-            conn.commit()
-            print(f"[DEBUG-DB-SCORE] Transaction commit finished. Row output: {dict(row) if row else 'None'}", flush=True)
+            if attempt < max_attempts:
+                dlog(f"[DEBUG-DB-SCORE] Retrying process_user_score for user={user_id}, "
+                     f"message_id={message_id} after transient failure...")
+                time.sleep(0.5)
+                continue
+        finally:
+            if conn:
+                GLOBAL_ENGINE.release_connection(conn)
 
-        if not row:
-            return None
-
-        total = row['o_total']
-        correct = row['o_correct']
-        accuracy = int((correct / total) * 100) if total and total > 0 else 0
-        return {
-            "total": total,
-            "correct": correct,
-            "accuracy": accuracy,
-            "total_marks": row['o_total_marks'],
-            "marks_awarded": row['o_marks_awarded'],
-            "first_try": row['o_first_try'],
-            "is_bonus_winner": row['o_is_bonus_winner'],
-            "grade": row['o_grade'],
-            "current_streak": row['o_current_streak'],
-        }
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] Error inside process_user_score transaction: {e}", flush=True)
-        raise e
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
+    dlog(f"[DEBUG-DB-SCORE] All {max_attempts} attempts failed for user={user_id}, "
+         f"message_id={message_id}. Raising last exception to caller.")
+    raise last_exc
 
 def db_try_start_tournament_round(message_id, q_id, display_id, round_seconds, round_number, total_rounds):
     conn = None
@@ -1347,6 +1386,28 @@ def db_set_user_nickname(user_id, nickname):
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to store user custom nickname: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_update_tournament_meta_field(key: str, value):
+    """Safely updates a specified key within the JSONB tournament_meta column inside the tournament_queue table."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE tournament_queue
+                SET tournament_meta = COALESCE(tournament_meta, '{}'::jsonb) || %s::jsonb
+                WHERE id = 1;
+            """, (Json({key: value}),))
+            conn.commit()
+            print(f"[CONSOLIDATED-FIX] Successfully updated JSONB tournament_meta field: {key} -> {value}", flush=True)
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update tournament_meta field {key}: {e}", flush=True)
         return False
     finally:
         if conn:
