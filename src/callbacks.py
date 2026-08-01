@@ -24,7 +24,7 @@ from src.database import (
     db_dissolve_organization,
     db_set_user_nickname,
 )
-from src.rendering.html_views import build_profile_card_text, build_organization_card_text
+from src.rendering.html_views import build_profile_card_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -51,48 +51,74 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer(f"Grade {grade} registered!")
         await query.edit_message_text(
             f"✅ <b>Success!</b> Your profile is registered under <b>Grade {grade}</b>.\n\n"
-            f"Use the /leaderboard command inside our private chat to check rankings, "
+            f"Use the /profile command inside our private chat to check your dynamically generated card, "
             f"and check the main channel for active quizzes!",
             parse_mode="HTML"
         )
         return
 
-    # --- ADVANCED PRIVACY & PROFILE BUILDER CRUD FLOWS ---
+    # --- SIMPLIFIED UNIFIED PROFILE PORTAL CALLBACK FLOWS ---
 
     elif action == "privacy_menu":
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        text = build_profile_card_text(profile)
+        org_id = profile.get("org_id")
+        roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
         
-        # Build beautiful contextual buttons based on consent status
-        consent_btn_text = "🔴 OPT-OUT OF PUBLIC SCORING" if profile.get("public_consent_granted") else "🟢 OPT-IN TO PUBLIC SCORING"
+        text = build_profile_card_text(profile, roster)
+        
+        # dynamic contextual buttons mapped directly under /profile layout
+        consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
         consent_target = "0" if profile.get("public_consent_granted") else "1"
         
-        kb = InlineKeyboardMarkup([
+        buttons = [
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 CONFIGURE PSEUDONYM", callback_data="set_nick_fsm|0")],
-            [InlineKeyboardButton("🏰 STUDY ALLIANCE PORTAL", callback_data="alliance_portal|0")],
-            [InlineKeyboardButton("🔙 CLOSE PORTAL", callback_data="close_portal|0")]
-        ])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+        ]
+        
+        if org_id:
+            buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
+            if profile.get("org_role") == "creator":
+                buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
+        else:
+            buttons.append([
+                InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
+                InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
+            ])
+            
+        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
+        
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
 
     elif action == "toggle_consent":
         consent_state = (d_id == "1")
         await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
-        await query.answer("Dynamic consent status updated!", show_alert=True)
+        await query.answer("Scoreboard privacy settings updated!", show_alert=True)
         # Re-render the menu instantly
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        text = build_profile_card_text(profile)
-        consent_btn_text = "🔴 OPT-OUT OF PUBLIC SCORING" if profile.get("public_consent_granted") else "🟢 OPT-IN TO PUBLIC SCORING"
+        org_id = profile.get("org_id")
+        roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
+        text = build_profile_card_text(profile, roster)
+        
+        consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
         consent_target = "0" if profile.get("public_consent_granted") else "1"
-        kb = InlineKeyboardMarkup([
+        
+        buttons = [
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 CONFIGURE PSEUDONYM", callback_data="set_nick_fsm|0")],
-            [InlineKeyboardButton("🏰 STUDY ALLIANCE PORTAL", callback_data="alliance_portal|0")],
-            [InlineKeyboardButton("🔙 CLOSE PORTAL", callback_data="close_portal|0")]
-        ])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+        ]
+        if org_id:
+            buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
+            if profile.get("org_role") == "creator":
+                buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
+        else:
+            buttons.append([
+                InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
+                InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
+            ])
+        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
 
     elif action == "set_nick_fsm":
@@ -100,53 +126,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_STATES[user_id] = "AWAITING_NICKNAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         await query.edit_message_text(
-            "✍️ <b>PROMPT: CONFIGURE scoreboard PSEUDONYM</b>\n"
+            "✍️ <b>PROMPT: score Nickname</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please type your preferred student scoreboard display name directly into this chat.\n\n"
-            "⚠️ <b>Constraints:</b>\n"
+            "Please type your preferred display name for leaderboards directly as a text response inside this chat.\n\n"
+            "⚠️ <b>Simple Rules:</b>\n"
             "├─ Max 20 characters\n"
-            "├─ No special syntax characters\n"
             "└─ Spaces and underscores allowed\n\n"
-            "<i>Type <code>/cancel</code> to abort configuration.</i>",
+            "<i>(Type <code>/cancel</code> to abort)</i>",
             parse_mode="HTML"
         )
-        return
-
-    elif action == "alliance_portal":
-        await query.answer()
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        org_id = profile.get("org_id")
-        
-        if org_id:
-            roster = await asyncio.to_thread(db_get_organization_roster, org_id)
-            org_details = {
-                "org_name": profile.get("org_name"),
-                "org_tag": profile.get("org_tag"),
-                "org_type": profile.get("org_type")
-            }
-            text = build_organization_card_text(org_details, roster)
-            
-            buttons = [
-                [InlineKeyboardButton("🚪 LEAVE ALLIANCE GROUP", callback_data="leave_org_confirm|0")]
-            ]
-            if profile.get("org_role") == "creator":
-                buttons.append([InlineKeyboardButton("💥 DISSOLVE ALLIANCE", callback_data="dissolve_org_confirm|0")])
-                
-            buttons.append([InlineKeyboardButton("🔙 BACK TO DOSSIER", callback_data="privacy_menu|0")])
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
-        else:
-            text = (
-                "🏰 <b>ALLIANCE CLAN PORTAL</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "You are not registered in any Study Alliance. School alliances merge and rank scores collectively!\n\n"
-                "Choose an action below to establish or integrate with a group:"
-            )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
-                [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
-                [InlineKeyboardButton("🔙 BACK TO DOSSIER", callback_data="privacy_menu|0")]
-            ])
-            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
         return
 
     elif action == "fsm_create_org":
@@ -154,11 +142,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_STATES[user_id] = "AWAITING_ORG_NAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         await query.edit_message_text(
-            "✍️ <b>ESTABLISH ALLIANCE: Full Name</b>\n"
+            "✍️ <b>PROMPT: Create School Team</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please enter the formal name of your School, College, or study organization:\n"
-            "<i>(Example: Abyssinia Secondary School)</i>\n\n"
-            "<i>Type <code>/cancel</code> to abort.</i>",
+            "Please type the full name of your school or study academy team:\n"
+            "<i>(Example: Abyssinia Academy)</i>\n\n"
+            "<i>(Type <code>/cancel</code> to abort)</i>",
             parse_mode="HTML"
         )
         return
@@ -168,11 +156,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_STATES[user_id] = "AWAITING_ORG_JOIN"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         await query.edit_message_text(
-            "✍️ <b>INTEGRATE ALLIANCE: Enter Group Tag</b>\n"
+            "✍️ <b>PROMPT: Join School Team</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Enter the unique, uppercase alphanumeric identifier Tag of the study organization you wish to join:\n"
+            "Please enter the short, uppercase Code Tag of the school team you want to join:\n"
             "<i>(Example: ABYSSINIA)</i>\n\n"
-            "<i>Type <code>/cancel</code> to abort.</i>",
+            "<i>(Type <code>/cancel</code> to abort)</i>",
             parse_mode="HTML"
         )
         return
@@ -180,8 +168,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "leave_org_confirm":
         await query.answer()
         await asyncio.to_thread(db_leave_organization, user_id)
-        await query.edit_message_text("🚪 You successfully exited the Organization roster. Alliance points cleared.", reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🏰 PORTAL MAIN", callback_data="alliance_portal|0")
+        await query.edit_message_text("🚪 You left your school team. Your contributions have been removed from the roster.", reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")
         ]]))
         return
 
@@ -191,13 +179,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         org_id = profile.get("org_id")
         if org_id and profile.get("org_role") == "creator":
             await asyncio.to_thread(db_dissolve_organization, org_id)
-            await query.edit_message_text("💥 Alliance dissolved. All member references cleared from rosters.", reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🏰 PORTAL MAIN", callback_data="alliance_portal|0")
+            await query.edit_message_text("💥 School team dissolved. All student mappings have been cleared.", reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")
             ]]))
         return
 
     elif action == "close_portal":
-        await query.answer("Portal exited.")
+        await query.answer("Profile dashboard closed.")
         await query.delete_message()
         return
 

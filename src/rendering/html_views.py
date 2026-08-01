@@ -12,7 +12,7 @@ def replace_code_with_italic(text: str) -> str:
 def format_public_name(row) -> str:
     """
     Formats a user's display identity following a safe, descending fallback chain:
-    1. Custom Nickname (User configured /name)
+    1. Custom Nickname (User configured nickname)
     2. Real Telegram Username (Preceded with @, if available and consent is True)
     3. Real Telegram First Name (Sanitized, if available and consent is True)
     4. Masked User ID (Default backup)
@@ -474,7 +474,7 @@ def generate_poll_hint(q):
 
 def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) -> str:
     """
-    Builds a highly structures HTML card for upcoming tournament showdowns.
+    Builds a highly structured HTML card for upcoming tournament showdowns.
     """
     subject = meta.get("subject", "GENERAL").upper()
     topics = meta.get("topics", [])
@@ -519,100 +519,72 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
     return text
 
 
-def build_profile_card_text(profile: dict) -> str:
+def build_profile_card_text(profile: dict, roster: list = None) -> str:
     """
-    Renders an exceptionally beautiful, interactive personal study dossier 
-    for users with Telegram HTML blockquotes.
+    Builds a beautifully simple student profile dossier card
+    incorporating Telegram's advanced <blockquote expandable> layout.
     """
     real_name = format_public_name(profile)
-    grade = profile.get("grade", "Not set")
-    total_marks = profile.get("total_marks", 0)
+    grade = profile.get("grade") or "Not selected"
+    marks = profile.get("total_marks", 0)
     streak = profile.get("current_streak", 0)
     total = profile.get("total", 0)
     correct = profile.get("correct", 0)
     accuracy = int((correct / total) * 100) if total > 0 else 0
-    mastery = get_grade_mastery_title(total_marks)
-    next_rank = get_next_rank_info(total_marks)
+    mastery = get_grade_mastery_title(marks)
+    next_rank = get_next_rank_info(marks)
     
-    consent_icon = "🟢 ACTIVE" if profile.get("public_consent_granted") else "🔴 INACTIVE"
-    nickname_label = profile.get("nickname") or "<i>None configured (Falls back to masked ID)</i>"
+    consent_status = "🟢 ON (Your real handle is shown on scoreboard)" if profile.get("public_consent_granted") else "🔴 OFF (You are shown as a masked anonymous id)"
+    nickname_label = profile.get("nickname") or "<i>None set (using default masked id)</i>"
     
     org_tag = profile.get("org_tag")
     org_name = profile.get("org_name")
     org_role = profile.get("org_role")
-    
-    if org_tag:
-        alliance_block = (
-            f"🏰 <b>ALLIANCE DOMAIN METRICS:</b>\n"
-            f" ├─ School Name: <b>{org_name}</b>\n"
-            f" ├─ Group Tag: <code>#{org_tag}</code>\n"
-            f" └─ Member Rank: <b>{org_role.capitalize()}</b>"
-        )
-    else:
-        alliance_block = "🏰 <b>ALLIANCE:</b> <i>Not mapped to any school or study club.</i>"
 
-    # Progress bar mapping
-    filled_blocks = min(10, max(0, int(accuracy / 10)))
-    progress_bar = f"<code>[{'■' * filled_blocks}{' ' * (10 - filled_blocks)}]</code>"
+    # Simple visual indicator progress bar
+    filled = min(10, max(0, int(accuracy / 10)))
+    progress = f"<code>[{'■' * filled}{' ' * (10 - filled)}]</code>"
 
     text = (
-        f"👤 <b>STUDENT PRACTICE PROFILE</b>\n"
+        f"👤 <b>YOUR ACADEMIC DOSSIER</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>Scholarly Identity:</b>\n"
-        f" ├─ Display Name: <b>{real_name}</b>\n"
-        f" ├─ Registered Level: <code>Grade {grade}</code>\n"
-        f" └─ Mastery Title: <b>{mastery}</b>\n\n"
-        f"📊 <b>STUDY DOSSIER METRICS:</b>\n"
-        f" ├─ Practice Score: <code>{total_marks} Marks</code>\n"
-        f" ├─ Current Streak: 🔥 <b>{streak} Days</b>\n"
-        f" └─ Accuracy Curve: {progress_bar} <b>{accuracy}%</b> ({correct}/{total} solved)\n\n"
-        f"{alliance_block}\n\n"
-        f"🛡️ <b>PRIVACY & CONSENT BOUNDS:</b>\n"
-        f" ├─ Username Consent: <b>{consent_icon}</b>\n"
-        f" └─ Active Nickname: {nickname_label}\n\n"
-        f"💡 <b>Rank Status Warning:</b>\n"
-        f"<i>{next_rank}</i>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-    return text
-
-
-def build_organization_card_text(org: dict, roster: list) -> str:
-    """
-    Renders a stunning organization alliance card displaying detailed rosters.
-    """
-    name = org.get("org_name", "UNKNOWN").upper()
-    tag = org.get("org_tag", "UNKNOWN")
-    org_type = org.get("org_type", "School")
-    
-    total_score = sum(r.get("total_marks", 0) for r in roster)
-    avg_score = int(total_score / len(roster)) if roster else 0
-    
-    roster_lines = []
-    medals = ["🥇", "🥈", "🥉", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️"]
-    for idx, r in enumerate(roster[:10]):
-        formatted_name = format_public_name(r)
-        role_marker = " 👑" if r.get("org_role") == "creator" else " 🛡️" if r.get("org_role") == "admin" else ""
-        roster_lines.append(f" {medals[idx]} <code>{formatted_name}</code> — <b>{r['total_marks']} Marks</b>{role_marker}")
-        
-    roster_block = "\n".join(roster_lines) if roster_lines else "<i>No active scholars registered.</i>"
-
-    text = (
-        f"🏰 <b>ALLIANCE METRICS OVERVIEW</b> 🏰\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🏫 <b>Alliance Details:</b>\n"
-        f" ├─ Name: <b>{name}</b>\n"
-        f" ├─ Domain Tag: <code>#{tag}</code>\n"
-        f" └─ Category Type: <code>{org_type}</code>\n\n"
-        f"📊 <b>Scoreboard Aggregates:</b>\n"
-        f" ├─ Group Members: <code>{len(roster)} Active Scholars</code>\n"
-        f" ├─ Collective Marks: <code>{total_score} Marks</code>\n"
-        f" └─ Roster Average: <code>{avg_score} Marks</code>\n\n"
-        f"🏆 <b>ALLIANCE ROSTER TOP 10:</b>\n"
-        f"<blockquote>\n"
-        f"{roster_block}\n"
+        f"👋 <b>Welcome!</b> Here is your live study profile and settings:\n\n"
+        f"• <b>Custom score Name:</b> {nickname_label}\n"
+        f"• <b>Academic Level:</b> <code>Grade {grade}</code>\n"
+        f"• <b>Public Consent:</b> {consent_status}\n\n"
+        f"📊 <b>YOUR PRACTICE STATS:</b>\n"
+        f"<blockquote expandable>"
+        f"🏆 <b>Practice Score:</b> {marks} Marks\n"
+        f"🎖️ <b>Mastery Level:</b> {mastery}\n"
+        f"🔥 <b>Active Streak:</b> {streak} Days\n"
+        f"🎯 <b>Accuracy Rate:</b> {progress} <b>{accuracy}%</b> ({correct}/{total} solved)\n\n"
+        f"<i>💡 Rank Progress: {next_rank}</i>"
         f"</blockquote>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 <i>Any updates made by users inside their consent panels reflect on this roster in real time.</i>"
     )
+
+    if org_tag:
+        text += (
+            f"🏫 <b>YOUR SCHOOL ALLIANCE:</b>\n"
+            f"• <b>Institution:</b> {org_name}\n"
+            f"• <b>Domain Code:</b> <code>#{org_tag}</code> (Role: {org_role.capitalize()})\n\n"
+        )
+        if roster:
+            total_marks = sum(r.get("total_marks", 0) for r in roster)
+            text += f"👥 <b>ALLIANCE MEMBERS ({len(roster)}):</b>\n"
+            text += f"<blockquote expandable>\n"
+            text += f"🏆 <b>Total Alliance Score:</b> {total_marks} Marks\n\n"
+            
+            medals = ["🥇", "🥈", "🥉", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️"]
+            for idx, r in enumerate(roster[:10]):
+                user_label = format_public_name(r)
+                role_icon = " 👑" if r.get("org_role") == "creator" else ""
+                text += f" {medals[idx]} <code>{user_label}</code> — <b>{r['total_marks']} Marks</b>{role_icon}\n"
+            text += f"</blockquote>\n"
+    else:
+        text += (
+            f"🏫 <b>SCHOOL TEAM ALLIANCE:</b>\n"
+            f"<i>You are not linked to any school or study club team yet. Join or establish one using the buttons below to compare and aggregate scores collectively!</i>\n"
+        )
+
+    text += "\n━━━━━━━━━━━━━━━━━━━━━━━"
     return text

@@ -42,9 +42,10 @@ from src.database import (
     db_set_user_nickname,
     db_create_organization,
     db_join_organization,
+    db_get_organization_roster,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
-from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_organization_card_text
+from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
@@ -55,13 +56,11 @@ from src.typography import lite_math
 
 engine = QuizEngine()
 
+# Consolidated commands to simplify the user interface
 BOT_COMMANDS = [
-    BotCommand("start", "Register your profile / view your stats"),
-    BotCommand("profile", "Open dynamic Privacy & Consent dossier"),
-    BotCommand("alliance", "Access Alliance Org CRUD portal"),
-    BotCommand("school", "Set your school or study-alliance tag"),
-    BotCommand("name", "Set your public nickname on scoreboard"),
-    BotCommand("leaderboard", "View your rank, or /leaderboard school for group rankings"),
+    BotCommand("start", "Register your academic profile / level"),
+    BotCommand("profile", "Open scoreboard privacy, nickname & school alliance dashboard"),
+    BotCommand("leaderboard", "View individual rank standings or school rankings"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -541,6 +540,44 @@ async def start_command(update: Update, context):
         reply_markup=reply_markup
     )
 
+async def profile_command(update: Update, context):
+    """Bypasses start and opens student dynamic Privacy & Consent dashboard."""
+    user = update.effective_user
+    user_id = user.id
+    
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+    profile = await asyncio.to_thread(db_get_user_profile, user_id)
+    
+    if not profile or not profile.get("grade"):
+        await update.message.reply_text("🎒 Please type /start first to configure your basic grade profile details.")
+        return
+        
+    org_id = profile.get("org_id")
+    roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
+    text = build_profile_card_text(profile, roster)
+    
+    # dynamic contextual buttons mapped directly under /profile layout
+    consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
+    consent_target = "0" if profile.get("public_consent_granted") else "1"
+    
+    buttons = [
+        [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
+        [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+    ]
+    
+    if org_id:
+        buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
+        if profile.get("org_role") == "creator":
+            buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
+    else:
+        buttons.append([
+            InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
+            InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
+        ])
+        
+    buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+
 async def school_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
@@ -672,77 +709,6 @@ async def leaderboard_command(update: Update, context):
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
 
 
-# --- ADAPTIVE PRIVATE DASHBOARD COMMAND HANDLERS ---
-
-async def profile_command(update: Update, context):
-    """Bypasses start and opens student dynamic Privacy & Consent dashboard."""
-    user = update.effective_user
-    user_id = user.id
-    
-    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
-    profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    
-    if not profile or not profile.get("grade"):
-        await update.message.reply_text("🎒 Please type /start first to configure your basic grade profile details.")
-        return
-        
-    text = build_profile_card_text(profile)
-    consent_btn_text = "🔴 OPT-OUT OF PUBLIC SCORING" if profile.get("public_consent_granted") else "🟢 OPT-IN TO PUBLIC SCORING"
-    consent_target = "0" if profile.get("public_consent_granted") else "1"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-        [InlineKeyboardButton("📝 CONFIGURE score PSEUDONYM", callback_data="set_nick_fsm|0")],
-        [InlineKeyboardButton("🏰 STUDY ALLIANCE PORTAL", callback_data="alliance_portal|0")],
-        [InlineKeyboardButton("🔙 CLOSE PORTAL", callback_data="close_portal|0")]
-    ])
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
-
-async def alliance_command(update: Update, context):
-    """Direct shortcut Command to open the Organization CRUD Portal."""
-    user = update.effective_user
-    user_id = user.id
-    
-    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
-    profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    
-    if not profile or not profile.get("grade"):
-        await update.message.reply_text("🎒 Please type /start first to configure your basic grade profile details.")
-        return
-        
-    org_id = profile.get("org_id")
-    if org_id:
-        roster = await asyncio.to_thread(db_get_organization_roster, org_id)
-        org_details = {
-            "org_name": profile.get("org_name"),
-            "org_tag": profile.get("org_tag"),
-            "org_type": profile.get("org_type")
-        }
-        text = build_organization_card_text(org_details, roster)
-        
-        buttons = [
-            [InlineKeyboardButton("🚪 LEAVE ALLIANCE GROUP", callback_data="leave_org_confirm|0")]
-        ]
-        if profile.get("org_role") == "creator":
-            buttons.append([InlineKeyboardButton("💥 DISSOLVE ALLIANCE", callback_data="dissolve_org_confirm|0")])
-            
-        buttons.append([InlineKeyboardButton("🔙 BACK TO DOSSIER", callback_data="privacy_menu|0")])
-        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        text = (
-            "🏰 <b>ALLIANCE CLAN PORTAL</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "You are not registered in any Study Alliance. School alliances merge and rank scores collectively!\n\n"
-            "Choose an action below to establish or integrate with a group:"
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
-            [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
-            [InlineKeyboardButton("🔙 BACK TO DOSSIER", callback_data="privacy_menu|0")]
-        ])
-        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
-
-
 # --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
 
 async def handle_fsm_message(update: Update, context):
@@ -775,24 +741,35 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ Scoreboard display handle registered successfully: <b>{clean_name}</b>!", parse_mode="HTML")
+            await update.message.reply_text(f"✅ Nickname registered successfully: <b>{clean_name}</b>!", parse_mode="HTML")
             
             # Re-render dashboard dynamically
             profile = await asyncio.to_thread(db_get_user_profile, user_id)
-            dossier_text = build_profile_card_text(profile)
-            consent_btn_text = "🔴 OPT-OUT OF PUBLIC SCORING" if profile.get("public_consent_granted") else "🟢 OPT-IN TO PUBLIC SCORING"
+            org_id = profile.get("org_id")
+            roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
+            dossier_text = build_profile_card_text(profile, roster)
+            consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
             consent_target = "0" if profile.get("public_consent_granted") else "1"
-            kb = InlineKeyboardMarkup([
+            
+            buttons = [
                 [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-                [InlineKeyboardButton("📝 CONFIGURE Scoreboard PSEUDONYM", callback_data="set_nick_fsm|0")],
-                [InlineKeyboardButton("🏰 STUDY ALLIANCE PORTAL", callback_data="alliance_portal|0")],
-                [InlineKeyboardButton("🔙 CLOSE PORTAL", callback_data="close_portal|0")]
-            ])
+                [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+            ]
+            if org_id:
+                buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
+                if profile.get("org_role") == "creator":
+                    buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
+            else:
+                buttons.append([
+                    InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
+                    InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
+                ])
+            buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
             if edit_mid:
                 try:
-                    await context.bot.edit_message_text(chat_id=user_id, message_id=edit_mid, text=dossier_text, reply_markup=kb, parse_mode="HTML")
+                    await context.bot.edit_message_text(chat_id=user_id, message_id=edit_mid, text=dossier_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
                 except Exception:
-                    await context.bot.send_message(chat_id=user_id, text=dossier_text, reply_markup=kb, parse_mode="HTML")
+                    await context.bot.send_message(chat_id=user_id, text=dossier_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
         elif state == "AWAITING_ORG_NAME":
             clean_org_name = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
@@ -805,8 +782,7 @@ async def handle_fsm_message(update: Update, context):
             
             await update.message.reply_text(
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍️ <b>PROMPT: Enter Unique Group Tag</b>\n"
-                "Enter a short, uppercase alphanumeric identifier tag for your organization roster (2-15 characters, no spaces):\n"
+                "✍ Pals, enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
                 parse_mode="HTML"
             )
@@ -828,7 +804,7 @@ async def handle_fsm_message(update: Update, context):
                     f"✅ <b>Alliance Registered Successfully!</b>\n\n"
                     f"🏫 Institution: <b>{org_name}</b>\n"
                     f"🔑 Short Domain Tag: <code>#{clean_tag}</code>\n\n"
-                    f"Provide this Tag to your student members so they can link and aggregate points under your roster!",
+                    f"Provide this Tag to your student members so they can link and aggregate scores collectively!",
                     parse_mode="HTML"
                 )
             except Exception as e:
@@ -922,9 +898,6 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("profile", profile_command))
-    app.add_handler(CommandHandler("alliance", alliance_command))
-    app.add_handler(CommandHandler("school", school_command))
-    app.add_handler(CommandHandler("name", name_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
