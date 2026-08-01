@@ -39,6 +39,7 @@ _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
 _LAST_COUNTDOWN_TEXT = {}
 _LAUNCH_LOCK = asyncio.Lock()
+_SENT_ERROR_ALERTS = set()  # Rate-limiting safety memory register to prevent channel spamming
 
 _COOLDOWN_MID = None
 _LAST_COOLDOWN_VAL = -1
@@ -533,23 +534,26 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
     except Exception as e:
         dlog_exception(f"finalize_tournament_round CRASHED for mid={mid}, display_id={track.get('display_id')}", e)
-        # Deep Dynamic Channel Diagnostic Alert to output raw traceback details on failure
-        try:
-            tb_str = traceback.format_exc()
-            await app.bot.send_message(
-                chat_id=engine.config['channel'],
-                text=(
-                    f"⚠️ <b>TOURNAMENT CRITICAL ERROR</b> 🛠️\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"Failed to finalize round REF <code>{track.get('display_id')}</code>.\n\n"
-                    f"<b>Error:</b> <code>{type(e).__name__}: {html.escape(str(e))}</code>\n"
-                    f"<b>Traceback snippet:</b>\n"
-                    f"<code>{html.escape(tb_str[-400:])}</code>"
-                ),
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
+        # Deep Dynamic Channel Diagnostic Alert (Rate-limited to once per display_id to prevent flooding)
+        display_id = track.get('display_id')
+        if display_id not in _SENT_ERROR_ALERTS:
+            _SENT_ERROR_ALERTS.add(display_id)
+            try:
+                tb_str = traceback.format_exc()
+                await app.bot.send_message(
+                    chat_id=engine.config['channel'],
+                    text=(
+                        f"⚠️ <b>TOURNAMENT CRITICAL ERROR</b> 🛠️\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"Failed to finalize round REF <code>{display_id}</code>.\n\n"
+                        f"<b>Error:</b> <code>{type(e).__name__}: {html.escape(str(e))}</code>\n"
+                        f"<b>Traceback snippet:</b>\n"
+                        f"<code>{html.escape(tb_str[-400:])}</code>"
+                    ),
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
         raise e
     finally:
         _FINALIZING_ROUNDS.discard(mid)
