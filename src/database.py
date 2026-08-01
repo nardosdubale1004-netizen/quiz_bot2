@@ -216,12 +216,10 @@ class QuizEngine:
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
 
-                # Self-healing Schema Updates to track nicknames and Telegram attributes
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS username text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
 
-                # Clear restrictive foreign key constraint to permit message ID swaps without violations
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
 
@@ -1222,9 +1220,9 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                      f"message_id={message_id} after transient failure...")
                 time.sleep(0.5)
                 continue
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
+        finally:
+            if conn:
+                GLOBAL_ENGINE.release_connection(conn)
 
     dlog(f"[DEBUG-DB-SCORE] All {max_attempts} attempts failed for user={user_id}, "
          f"message_id={message_id}. Raising last exception to caller.")
