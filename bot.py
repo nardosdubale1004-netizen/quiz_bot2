@@ -563,19 +563,9 @@ async def profile_command(update: Update, context):
     buttons = [
         [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
         [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
-        [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")]
+        [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
+        [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
     ]
-    
-    if org_id:
-        buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
-        if profile.get("org_role") == "creator":
-            buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
-    else:
-        buttons.append([
-            InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
-            InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
-        ])
-        
     buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -761,7 +751,7 @@ async def handle_fsm_message(update: Update, context):
             # Form conversational prompt with direct return navigation buttons
             await update.message.reply_text(
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍ Enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
+                "✍ Pals, enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")

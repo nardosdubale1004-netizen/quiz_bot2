@@ -23,8 +23,9 @@ from src.database import (
     db_get_organization_roster,
     db_dissolve_organization,
     db_set_user_nickname,
+    db_get_user_organizations,
 )
-from src.rendering.html_views import build_profile_card_text
+from src.rendering.html_views import build_profile_card_text, build_organization_card_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -62,7 +63,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         )
         return
 
-    # --- PRIVACY & PROFILE SHORTCUT CALLBACK FLOWS ---
+    # --- SIMPLIFIED UNIFIED PROFILE PORTAL CALLBACK FLOWS ---
 
     elif action == "privacy_menu":
         await query.answer()
@@ -77,21 +78,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         
         buttons = [
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 CONFIGURE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
-            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")]
+            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
+            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
+            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
         ]
-        
-        if org_id:
-            buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
-            if profile.get("org_role") == "creator":
-                buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
-        else:
-            buttons.append([
-                InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
-                InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
-            ])
-            
-        buttons.append([InlineKeyboardButton("🔙 CLOSE DASHBOARD", callback_data="close_portal|0")])
+        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
         
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
@@ -112,18 +103,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         buttons = [
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
             [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
-            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")]
+            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
+            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
         ]
-        if org_id:
-            buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
-            if profile.get("org_role") == "creator":
-                buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data="dissolve_org_confirm|0")])
-        else:
-            buttons.append([
-                InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
-                InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
-            ])
-        buttons.append([InlineKeyboardButton("🔙 CLOSE DASHBOARD", callback_data="close_portal|0")])
+        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
 
@@ -141,6 +124,115 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Choose your active academic level using the options below:",
             reply_markup=grade_keyboard,
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "alliance_portal":
+        await query.answer()
+        orgs = await asyncio.to_thread(db_get_user_organizations, user_id)
+        
+        if orgs:
+            text = (
+                "🏰 <b>YOUR REGISTERED TEAMS</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "You are actively registered on the following study team rosters. "
+                "Select a team below to view details, rosters, or manage settings:\n"
+            )
+            buttons = []
+            for org in orgs:
+                buttons.append([InlineKeyboardButton(f"🏫 {org['org_name']} (#{org['org_tag']})", callback_data=f"view_org|{org['org_id']}")])
+                
+            buttons.append([
+                InlineKeyboardButton("✨ ESTABLISH TEAM", callback_data="fsm_create_org|0"),
+                InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
+            ])
+            buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        else:
+            text = (
+                "🏰 <b>ALLIANCE CLAN PORTAL</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "You are not registered in any Study Alliance. School alliances merge and rank scores collectively!\n\n"
+                "Choose an action below to establish or integrate with a group:"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
+                [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
+                [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
+            ])
+            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    elif action == "view_org":
+        await query.answer()
+        org_id = int(d_id)
+        
+        # Pull team details from DB
+        conn = engine.get_db_connection()
+        org_details = None
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM organizations WHERE org_id = %s;", (org_id,))
+                org_details = cur.fetchone()
+        finally:
+            engine.release_connection(conn)
+            
+        if not org_details:
+            await query.edit_message_text("⚠️ Organization not found.", reply_markup=return_kb)
+            return
+            
+        roster = await asyncio.to_thread(db_get_organization_roster, org_id)
+        text = build_organization_card_text(org_details, roster)
+        
+        # Find user's role in this specific organization
+        user_membership = next((m for m in roster if int(m['user_id']) == int(user_id)), None)
+        user_role = user_membership.get("org_role") if user_membership else "member"
+        
+        buttons = [
+            [InlineKeyboardButton("🚪 LEAVE School TEAM", callback_data=f"leave_org_warn|{org_id}")]
+        ]
+        if user_role == "creator":
+            buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
+            
+        buttons.append([InlineKeyboardButton("🔙 BACK TO TEAM LIST", callback_data="alliance_portal|0")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    elif action == "leave_org_warn":
+        await query.answer()
+        org_id = int(d_id)
+        
+        # Warn before committing the leave action
+        warn_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_confirm|{org_id}")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
+        ])
+        await query.edit_message_text(
+            "⚠️ <b>WARNING: EXIT ALLIANCE ROSTER</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Are you sure you want to leave this study team?\n"
+            "<i>Your scored marks will no longer contribute to their global collective scoreboard metrics.</i>",
+            reply_markup=warn_kb,
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "dissolve_org_warn":
+        await query.answer()
+        org_id = int(d_id)
+        
+        # Warn with high impact before dissolving
+        warn_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💥 CONFIRM DISSOLUTION", callback_data=f"dissolve_org_confirm|{org_id}")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
+        ])
+        await query.edit_message_text(
+            "⚠️ <b>CRITICAL WARNING: DISSOLVE TEAM ALLIANCE</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "You are about to completely dissolve and delete this school team. "
+            "<b>This operation is permanent and cannot be undone!</b> All mapped students will be removed from this roster.",
+            reply_markup=warn_kb,
             parse_mode="HTML"
         )
         return
@@ -171,7 +263,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         
         fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="alliance_portal|0")
         ]])
         await query.edit_message_text(
             "✍️ <b>PROMPT: CREATE SCHOOL TEAM</b>\n"
@@ -189,7 +281,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         
         fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="alliance_portal|0")
         ]])
         await query.edit_message_text(
             "✍️ <b>PROMPT: JOIN SCHOOL TEAM</b>\n"
@@ -203,17 +295,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
     elif action == "leave_org_confirm":
         await query.answer()
-        await asyncio.to_thread(db_leave_organization, user_id)
+        org_id = int(d_id)
+        await asyncio.to_thread(db_leave_organization, user_id, org_id)
         await query.edit_message_text("🚪 You successfully exited the school team. Alliance points reset.", reply_markup=return_kb)
         return
 
     elif action == "dissolve_org_confirm":
         await query.answer()
+        org_id = int(d_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        org_id = profile.get("org_id")
-        if org_id and profile.get("org_role") == "creator":
-            await asyncio.to_thread(db_dissolve_organization, org_id)
-            await query.edit_message_text("💥 School team dissolved. All student mappings cleared.", reply_markup=return_kb)
+        await asyncio.to_thread(db_dissolve_organization, org_id)
+        await query.edit_message_text("💥 School team dissolved. All student mappings have been cleared.", reply_markup=return_kb)
         return
 
     elif action == "close_portal":

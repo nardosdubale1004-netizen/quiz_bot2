@@ -231,18 +231,42 @@ class QuizEngine:
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS username text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
-                
-                # Dynamic User Consent and Alliance Mapping Columns
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS public_consent_granted BOOLEAN DEFAULT FALSE;")
-                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(org_id) ON DELETE SET NULL;")
-                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS org_role VARCHAR(15) DEFAULT 'member';")
 
+                # Setup Dynamic Many-to-Many Membership table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS org_memberships (
+                        user_id VARCHAR(20) NOT NULL,
+                        org_id INTEGER REFERENCES organizations(org_id) ON DELETE CASCADE,
+                        org_role VARCHAR(15) DEFAULT 'member',
+                        joined_at TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (user_id, org_id)
+                    );
+                """)
+
+                # Port historical school teams from stats table if column exists
+                try:
+                    cur.execute("SELECT org_id FROM user_stats LIMIT 1;")
+                    has_legacy_col = True
+                except Exception:
+                    has_legacy_col = False
+                    conn.rollback()
+
+                if has_legacy_col:
+                    cur.execute("""
+                        INSERT INTO org_memberships (user_id, org_id, org_role)
+                        SELECT user_id, org_id, org_role FROM user_stats WHERE org_id IS NOT NULL
+                        ON CONFLICT DO NOTHING;
+                    """)
+                    cur.execute("ALTER TABLE user_stats DROP COLUMN IF EXISTS org_id CASCADE;")
+                    cur.execute("ALTER TABLE user_stats DROP COLUMN IF EXISTS org_role CASCADE;")
+                
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
-            print(f"{Style.GREEN}[DATABASE] Production schema configuration & fallback username columns verified.{Style.RESET}")
-            print(f"{Style.GREEN}[DEBUG-SCHEMA-FIX] Successfully dropped restrictive FK constraint user_responses_message_id_fkey.{Style.RESET}", flush=True)
+            print(f"{Style.GREEN}[DATABASE] Many-to-many organizations and roster schemas verified.{Style.RESET}")
+            print(f"{Style.GREEN}[DEBUG-SCHEMA-FIX] Dropped restrictive FK constraints.{Style.RESET}", flush=True)
         except Exception as e:
             print(f"{Style.YELLOW}[DATABASE WARNING] Schema checks encountered: {e}. Ensure migrations have run.{Style.RESET}")
         finally:
@@ -634,10 +658,11 @@ def db_get_alliance_leaderboard():
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT alliance_tag, SUM(total_marks) as total_score, COUNT(user_id) as active_members
-                FROM user_stats
-                WHERE alliance_tag IS NOT NULL
-                GROUP BY alliance_tag
+                SELECT o.org_tag AS alliance_tag, SUM(u.total_marks) as total_score, COUNT(m.user_id) as active_members
+                FROM organizations o
+                JOIN org_memberships m ON o.org_id = m.org_id
+                JOIN user_stats u ON m.user_id = u.user_id
+                GROUP BY o.org_tag
                 ORDER BY total_score DESC
                 LIMIT 10;
             """)
@@ -669,7 +694,7 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
                 print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id} OR placeholder_id={placeholder_id}", flush=True)
                 cur.execute("""
                     SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
-                           us.alliance_tag, us.nickname, us.username, us.first_name
+                           us.nickname, us.username, us.first_name, us.public_consent_granted
                     FROM user_responses ur
                     LEFT JOIN user_stats us ON ur.user_id = us.user_id
                     WHERE ur.message_id = %s OR ur.message_id = %s
@@ -679,7 +704,7 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
                 print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id}", flush=True)
                 cur.execute("""
                     SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
-                           us.alliance_tag, us.nickname, us.username, us.first_name
+                           us.nickname, us.username, us.first_name, us.public_consent_granted
                     FROM user_responses ur
                     LEFT JOIN user_stats us ON ur.user_id = us.user_id
                     WHERE ur.message_id = %s
@@ -1043,9 +1068,12 @@ def db_get_user_profile(user_id):
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT u.*, o.org_name, o.org_tag, o.org_type
+                SELECT u.*, 
+                       (SELECT o.org_name FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_name,
+                       (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_tag,
+                       (SELECT m.org_role FROM org_memberships m WHERE m.user_id = u.user_id LIMIT 1) AS org_role,
+                       (SELECT o.org_id FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_id
                 FROM user_stats u
-                LEFT JOIN organizations o ON u.org_id = o.org_id
                 WHERE u.user_id = %s;
             """, (str(user_id),))
             row = cur.fetchone()
@@ -1466,7 +1494,7 @@ def db_update_tournament_meta_field(key: str, value):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-# --- ORGANIZATIONAL CRUD OPERATION ENGINE ---
+# --- MANY-TO-MANY ROSTER RELATION ENGINE ---
 
 def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School") -> int:
     """Inserts a new school or academy mapping and returns its assigned org_id."""
@@ -1482,11 +1510,11 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
             row = cur.fetchone()
             org_id = row['org_id']
             
-            # Auto-assign the creator's profile mapping
+            # Map dynamic relational membership to joining table
             cur.execute("""
-                INSERT INTO user_stats (user_id, org_id, org_role, total, correct, total_marks)
-                VALUES (%s, %s, 'creator', 0, 0, 0)
-                ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, org_role = EXCLUDED.org_role;
+                INSERT INTO org_memberships (user_id, org_id, org_role)
+                VALUES (%s, %s, 'creator')
+                ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
             """, (str(creator_id), org_id))
             
             conn.commit()
@@ -1500,7 +1528,7 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_join_organization(user_id, org_tag: str) -> str:
-    """Maps a scholar to an existing organization based on its unique Tag."""
+    """Maps a student to an existing organization based on its Code Tag."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1514,9 +1542,9 @@ def db_join_organization(user_id, org_tag: str) -> str:
             org_name = row['org_name']
             
             cur.execute("""
-                INSERT INTO user_stats (user_id, org_id, org_role, total, correct, total_marks)
-                VALUES (%s, %s, 'member', 0, 0, 0)
-                ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, org_role = EXCLUDED.org_role;
+                INSERT INTO org_memberships (user_id, org_id, org_role)
+                VALUES (%s, %s, 'member')
+                ON CONFLICT (user_id, org_id) DO NOTHING;
             """, (str(user_id), org_id))
             conn.commit()
             return org_name
@@ -1528,17 +1556,16 @@ def db_join_organization(user_id, org_tag: str) -> str:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_leave_organization(user_id):
-    """Unmaps a user from their active school or academy clan."""
+def db_leave_organization(user_id, org_id: int):
+    """Unmaps a user from a specific study team."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE user_stats 
-                SET org_id = NULL, org_role = 'member' 
-                WHERE user_id = %s;
-            """, (str(user_id),))
+                DELETE FROM org_memberships 
+                WHERE user_id = %s AND org_id = %s;
+            """, (str(user_id), int(org_id)))
             conn.commit()
             return True
     except Exception as e:
@@ -1549,17 +1576,38 @@ def db_leave_organization(user_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_get_organization_roster(org_id: int):
-    """Retrieves all mapped scholars and their score values inside an organization."""
+def db_get_user_organizations(user_id):
+    """Retrieves all school teams a student is actively mapped to."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT user_id, nickname, username, first_name, total_marks, org_role, public_consent_granted
-                FROM user_stats
-                WHERE org_id = %s
-                ORDER BY total_marks DESC;
+                SELECT o.*, m.org_role
+                FROM organizations o
+                JOIN org_memberships m ON o.org_id = m.org_id
+                WHERE m.user_id = %s;
+            """, (str(user_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB-ORG-ERROR] Fetch user orgs failed: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_organization_roster(org_id: int):
+    """Retrieves all mapped scholars and their scores inside an organization."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks, m.org_role, u.public_consent_granted
+                FROM org_memberships m
+                JOIN user_stats u ON m.user_id = u.user_id
+                WHERE m.org_id = %s
+                ORDER BY u.total_marks DESC;
             """, (int(org_id),))
             return cur.fetchall()
     except Exception as e:
@@ -1595,8 +1643,7 @@ def db_dissolve_organization(org_id: int) -> bool:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # Stats updates are handled via foreign key cascade, but let's reset roles manually first
-            cur.execute("UPDATE user_stats SET org_role = 'member' WHERE org_id = %s;", (int(org_id),))
+            cur.execute("DELETE FROM org_memberships WHERE org_id = %s;", (int(org_id),))
             cur.execute("DELETE FROM organizations WHERE org_id = %s;", (int(org_id),))
             conn.commit()
             return True
