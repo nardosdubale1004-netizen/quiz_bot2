@@ -4,6 +4,7 @@ import asyncio
 import traceback
 import sys
 import httpx
+import json
 from datetime import datetime, timedelta, timezone
 import time
 
@@ -25,6 +26,9 @@ from src.database import (
     db_try_start_tournament_round,
     db_set_tournament_pause_state,
     db_update_tournament_meta_field,
+    db_get_city_leaderboard,
+    db_get_country_leaderboard,
+    db_get_alliance_leaderboard,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
@@ -79,16 +83,14 @@ def _render_challenge_text(current_round, total_rounds, ref, remaining_seconds, 
     mins, secs = divmod(remaining_seconds, 60)
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
 
+    # Premium simplified round countdown text
     lines = [
         f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • Round {curr_r}/{tot_r} • REF {ref}</b>",
         f"━━━━━━━━━━━━━━━━━━━━━━━━",
         f"⏳ <b>TIME REMAINING:</b> <code>{time_str}</code>",
-        f"<blockquote expandable>",
-        f"📖 <b>Question Canvas Preview:</b>\n<i>{question_preview}</i>",
-        f"</blockquote>"
     ]
     if submission_count is not None:
-        lines.append(f"\n✍️ <b>{submission_count} submissions logged.</b> Speed earns early bird bonuses!")
+        lines.append(f"✍️ <b>{submission_count} submissions logged.</b> Speed earns early bird bonuses!")
     else:
         lines.append("\n<i>Tap an option below to submit your answer! Your personal timer is running.</i>")
     return "\n".join(lines)
@@ -99,7 +101,6 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
     import src.config
     print(f"{Style.CYAN}[DEBUG-TIMER] Starting countdown task for message {ann_mid}. Display ID: {display_id}. Duration: {round_seconds}s. Round {current_round}/{total_rounds}.{Style.RESET}", flush=True)
     try:
-        from src.typography import lite_math
         channel_id = engine.config['channel']
 
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
@@ -107,12 +108,6 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
         if not own_track:
             print(f"{Style.YELLOW}[DEBUG-TIMER-WARNING] No active track found with display_id={display_id}. Aborting countdown loop.{Style.RESET}", flush=True)
             return
-
-        q = await asyncio.to_thread(db_get_question_by_id, own_track.get('q_id'))
-        question_preview = ""
-        if q:
-            raw_q = q.get('native_question') or lite_math(q.get('question', ''))
-            question_preview = raw_q[:220] + ("…" if len(raw_q) > 220 else "")
 
         STOP_EDITING_WITHIN = 0
 
@@ -139,7 +134,7 @@ async def run_round_countdown(app, engine: QuizEngine, ann_mid: int, display_id:
                 submission_count = len(responses)
                 print(f"[DEBUG-TIMER-TICK] Track {display_id} (mid={question_mid}) has {submission_count} submissions. Remaining: {remaining}s", flush=True)
 
-            text = _render_challenge_text(current_round, total_rounds, display_id, remaining, question_preview, submission_count)
+            text = _render_challenge_text(current_round, total_rounds, display_id, remaining, "", submission_count)
             if _LAST_COUNTDOWN_TEXT.get(ann_mid) != text:
                 try:
                     await app.bot.edit_message_text(chat_id=channel_id, message_id=ann_mid, text=text, parse_mode="HTML")
@@ -250,11 +245,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             print(f"{Style.YELLOW}[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.{Style.RESET}", flush=True)
             return
 
-        from src.typography import lite_math
-        raw_q = q.get('native_question') or lite_math(q.get('question', ''))
-        question_preview = raw_q[:220] + ("…" if len(raw_q) > 220 else "")
-
-        announcement_text = _render_challenge_text(current_round, total_rounds, last_seq, round_seconds, question_preview)
+        announcement_text = _render_challenge_text(current_round, total_rounds, last_seq, round_seconds, "")
         ann_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=announcement_text, parse_mode="HTML")
 
         await asyncio.sleep(1.5)
@@ -506,21 +497,42 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
                 try:
                     top_scorers = await asyncio.to_thread(db_get_weekly_leaderboard, target_grade)
-                    champions_lines = []
-                    medals = ["🥇", "🥈", "🥉"]
-                    for idx, row in enumerate(top_scorers[:3]):
-                        user_label = format_public_name(row)
-                        champions_lines.append(f"  {medals[idx]} <b>{user_label}</b> — <b>{row['total_score']} Marks</b>")
-                    champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""
+                    top_alliances = await asyncio.to_thread(db_get_alliance_leaderboard)
+                    top_cities = await asyncio.to_thread(db_get_city_leaderboard)
+                    top_countries = await asyncio.to_thread(db_get_country_leaderboard)
+
+                    # Dynamic padding and alignment helper for retro monospaced table display
+                    def pad_truncate(val: str, max_len: int = 12) -> str:
+                        val = str(val)[:max_len]
+                        return val.ljust(max_len)
+
+                    ind_val = "None"
+                    if top_scorers:
+                        ind_val = format_public_name(top_scorers[0])
+                        if top_scorers[0].get('alliance_tag'):
+                            ind_val = f"{ind_val} (#{top_scorers[0]['alliance_tag']})"
+
+                    sch_val = top_alliances[0]['alliance_tag'] if top_alliances else "None"
+                    city_val = top_cities[0]['city'] if top_cities else "None"
+                    cnt_val = top_countries[0]['country'] if top_countries else "None"
+
+                    # Aligned ASCII board formatted cleanly inside a monospaced block for all screens
+                    champions_table = (
+                        f"┌──────┬──────────────┬──────────────┬──────────────┬──────────────┐\n"
+                        f"│ RANK │ INDIVIDUAL   │ SCHOOL TEAM  │ CITY         │ COUNTRY      │\n"
+                        f"├──────┼──────────────┼──────────────┼──────────────┼──────────────┤\n"
+                        f"│ 1st  │ {pad_truncate(ind_val)} │ {pad_truncate(sch_val)} │ {pad_truncate(city_val)} │ {pad_truncate(cnt_val)} │\n"
+                        f"└──────┴──────────────┴──────────────┴──────────────┴──────────────┘"
+                    )
 
                     final_completed_text = (
-                        f"🏆 <b>TOURNAMENT SERIES COMPLETED!</b> 🏆\n"
+                        f"🏁 <b>TOURNAMENT COMPLETED!</b> 🏁\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"All rounds in this competitive showdown series have been resolved!\n\n"
-                        f"🥇 <b>FINAL CHAMPIONS PODIUM:</b>\n"
-                        f"<blockquote expandable>\n"
-                        f"{champions_block}\n"
-                        f"</blockquote>\n\n"
+                        f"🏆 <b>GRAND CHAMPIONS LEAGUE STANDINGS:</b>\n"
+                        f"<pre>"
+                        f"{champions_table}"
+                        f"</pre>\n\n"
                         f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
                     )
                     await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
@@ -791,6 +803,25 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 dlog(f"[DEBUG-WATCHER] launch_tournament_round returned normally for display_id={next_seq}.")
                             except Exception as launch_err:
                                 dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
+                                
+                                # Queue Rollback on Launch Failure: Restore the question and rollback sequence state
+                                try:
+                                    dlog(f"[DEBUG-WATCHER-ROLLBACK] Attempting database queue recovery for popped question ID: {next_qid}")
+                                    conn = GLOBAL_ENGINE.get_db_connection()
+                                    with conn.cursor() as cur:
+                                        cur.execute("SELECT remaining_ids, last_seq FROM tournament_queue WHERE id = 1 FOR UPDATE;")
+                                        row = cur.fetchone()
+                                        if row:
+                                            rem = row['remaining_ids']
+                                            if isinstance(rem, str):
+                                                rem = json.loads(rem)
+                                            if next_qid not in rem:
+                                                rem.insert(0, next_qid)
+                                            cur.execute("UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;", (Json(rem), row['last_seq'] - 1))
+                                            conn.commit()
+                                            dlog(f"[DEBUG-WATCHER-ROLLBACK] Recovery confirmed! Successfully restored {next_qid} to queue. New remaining: {rem}")
+                                except Exception as rollback_err:
+                                    dlog_exception("Failed to rollback tournament queue after launch failure", rollback_err)
                         else:
                             dlog(f"[DEBUG-WATCHER-ERROR] Question {next_qid} not found in DB. Skipping.")
                     else:
