@@ -296,11 +296,16 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     dlog(f"[DEBUG-FINALIZE-ENTRY] finalize_tournament_round CALLED for track message_id={track.get('message_id')}, "
          f"display_id={track.get('display_id')}, interrupted={interrupted}")
 
+    mid = track['message_id']
+    
+    # FOOLPROOF: Unconditionally bind final_msg_id to mid at the very top of execution 
+    # to prevent any local UnboundLocalError scopes regardless of code branch selection.
+    final_msg_id = mid
+
     db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
     await asyncio.to_thread(db_update_tournament_meta_field, "last_closed_at", db_epoch)
     dlog(f"[CONSOLIDATED-FIX] Synchronized round close time to DB tournament_meta: {db_epoch}")
 
-    mid = track['message_id']
     if mid in _FINALIZING_ROUNDS or str(mid).startswith("launching_"):
         dlog(f"[DEBUG-FINALIZE-SKIP] mid={mid} already finalizing or is a placeholder id. Skipping.")
         return
@@ -417,7 +422,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     dlog_exception(f"finalize_tournament_round Step 3a (edit announcement, ann_mid={ann_mid})", ann_err)
 
         dlog(f"[DEBUG-FINALIZE] Step 4: Refreshing and closing message assets on Telegram (is_photo={is_photo})...")
-        final_msg_id = mid
         if is_photo:
             try:
                 try:
@@ -511,7 +515,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     if top_scorers:
                         ind_val = format_public_name(top_scorers[0])
                         if top_scorers[0].get('alliance_tag'):
-                            ind_val = f"{ind_val} (#{top_scorers[0]['alliance_tag']})"
+                            ind_val = f"{ind_val} (# {top_scorers[0]['alliance_tag']})"
 
                     sch_val = top_alliances[0]['org_name'] if top_alliances else "None"
                     city_val = top_cities[0]['city'] if top_cities else "None"
