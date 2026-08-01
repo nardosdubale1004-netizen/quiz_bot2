@@ -1890,3 +1890,10 @@ def db_get_country_leaderboard():
                 ORDER BY total_score DESC
                 LIMIT 5;
             """)
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch country leaderboard: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

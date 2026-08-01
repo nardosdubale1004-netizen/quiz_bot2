@@ -359,7 +359,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     pass
         else:
             dlog(f"[DEBUG-FINALIZE] Step 3: Fetching user responses from database...")
-            user_responses = await asyncio.to_thread(db_get_responses_for_message, mid, last_seq)
+            user_responses = await asyncio.to_thread(db_get_responses_for_message, final_msg_id, last_seq)
             total_users = len(user_responses)
             correct_responses = [r for r in user_responses if r['is_correct']]
             correct_count = len(correct_responses)
