@@ -562,7 +562,8 @@ async def profile_command(update: Update, context):
     
     buttons = [
         [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-        [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+        [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
+        [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")]
     ]
     
     if org_id:
@@ -757,10 +758,14 @@ async def handle_fsm_message(update: Update, context):
             USER_PAYLOADS[user_id]["org_name"] = clean_org_name
             USER_STATES[user_id] = "AWAITING_ORG_TAG"
             
+            # Form conversational prompt with direct return navigation buttons
             await update.message.reply_text(
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍ Pals, enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
+                "✍ Enter a short Code Tag identifier for your group (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+                ]]),
                 parse_mode="HTML"
             )
 
@@ -787,7 +792,13 @@ async def handle_fsm_message(update: Update, context):
                 )
             except Exception as e:
                 if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                    await update.message.reply_text(f"⚠️ Error: The tag <code>#{clean_tag}</code> is already registered by another organization. Enter a unique tag:")
+                    await update.message.reply_text(
+                        f"⚠️ Error: The tag <code>#{clean_tag}</code> is already registered. Enter a unique tag:",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+                        ]]),
+                        parse_mode="HTML"
+                    )
                 else:
                     await update.message.reply_text("⚠️ Setup failed due to a database exception. Please try again.")
 
@@ -806,7 +817,13 @@ async def handle_fsm_message(update: Update, context):
                     parse_mode="HTML"
                 )
             else:
-                await update.message.reply_text(f"⚠️ Alliance code <code>#{clean_tag}</code> does not exist on our records. Please enter a valid Tag:")
+                await update.message.reply_text(
+                    f"⚠️ Alliance code <code>#{clean_tag}</code> does not exist on our records. Please enter a valid Tag:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+                    ]]),
+                    parse_mode="HTML"
+                )
 
     except Exception as e:
         traceback.print_exc()

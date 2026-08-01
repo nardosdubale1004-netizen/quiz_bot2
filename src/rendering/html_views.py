@@ -534,11 +534,11 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
     mastery = get_grade_mastery_title(marks)
     next_rank = get_next_rank_info(marks)
     
-    # Highly simplified terminology for dynamic privacy settings
+    # Simple and clear visibility configurations
     if profile.get("public_consent_granted"):
-        consent_status = "🟢 PUBLIC\n<i>(Your real Telegram handle is displayed on rankings)</i>"
+        consent_status = "🟢 PUBLIC\n<i>(Your actual Telegram name is displayed on weekly leaderboards)</i>"
     else:
-        consent_status = "🕵️ PRIVATE\n<i>(Your real name is hidden. You will appear anonymously on scoreboards)</i>"
+        consent_status = "🕵️ PRIVATE\n<i>(Your real name is completely hidden. You appear anonymously as an ID)</i>"
         
     nickname_label = profile.get("nickname") or "<i>None set (using default masked id)</i>"
     

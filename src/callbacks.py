@@ -45,19 +45,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
     print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {user_id}")
 
+    # Standard circular home button for intermediate flows
+    return_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")
+    ]])
+
     if action == "set_grade":
         grade = int(d_id)
         await asyncio.to_thread(db_set_user_grade, query.from_user.id, grade)
         await query.answer(f"Grade {grade} registered!")
         await query.edit_message_text(
-            f"✅ <b>Success!</b> Your profile is registered under <b>Grade {grade}</b>.\n\n"
-            f"Use the /profile command inside our private chat to check your dynamically generated card, "
-            f"and check the main channel for active quizzes!",
+            f"✅ <b>Academic Level Registered: Grade {grade}</b>\n\n"
+            "Your profile details are complete. Explore leaderboards or update details below:",
+            reply_markup=return_kb,
             parse_mode="HTML"
         )
         return
 
-    # --- SIMPLIFIED UNIFIED PROFILE PORTAL CALLBACK FLOWS ---
+    # --- PRIVACY & PROFILE SHORTCUT CALLBACK FLOWS ---
 
     elif action == "privacy_menu":
         await query.answer()
@@ -67,13 +72,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         
         text = build_profile_card_text(profile, roster)
         
-        # dynamic contextual buttons mapped directly under /profile layout
         consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
         consent_target = "0" if profile.get("public_consent_granted") else "1"
         
         buttons = [
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+            [InlineKeyboardButton("📝 CONFIGURE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
+            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")]
         ]
         
         if org_id:
@@ -86,7 +91,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
             ])
             
-        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
+        buttons.append([InlineKeyboardButton("🔙 CLOSE DASHBOARD", callback_data="close_portal|0")])
         
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
@@ -94,7 +99,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "toggle_consent":
         consent_state = (d_id == "1")
         await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
-        await query.answer("Scoreboard privacy settings updated!", show_alert=True)
+        await query.answer("Scoreboard visibility status updated!", show_alert=True)
         # Re-render the menu instantly
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         org_id = profile.get("org_id")
@@ -106,7 +111,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         
         buttons = [
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")]
+            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
+            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")]
         ]
         if org_id:
             buttons.append([InlineKeyboardButton("🚪 LEAVE SCHOOL TEAM", callback_data="leave_org_confirm|0")])
@@ -117,22 +123,44 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 InlineKeyboardButton("✨ CREATE TEAM", callback_data="fsm_create_org|0"),
                 InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
             ])
-        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
+        buttons.append([InlineKeyboardButton("🔙 CLOSE DASHBOARD", callback_data="close_portal|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    elif action == "reselect_grade_panel":
+        await query.answer()
+        grade_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎒 Grade 6", callback_data="set_grade|6"),
+             InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
+            [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
+             InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
+            [InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")]
+        ])
+        await query.edit_message_text(
+            "🎒 <b>SELECT ACADEMIC GRADE LEVEL</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Choose your active academic level using the options below:",
+            reply_markup=grade_keyboard,
+            parse_mode="HTML"
+        )
         return
 
     elif action == "set_nick_fsm":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_NICKNAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        
+        fsm_cancel_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+        ]])
         await query.edit_message_text(
-            "✍️ <b>PROMPT: score Nickname</b>\n"
+            "✍️ <b>PROMPT: SCOREBOARD PSEUDONYM</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please type your preferred display name for leaderboards directly as a text response inside this chat.\n\n"
+            "Please type your preferred display name for leaderboards directly into this chat.\n\n"
             "⚠️ <b>Simple Rules:</b>\n"
             "├─ Max 20 characters\n"
-            "└─ Spaces and underscores allowed\n\n"
-            "<i>(Type <code>/cancel</code> to abort)</i>",
+            "└─ Spaces and underscores allowed",
+            reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
         return
@@ -141,12 +169,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_NAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        
+        fsm_cancel_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+        ]])
         await query.edit_message_text(
-            "✍️ <b>PROMPT: Create School Team</b>\n"
+            "✍️ <b>PROMPT: CREATE SCHOOL TEAM</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please type the full name of your school or study academy team:\n"
-            "<i>(Example: Abyssinia Academy)</i>\n\n"
-            "<i>(Type <code>/cancel</code> to abort)</i>",
+            "Please type the full formal name of your school or study academy team:\n"
+            "<i>(Example: Abyssinia Academy)</i>",
+            reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
         return
@@ -155,12 +187,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_JOIN"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        
+        fsm_cancel_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+        ]])
         await query.edit_message_text(
-            "✍️ <b>PROMPT: Join School Team</b>\n"
+            "✍️ <b>PROMPT: JOIN SCHOOL TEAM</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Please enter the short, uppercase Code Tag of the school team you want to join:\n"
-            "<i>(Example: ABYSSINIA)</i>\n\n"
-            "<i>(Type <code>/cancel</code> to abort)</i>",
+            "<i>(Example: ABYSSINIA)</i>",
+            reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
         return
@@ -168,9 +204,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "leave_org_confirm":
         await query.answer()
         await asyncio.to_thread(db_leave_organization, user_id)
-        await query.edit_message_text("🚪 You left your school team. Your contributions have been removed from the roster.", reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")
-        ]]))
+        await query.edit_message_text("🚪 You successfully exited the school team. Alliance points reset.", reply_markup=return_kb)
         return
 
     elif action == "dissolve_org_confirm":
@@ -179,13 +213,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         org_id = profile.get("org_id")
         if org_id and profile.get("org_role") == "creator":
             await asyncio.to_thread(db_dissolve_organization, org_id)
-            await query.edit_message_text("💥 School team dissolved. All student mappings have been cleared.", reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")
-            ]]))
+            await query.edit_message_text("💥 School team dissolved. All student mappings cleared.", reply_markup=return_kb)
         return
 
     elif action == "close_portal":
-        await query.answer("Profile dashboard closed.")
+        await query.answer("Dashboard closed.")
         await query.delete_message()
         return
 
