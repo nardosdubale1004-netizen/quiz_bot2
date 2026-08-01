@@ -32,7 +32,7 @@ from src.database import (
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
-from src.rendering.html_views import format_public_name
+from src.rendering.html_views import format_public_name, build_champions_podium_html
 
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
@@ -83,7 +83,7 @@ def _render_challenge_text(current_round, total_rounds, ref, remaining_seconds, 
     mins, secs = divmod(remaining_seconds, 60)
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
 
-    # Simplified countdown text block optimized for clean rendering
+    # Premium simplified round countdown text
     lines = [
         f"⚔️ <b>LIVE TOURNAMENT CHALLENGE • Round {curr_r}/{tot_r} • REF {ref}</b>",
         f"━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -435,7 +435,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
                     if not cached_file_id:
                         async with httpx.AsyncClient() as client:
-                            resp = await fetch_kroki_image(client, img_url)
+                            resp = await fetch_kroki_image(client, sol_img_url, sol_latex)
                             if resp and resp.status_code == 200:
                                 media_bytes = resp.content
 
@@ -452,10 +452,10 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
             except Exception as e:
                 dlog_exception(f"finalize_tournament_round Step 4 (photo publish, REF {last_seq})", e)
-                fallback_id = locals().get('new_msg')
-                target_mid = fallback_id.message_id if fallback_id else mid
-                final_msg_id = target_mid
-                await asyncio.to_thread(engine.db_update_track_status, target_mid, "closed", clear_followup=True)
+                # CRITICAL ANTI-STUCK FIX: DO NOT mark as closed if the Telegram edits/sends failed completely!
+                if 'new_msg' not in locals() or locals()['new_msg'] is None:
+                    raise e
+                await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
         else:
             try:
                 closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
@@ -466,7 +466,8 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
             except Exception as e:
                 dlog_exception(f"finalize_tournament_round Step 4 (flat publish, REF {last_seq})", e)
-                await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
+                # Raise to retry on next tick
+                raise e
 
         dlog(f"[DEBUG-FINALIZE] Step 4 done. final_msg_id={final_msg_id}. Track status set to 'closed'.")
 
@@ -516,25 +517,8 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     city_val = top_cities[0]['city'] if top_cities else "None"
                     cnt_val = top_countries[0]['country'] if top_countries else "None"
 
-                    # Aligned ASCII board formatted cleanly inside a monospaced block for all screens
-                    champions_table = (
-                        f"┌──────┬──────────────┬──────────────┬──────────────┬──────────────┐\n"
-                        f"│ RANK │ PERSON       │ FOR SCHOOLS  │ FOR CITY     │ FOR COUNTRY  │\n"
-                        f"├──────┼──────────────┼──────────────┼──────────────┼──────────────┤\n"
-                        f"│ 1st  │ {pad_truncate(ind_val)} │ {pad_truncate(sch_val)} │ {pad_truncate(city_val)} │ {pad_truncate(cnt_val)} │\n"
-                        f"└──────┴──────────────┴──────────────┴──────────────┴──────────────┘"
-                    )
-
-                    final_completed_text = (
-                        f"🏁 <b>TOURNAMENT COMPLETED!</b> 🏁\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"All rounds in this competitive showdown series have been resolved!\n\n"
-                        f"🏆 <b>GRAND CHAMPIONS LEAGUE STANDINGS:</b>\n"
-                        f"<pre>"
-                        f"{champions_table}"
-                        f"</pre>\n\n"
-                        f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
-                    )
+                    # Aligned ASCII board formatted cleanly inside an expandable block for beautiful mobile views
+                    final_completed_text = build_champions_podium_html(ind_val, sch_val, city_val, cnt_val)
                     await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
                 except Exception as score_err:
                     dlog_exception("finalize_tournament_round Step 6 (final scoreboard)", score_err)

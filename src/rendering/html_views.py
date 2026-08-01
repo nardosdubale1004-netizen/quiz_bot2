@@ -666,3 +666,28 @@ def build_comparative_standings_text(top_alliances: list, user_org: dict = None)
         f"━━━━━━━━━━━━━━━━━━━━━━━"
     )
     return text
+
+
+def build_champions_podium_html(ind_val: str, sch_val: str, city_val: str, cnt_val: str) -> str:
+    """
+    Builds a beautifully styled, mobile-safe vertical grand standings podium 
+    utilizing Telegram's native advanced expandable blockquotes.
+    """
+    text = (
+        f"🏆 <b>TOURNAMENT SERIES COMPLETED!</b> 🏆\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"All active rounds in this synchronized showdown series have been resolved!\n\n"
+        f"🎖️ <b>GRAND CHAMPIONS LEAGUE STANDINGS:</b>\n"
+        f"<blockquote expandable>\n"
+        f"🥇 <b>INDIVIDUAL CHAMPION (PERSON):</b>\n"
+        f"└─ 👤 <b>{ind_val}</b>\n\n"
+        f"🏫 <b>SCHOOL TEAM CHAMPION (ALLIANCE):</b>\n"
+        f"└─ 🏛️ <code>#{sch_val}</code>\n\n"
+        f"🌆 <b>METROPOLITAN CHAMPION (CITY):</b>\n"
+        f"└─ 📍 <code>{city_val}</code>\n\n"
+        f"🌍 <b>NATIONAL CHAMPION (COUNTRY):</b>\n"
+        f"└─ 🗺️ <code>{cnt_val}</code>\n"
+        f"</blockquote>\n\n"
+        f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
+    )
+    return text
