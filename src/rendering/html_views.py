@@ -593,3 +593,42 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
 
     text += "\n━━━━━━━━━━━━━━━━━━━━━━━"
     return text
+
+
+def build_organization_card_text(org: dict, roster: list) -> str:
+    """
+    Builds a beautiful, simple, and expandable card displaying details and 
+    member rosters for a specific school team.
+    """
+    name = org.get("org_name", "UNKNOWN").upper()
+    tag = org.get("org_tag", "UNKNOWN")
+    org_type = org.get("org_type", "School")
+    
+    total_score = sum(r.get("total_marks", 0) for r in roster)
+    avg_score = int(total_score / len(roster)) if roster else 0
+    
+    roster_lines = []
+    medals = ["🥇", "🥈", "🥉", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️"]
+    for idx, r in enumerate(roster[:10]):
+        formatted_name = format_public_name(r)
+        role_marker = " 👑" if r.get("org_role") == "creator" else " 🛡️" if r.get("org_role") == "admin" else ""
+        roster_lines.append(f" {medals[idx]} <code>{formatted_name}</code> — <b>{r['total_marks']} Marks</b>{role_marker}")
+        
+    roster_block = "\n".join(roster_lines) if roster_lines else "<i>No active scholars registered.</i>"
+
+    text = (
+        f"🏫 <b>SCHOOL TEAM: {name}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"• <b>Domain Code:</b> <code>#{tag}</code>\n"
+        f"• <b>Alliance Category:</b> {org_type}\n\n"
+        f"📊 <b>TEAM STATS:</b>\n"
+        f" ├─ Members: <code>{len(roster)} registered</code>\n"
+        f" ├─ Total Team Score: <code>{total_score} Marks</code>\n"
+        f" └─ Team Average: <code>{avg_score} Marks</code>\n\n"
+        f"🏆 <b>TEAM LEADERBOARD (TOP 10):</b>\n"
+        f"<blockquote expandable>\n"
+        f"{roster_block}\n"
+        f"</blockquote>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    return text
