@@ -20,7 +20,7 @@ CREATE OR REPLACE FUNCTION fn_process_user_score(
     p_q_id text,
     p_is_correct boolean,
     p_selected_option int,
-    p_private_message_id bigint, -- Aligned to match the bigint schema column
+    p_private_message_id bigint,
     p_show_derivation boolean,
     p_show_perf boolean,
     p_bonus_limit int
@@ -49,6 +49,17 @@ DECLARE
     v_days_diff int;
     v_correct_count int;
     v_base_marks int;
+    
+    -- Dynamic check variables for asymmetric grade scoring
+    v_user_grade int;
+    v_question_grade int;
+    v_q_grade_raw text;
+    
+    -- Referral tracking variables
+    v_referrer_t1 text;
+    v_referrer_t2 text;
+    v_t1_score int := 0;
+    v_t2_score int := 0;
 BEGIN
     SELECT ur.is_correct, ur.marks_awarded
       INTO v_existing_correct, v_existing_marks
@@ -60,8 +71,8 @@ BEGIN
         v_marks := v_existing_marks;
         v_is_bonus := (v_marks >= 10);
     ELSE
-        SELECT us.last_active_at, COALESCE(us.current_streak, 0)
-          INTO v_last_active, v_streak
+        SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by
+          INTO v_last_active, v_streak, v_user_grade, v_referrer_t1
           FROM user_stats us
          WHERE us.user_id = p_user_id;
 
@@ -84,6 +95,16 @@ BEGIN
         END IF;
 
         IF p_is_correct THEN
+            -- Extract target question grade level safely from tags
+            SELECT q.tags::text INTO v_q_grade_raw FROM questions q WHERE q.id = p_q_id;
+            
+            IF v_q_grade_raw LIKE '%grade6%' THEN v_question_grade := 6;
+            ELSIF v_q_grade_raw LIKE '%grade8%' THEN v_question_grade := 8;
+            ELSIF v_q_grade_raw LIKE '%grade10%' THEN v_question_grade := 10;
+            ELSIF v_q_grade_raw LIKE '%grade12%' THEN v_question_grade := 12;
+            ELSE v_question_grade := COALESCE(v_user_grade, 12);
+            END IF;
+
             SELECT COUNT(*) INTO v_correct_count
               FROM user_responses
              WHERE message_id = p_message_id AND is_correct = TRUE;
@@ -94,13 +115,24 @@ BEGIN
             ELSE
                 v_base_marks := 2;
             END IF;
-            v_marks := FLOOR(v_base_marks * v_streak_mult)::int;
+
+            -- Asymmetrical Scoring Calibration Logic
+            IF v_user_grade < v_question_grade THEN
+                -- Punching Up: Give standard marks + a +3 Bravery Bonus
+                v_marks := FLOOR((v_base_marks + 3) * v_streak_mult)::int;
+            ELSIF v_user_grade > v_question_grade THEN
+                -- Punching Down: Award exactly 1 Recall Mark for memory revision
+                v_marks := 1;
+                v_is_bonus := false;
+            ELSE
+                -- Normal peer play
+                v_marks := FLOOR(v_base_marks * v_streak_mult)::int;
+            END IF;
         ELSE
             v_marks := 0;
         END IF;
 
         BEGIN
-            -- Insert the stats record first to avoid foreign key errors on user_responses.user_id references user_stats(user_id)
             INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
             VALUES (
                 p_user_id, 1,
@@ -122,6 +154,23 @@ BEGIN
                 p_user_id, p_message_id, p_q_id, p_is_correct, v_marks,
                 p_selected_option, p_private_message_id, p_show_derivation, p_show_perf
             );
+
+            -- Process Multi-Level Study Referral Points allocation upon correct answer
+            IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
+                -- Tier 1 direct Study Coach bonus (+1 Mark)
+                UPDATE user_stats 
+                SET total_marks = COALESCE(total_marks, 0) + 1 
+                WHERE user_id = v_referrer_t1;
+
+                -- Trace Tier 2 inviter
+                SELECT referred_by INTO v_referrer_t2 FROM user_stats WHERE user_id = v_referrer_t1;
+                IF v_referrer_t2 IS NOT NULL THEN
+                    -- Tier 2 indirect Academic Scout bonus (+1 Mark)
+                    UPDATE user_stats 
+                    SET total_marks = COALESCE(total_marks, 0) + 1 
+                    WHERE user_id = v_referrer_t2;
+                END IF;
+            END IF;
 
         EXCEPTION WHEN unique_violation THEN
             v_first_try := false;
@@ -216,7 +265,7 @@ class QuizEngine:
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
 
-                # Setup Organizations Tables
+                # Setup Organizations Tables with geographic properties
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS organizations (
                         org_id SERIAL PRIMARY KEY,
@@ -225,6 +274,8 @@ class QuizEngine:
                         creator_id VARCHAR(20) NOT NULL,
                         org_type VARCHAR(20) DEFAULT 'School',
                         is_public BOOLEAN DEFAULT TRUE,
+                        city VARCHAR(50) DEFAULT 'Addis Ababa',
+                        country VARCHAR(50) DEFAULT 'Ethiopia',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
@@ -233,6 +284,13 @@ class QuizEngine:
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS public_consent_granted BOOLEAN DEFAULT FALSE;")
+                
+                # Add geographic fallbacks to student stats
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS personal_city VARCHAR(50) DEFAULT 'Addis Ababa';")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS personal_country VARCHAR(50) DEFAULT 'Ethiopia';")
+                
+                # Add dynamic MLM referral invite tag column
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20) REFERENCES user_stats(user_id) ON DELETE SET NULL;")
 
                 # Setup Dynamic Many-to-Many Membership table
                 cur.execute("""
@@ -264,6 +322,8 @@ class QuizEngine:
                 
                 # Check for is_public column inside organizations
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;")
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS city VARCHAR(50) DEFAULT 'Addis Ababa';")
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country VARCHAR(50) DEFAULT 'Ethiopia';")
                 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 conn.commit()
@@ -662,12 +722,12 @@ def db_get_alliance_leaderboard():
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT o.org_tag AS alliance_tag, SUM(u.total_marks) as total_score, COUNT(m.user_id) as active_members
+                SELECT o.org_id, o.org_tag AS alliance_tag, o.org_name, SUM(u.total_marks) as total_score, COUNT(m.user_id) as active_members
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
                 JOIN user_stats u ON m.user_id = u.user_id
                 WHERE m.org_role != 'pending'
-                GROUP BY o.org_tag
+                GROUP BY o.org_id, o.org_tag, o.org_name
                 ORDER BY total_score DESC
                 LIMIT 10;
             """)
@@ -699,7 +759,9 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
                 print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id} OR placeholder_id={placeholder_id}", flush=True)
                 cur.execute("""
                     SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
-                           us.nickname, us.username, us.first_name, us.public_consent_granted
+                           us.nickname, us.username, us.first_name, us.public_consent_granted,
+                           (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = ur.user_id LIMIT 1) AS alliance_tag,
+                           (SELECT m.org_role FROM org_memberships m WHERE m.user_id = ur.user_id LIMIT 1) AS org_role
                     FROM user_responses ur
                     LEFT JOIN user_stats us ON ur.user_id = us.user_id
                     WHERE ur.message_id = %s OR ur.message_id = %s
@@ -709,7 +771,9 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
                 print(f"[DEBUG-DB-GET-RESPONSES] Querying user_responses for message_id={message_id}", flush=True)
                 cur.execute("""
                     SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
-                           us.nickname, us.username, us.first_name, us.public_consent_granted
+                           us.nickname, us.username, us.first_name, us.public_consent_granted,
+                           (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = ur.user_id LIMIT 1) AS alliance_tag,
+                           (SELECT m.org_role FROM org_memberships m WHERE m.user_id = ur.user_id LIMIT 1) AS org_role
                     FROM user_responses ur
                     LEFT JOIN user_stats us ON ur.user_id = us.user_id
                     WHERE ur.message_id = %s
@@ -1152,7 +1216,8 @@ def db_get_weekly_leaderboard(grade: int):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT ur.user_id, SUM(ur.marks_awarded) as total_score,
-                       us.nickname, us.username, us.first_name, us.public_consent_granted
+                       us.nickname, us.username, us.first_name, us.public_consent_granted,
+                       (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = ur.user_id LIMIT 1) AS alliance_tag
                 FROM user_responses ur
                 JOIN user_stats us ON ur.user_id = us.user_id
                 WHERE us.grade = %s
@@ -1685,7 +1750,8 @@ def db_update_user_consent_state(user_id, consent: bool) -> bool:
             cur.execute("""
                 INSERT INTO user_stats (user_id, public_consent_granted, total, correct, total_marks)
                 VALUES (%s, %s, 0, 0, 0)
-                ON CONFLICT (user_id) DO UPDATE SET public_consent_granted = EXCLUDED.public_consent_granted;
+                ON CONFLICT (user_id) DO UPDATE SET
+                    public_consent_granted = EXCLUDED.public_consent_granted;
             """, (str(user_id), bool(consent)))
             conn.commit()
             return True

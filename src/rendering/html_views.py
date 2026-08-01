@@ -535,7 +535,7 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
     
     # Reassuring and precise vocabulary surrounding the Privacy Toggle
     if profile.get("public_consent_granted"):
-        consent_status = "🟢 PUBLIC ACCESS\n<i>(Your actual Telegram handle is displayed publicly on scoreboards)</i>"
+        consent_status = "🟢 PUBLIC ACCESS\n<i>(Your actual Telegram name is displayed publicly on weekly leaderboards)</i>"
     else:
         consent_status = "🕵️ PRIVATE ACCESS\n<i>(Your real name is completely hidden. You appear anonymously as an ID)</i>"
         
@@ -614,7 +614,7 @@ def build_organization_card_text(org: dict, roster: list) -> str:
         role_marker = " 👑" if r.get("org_role") == "creator" else " 🛡️" if r.get("org_role") == "admin" else ""
         roster_lines.append(f" {medals[idx]} <code>{formatted_name}</code> — <b>{r['total_marks']} Marks</b>{role_marker}")
         
-    roster_block = "\n".join(roster_lines) if roster_lines else "<i>No active scholars registered.</i>"
+    roster_block =  "\n".join(roster_lines) if roster_lines else "<i>No active scholars registered.</i>"
 
     text = (
         f"🏫 <b>SCHOOL TEAM: {name}</b>\n"
