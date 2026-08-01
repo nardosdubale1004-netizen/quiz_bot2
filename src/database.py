@@ -653,7 +653,7 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
                 cur.execute("""
                     SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
                            us.alliance_tag, us.nickname, us.username, us.first_name
-                    FROM user_responses ur
+                FROM user_responses ur
                     LEFT JOIN user_stats us ON ur.user_id = us.user_id
                     WHERE ur.message_id = %s OR ur.message_id = %s
                     ORDER BY ur.answered_at ASC;
@@ -1162,8 +1162,27 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             conn = GLOBAL_ENGINE.get_db_connection()
             with conn.cursor() as cur:
                 pm_id = int(private_message_id) if private_message_id is not None else None
+                
+                # Highly detailed console tracing to isolate parameter states
+                print(f"\n{Style.CYAN}[DATABASE-CAST-DEBUG] Executing fn_process_user_score with explicit type casts to avoid AmbiguousFunction.{Style.RESET}", flush=True)
+                print(f" ├─ Params: p_user_id={user_id}::text, p_message_id={message_id}::text, p_q_id={q_id}::text", flush=True)
+                print(f" ├─ Params: p_is_correct={is_correct}::boolean, p_selected_option={selected_option}::integer, p_private_message_id={pm_id}::bigint", flush=True)
+                print(f" └─ Params: p_show_derivation={show_derivation}::boolean, p_show_perf={show_perf}::boolean, p_bonus_limit={bonus_limit}::integer\n", flush=True)
+
                 cur.execute(
-                    "SELECT * FROM fn_process_user_score(%s, %s, %s, %s, %s, %s, %s, %s, %s);",
+                    """
+                    SELECT * FROM fn_process_user_score(
+                        %s::text,
+                        %s::text,
+                        %s::text,
+                        %s::boolean,
+                        %s::integer,
+                        %s::bigint,
+                        %s::boolean,
+                        %s::boolean,
+                        %s::integer
+                    );
+                    """,
                     (
                         str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
                         pm_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
