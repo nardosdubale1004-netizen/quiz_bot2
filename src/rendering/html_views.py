@@ -467,3 +467,50 @@ def generate_poll_hint(q):
         if len(sentence) <= 195 and any(sym in sentence for sym in ["=", "√", "∫", "π", "θ", "°"]):
             return sentence
     return f"Apply {clean_rule[:100]}."[:195] if clean_rule else "Check Premium UI for derivations."[:195]
+
+
+def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) -> str:
+    """
+    Builds a highly structures HTML card for upcoming tournament showdowns.
+    """
+    subject = meta.get("subject", "GENERAL").upper()
+    topics = meta.get("topics", [])
+    diff_summary = meta.get("difficulty_summary", "N/A")
+    total_count = meta.get("total_count", 0)
+    round_seconds = meta.get("round_seconds", 60)
+    cooldown_seconds = meta.get("cooldown_seconds", 15)
+    
+    time_utc = meta.get("target_time_utc", "N/A")
+    time_eat = meta.get("target_time_eat", "N/A")
+    
+    topics_formatted = " │ ".join([f"<code>{t}</code>" for t in topics[:4]])
+    if len(topics) > 4:
+        topics_formatted += f" and {len(topics) - 4} more"
+
+    if remaining_delay is not None and remaining_delay > 0:
+        mins, secs = divmod(remaining_delay, 60)
+        countdown_lbl = f"⏳ <b>COUNTDOWN:</b> <code>{mins}m {secs:02d}s remaining</code>"
+    else:
+        countdown_lbl = "⚔️ <b>STATUS:</b> <code>Match starting now...</code>"
+
+    text = (
+        f"📢 <b>LIVE TOURNAMENT SHOWDOWN ALERT</b> ⚔️\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Scholars, prepare yourself! A live synchronized quiz tournament series is about to begin. "
+        f"Compete in real-time with other active peers.\n\n"
+        f"📋 <b>EXAMINATION CANVAS SCOPE:</b>\n"
+        f" ├─ 📚 <b>Subject:</b> <b>{subject}</b>\n"
+        f" ├─ 🏷️  <b>Topics Covered:</b> {topics_formatted}\n"
+        f" ├─ 📈 <b>Difficulty Curve:</b> <code>{diff_summary}</code>\n"
+        f" └─ 🔢 <b>Total Questions:</b> <code>{total_count} exercises</code>\n\n"
+        f"⏱️ <b>ROUND METRICS & TIMING:</b>\n"
+        f" ├─ ⏳ <b>Active Round Timer:</b> <code>{round_seconds} seconds</code>\n"
+        f" └─ ❄️ <b>Rest/Interval Cooldown:</b> <code>{cooldown_seconds} seconds</code>\n\n"
+        f"📅 <b>SYNCHRONIZED GLOBAL START TIME:</b>\n"
+        f" ├─ 🌍 <b>Universal Time:</b> <code>{time_utc}</code>\n"
+        f" ├─ 🇪🇹 <b>East African Time:</b> <code>{time_eat}</code>\n"
+        f" └─ {countdown_lbl}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <i>Tip: Set your notifications ON! Correct and rapid answers earn speed-bonus leaderboard marks.</i>"
+    )
+    return text

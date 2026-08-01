@@ -176,9 +176,6 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
                         if resp and resp.status_code == 200:
                             media_bytes = resp.content
 
-        # Safe transition layout fix:
-        # Since the placeholder message in the DM was text-only, if the solution has a diagram (photo),
-        # we must delete the text message and send a new photo message to avoid editing type constraints.
         if has_tikz:
             print(f"[DEBUG-DM-DELIVERY-CLI] Question {q['id']} contains a visual diagram. Deleting placeholder text message {p_mid} and pushing a fresh photo message.", flush=True)
             try:
@@ -682,29 +679,62 @@ async def admin_panel(app, engine: QuizEngine):
             scheduled_start = None
             announcement_mid = None
 
+            # Compile scope metadata and metrics for the announcement campaign card
+            difficulty_counts = {"easy": 0, "medium": 0, "hard": 0}
+            topic_set = set()
+            subject_name = subjects[int(sub_in)-1].upper()
+
+            for q in tournament_qs:
+                diff = q.get("difficulty", "medium").lower()
+                if diff == "weak":
+                    diff = "easy"
+                if diff in difficulty_counts:
+                    difficulty_counts[diff] += 1
+                if q.get("topic"):
+                    topic_set.add(q["topic"])
+
+            topics_list = list(topic_set)
+            diff_parts = []
+            for k, v in difficulty_counts.items():
+                if v > 0:
+                    diff_parts.append(f"{v} {k.capitalize()}")
+            diff_summary = ", ".join(diff_parts)
+
+            target_time_utc_str = "Immediate Start"
+            target_time_eat_str = "Immediate Start"
+
             # Timezone synchronization directly against Cloud Database clock
             if delay_seconds > 0:
                 db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
                 now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
                 scheduled_start = now_utc + timedelta(seconds=delay_seconds)
 
+                target_time_utc_str = scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')
+                eat_tz = timezone(timedelta(hours=3))
+                scheduled_eat = scheduled_start.astimezone(eat_tz)
+                target_time_eat_str = scheduled_eat.strftime('%Y-%m-%d %H:%M:%S EAT (GMT+3)')
+
                 print(f"\n{Style.CYAN}[DEBUG-FIX-LOG] Time synchronization completed successfully.{Style.RESET}", flush=True)
                 print(f" ├─ Local Host System clock:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
                 print(f" ├─ Neon Database clock context: {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
                 print(f" └─ Computed Execution Target: {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (Trigger in: {delay_seconds} seconds)", flush=True)
 
-            # --- PRE-COMMIT TRANSACTION PROTECTION ---
-            # Summarize variables and request manual verification before saving to database or sending messages
+            meta_payload = {
+                "subject": subject_name,
+                "topics": topics_list,
+                "difficulty_summary": diff_summary,
+                "total_count": len(tournament_qs),
+                "round_seconds": round_seconds,
+                "cooldown_seconds": cooldown_seconds,
+                "target_time_utc": target_time_utc_str,
+                "target_time_eat": target_time_eat_str
+            }
+
+            from src.rendering.html_views import build_tournament_announcement_text
+            proposed_ann_text = build_tournament_announcement_text(meta_payload, delay_seconds)
+
             print(f"\n{Style.YELLOW}{Style.BOLD}⚔️  PROPOSED TOURNAMENT CAMPAIGN SHEET:{Style.RESET}")
-            print(f" ├─ Subject Category:  <b>{subjects[int(sub_in)-1].upper()}</b>")
-            print(f" ├─ Solved Queue Length: <b>{len(tournament_qs)} questions</b>")
-            print(f" ├─ Selected Question IDs: {', '.join([q['id'] for q in tournament_qs])}")
-            print(f" ├─ Active Round Duration:  <b>{round_seconds} seconds</b>")
-            print(f" ├─ Rest Interval Cooldown:  <b>{cooldown_seconds} seconds</b>")
-            if scheduled_start:
-                print(f" └─ Schedule Mode:  <b>DELAYED START ({scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')})</b>")
-            else:
-                print(f" └─ Schedule Mode:  <b>IMMEDIATE RUN (The first question will launch upon confirmation!)</b>")
+            print(convert_to_legacy_html(proposed_ann_text))
 
             confirm_commit = await cli.ask("<ansiyellow><b>Confirm and launch/schedule this tournament? (y/n) > </b></ansiyellow>")
             if not confirm_commit or confirm_commit.lower() not in ['y', 'yes']:
@@ -717,17 +747,7 @@ async def admin_panel(app, engine: QuizEngine):
             if delay_seconds > 0:
                 try:
                     channel_id = engine.config['channel']
-                    mins_left = int(delay_seconds / 60) or 1
-                    ann_text = (
-                        f"📢 <b>UPCOMING LIVE TOURNAMENT SHOWDOWN</b> ⚔️\n\n"
-                        f"Prepare yourself, scholars! A live tournament series will begin soon.\n\n"
-                        f"⏰ <b>Starting in:</b> ~{mins_left} minute(s)\n"
-                        f"📋 <b>Total Questions:</b> {len(tournament_qs)}\n"
-                        f"⏱️ <b>Round Duration:</b> {round_seconds} seconds\n"
-                        f"❄️ <b>Round Interval:</b> {cooldown_seconds} seconds\n\n"
-                        f"<i>Set your notifications ON! Correct and rapid answers earn maximum leaderboard marks.</i>"
-                    )
-                    ann_msg = await app.bot.send_message(chat_id=channel_id, text=ann_text, parse_mode="HTML")
+                    ann_msg = await app.bot.send_message(chat_id=channel_id, text=proposed_ann_text, parse_mode="HTML")
                     announcement_mid = ann_msg.message_id
                 except Exception as ann_err:
                     print(f"{Style.YELLOW}Could not post scheduled announcement to channel: {ann_err}{Style.RESET}")
@@ -759,7 +779,8 @@ async def admin_panel(app, engine: QuizEngine):
                         merged_total,
                         scheduled_start.isoformat() if scheduled_start else (existing_queue.get('scheduled_start').isoformat() if (existing_queue and existing_queue.get('scheduled_start')) else None),
                         announcement_mid or (existing_queue.get('announcement_mid') if existing_queue else None),
-                        cooldown_seconds
+                        cooldown_seconds,
+                        meta_payload
                     )
                     if scheduled_start:
                         print(f"{Style.GREEN}✅ Tournament successfully scheduled and appended to existing queue!{Style.RESET}")
@@ -775,7 +796,8 @@ async def admin_panel(app, engine: QuizEngine):
                             total_count,
                             scheduled_start.isoformat(),
                             announcement_mid,
-                            cooldown_seconds
+                            cooldown_seconds,
+                            meta_payload
                         )
                         print(f"{Style.GREEN}✅ Tournament successfully scheduled and queued!{Style.RESET}")
                     else:
@@ -788,7 +810,8 @@ async def admin_panel(app, engine: QuizEngine):
                             total_count,
                             None,
                             None,
-                            cooldown_seconds
+                            cooldown_seconds,
+                            meta_payload
                         )
                         first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
                         await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=round_seconds, current_round=1, total_rounds=total_count)
@@ -1075,7 +1098,7 @@ async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
         print(f"Tournament Queue Status: {paused_status}")
         print(f"Remaining Questions in Queue: {len(queue['remaining_ids'])} items")
 
-    print(f"\n{Style.CYAN}Interruption Methods:\n [1] ⏸️  Pause Tournament (Halt active round + freeze queue)\n [2] ▶️  Resume Tournament Queue (Unfreeze execution loop)\n [3] ⏹️  Kill Tournament (Halt active round + wipe out queue)\n [b] Back to Cockpit{Style.RESET}")
+    print(f"\n{Style.CYAN}Menu Options:\n [1] ⏸️  Pause Tournament (Halt active round + freeze queue)\n [2] ▶️  Resume Tournament Queue (Unfreeze execution loop)\n [3] ⏹️  Kill Tournament (Halt active round + wipe out queue)\n [b] Back to Cockpit{Style.RESET}")
 
     action = await cli.ask("<b>Emergency Action > </b>")
     if not action or action == 'b':

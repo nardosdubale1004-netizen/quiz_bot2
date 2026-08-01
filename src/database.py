@@ -357,7 +357,7 @@ class QuizEngine:
     def db_delete_track(self, message_id):
         conn = None
         try:
-            conn = self.get_db_connection()
+            conn = GLOBAL_ENGINE.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
                 conn.commit()
@@ -653,7 +653,7 @@ def db_get_responses_for_message(message_id: str, display_id: int = None):
                 cur.execute("""
                     SELECT ur.user_id, ur.private_message_id, ur.selected_option, ur.is_correct, ur.answered_at,
                            us.alliance_tag, us.nickname, us.username, us.first_name
-                FROM user_responses ur
+                    FROM user_responses ur
                     LEFT JOIN user_stats us ON ur.user_id = us.user_id
                     WHERE ur.message_id = %s OR ur.message_id = %s
                     ORDER BY ur.answered_at ASC;
@@ -767,7 +767,7 @@ def db_get_active_tournament_rounds():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60, total_count: int = 1, scheduled_start=None, announcement_mid=None, cooldown_seconds: int = 15):
+def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: int = 60, total_count: int = 1, scheduled_start=None, announcement_mid=None, cooldown_seconds: int = 15, tournament_meta: dict = None):
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -780,9 +780,11 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
 
             print(f"[DEBUG-DB-SAVE-QUEUE] Saving remaining_ids: {remaining_ids} (total={total_count}, display_id_offset={last_seq}) to database.", flush=True)
 
+            meta_json = Json(tournament_meta) if tournament_meta is not None else '{}'
+
             cur.execute("""
-                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds)
-                VALUES (1, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds, tournament_meta)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     remaining_ids = EXCLUDED.remaining_ids,
                     last_seq = EXCLUDED.last_seq,
@@ -790,8 +792,9 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
                     total_count = EXCLUDED.total_count,
                     scheduled_start = EXCLUDED.scheduled_start,
                     announcement_mid = EXCLUDED.announcement_mid,
-                    cooldown_seconds = EXCLUDED.cooldown_seconds;
-            """, (Json(remaining_ids), last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds))
+                    cooldown_seconds = EXCLUDED.cooldown_seconds,
+                    tournament_meta = EXCLUDED.tournament_meta;
+            """, (Json(remaining_ids), last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds, meta_json))
             conn.commit()
     except Exception as e:
         if conn: conn.rollback()

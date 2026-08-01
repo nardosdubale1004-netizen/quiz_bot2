@@ -28,7 +28,7 @@ from src.database import (
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
-from src.rendering.html_views import format_public_name
+from src.rendering.html_views import format_public_name, build_tournament_announcement_text
 
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
@@ -243,8 +243,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             round_seconds, current_round, total_rounds
         )
         if not claimed:
-            from src.debug_log import dlog
-            dlog(f"[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.")
+            print(f"{Style.YELLOW}[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.{Style.RESET}", flush=True)
             return
 
         from src.typography import lite_math
@@ -302,7 +301,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     dlog(f"[DEBUG-FINALIZE-ENTRY] finalize_tournament_round CALLED for track message_id={track.get('message_id')}, "
          f"display_id={track.get('display_id')}, interrupted={interrupted}")
 
-    # CONSOLIDATED-FIX: Synchronize closing epoch clock to DB state.
     db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
     await asyncio.to_thread(db_update_tournament_meta_field, "last_closed_at", db_epoch)
     dlog(f"[CONSOLIDATED-FIX] Synchronized round close time to DB tournament_meta: {db_epoch}")
@@ -350,7 +348,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     print(f" └─ [DEBUG-FIX-SUCCESS] Countdown task safely terminated. Trapped error: {type(cancel_err).__name__}", flush=True)
 
         if src.config.SHUTTING_DOWN or interrupted:
-            print(f"{Style.YELLOW}[TOURNAMENT] Marking round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[TOURNAMENT] Forcing round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
             if ann_mid:
                 try:
                     reason_msg = halt_reason if halt_reason else "the server went offline or experienced an unexpected reboot sequence"
@@ -480,8 +478,8 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     champions_lines = []
                     medals = ["🥇", "🥈", "🥉"]
                     for idx, row in enumerate(top_scorers[:3]):
-                        u_label = format_public_name(row)
-                        champions_lines.append(f"  {medals[idx]} <b>{u_label}</b> — <b>{row['total_score']} Marks</b>")
+                        user_label = format_public_name(row)
+                        champions_lines.append(f"  {medals[idx]} <b>{user_label}</b> — <b>{row['total_score']} Marks</b>")
                     champions_block = ("\n🏆 <b>TOURNAMENT SERIES CHAMPIONS:</b>\n" + "\n".join(champions_lines)) if champions_lines else ""
 
                     final_completed_text = (
@@ -643,17 +641,8 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         print(f" ├─ [DELAY ACTIVE] Target scheduled: {sched_dt_utc.strftime('%H:%M:%S')} UTC | Remaining: {remaining_delay}s", flush=True)
                         ann_mid = queue.get('announcement_mid')
                         if ann_mid:
-                            mins, secs = divmod(remaining_delay, 60)
-                            time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
-                            text = (
-                                f"📢 <b>UPCOMING LIVE TOURNAMENT SHOWDOWN</b> ⚔️\n\n"
-                                f"Prepare yourself, scholars! A live tournament series will begin soon.\n\n"
-                                f"⏰ <b>Starting in:</b> {time_str}\n"
-                                f"📋 <b>Total Questions:</b> {queue.get('total_count', 1)}\n"
-                                f"⏱️ <b>Round Duration:</b> {queue.get('round_seconds', 60)} seconds\n"
-                                f"❄️ <b>Round Interval:</b> {queue.get('cooldown_seconds', 15)} seconds\n\n"
-                                f"<i>Set your notifications ON! Correct and rapid answers earn maximum leaderboard marks.</i>"
-                            )
+                            meta = queue.get('tournament_meta') or {}
+                            text = build_tournament_announcement_text(meta, remaining_delay)
 
                             update_interval = 10 if remaining_delay > 30 else 2
                             if remaining_delay % update_interval == 0 or _LAST_DELAY_VAL == -1:
@@ -684,7 +673,6 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
                 cooldown = queue.get('cooldown_seconds', 15)
 
-                # CONSOLIDATED-FIX: Read standardized round close time directly from tournament_meta JSONB
                 meta = queue.get('tournament_meta') or {}
                 last_closed = meta.get('last_closed_at', 0.0)
                 time_since_close = db_epoch - last_closed
@@ -737,7 +725,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         await asyncio.to_thread(db_clear_tournament_queue)
                         continue
 
-                    dlog(f"[DEBUG-POP-ATTEMPT] Watcher attempting to pop from queue. remaining_ids={fresh_queue.get('remaining_ids')}")
+                    dlog(f"[2026-08-01 10:32:54.271 UTC] [DEBUG-POP-ATTEMPT] Watcher attempting to pop from queue. remaining_ids={fresh_queue.get('remaining_ids')}")
                     next_qid, next_seq = await asyncio.to_thread(db_pop_tournament_question)
                     dlog(f"[DEBUG-WATCHER] db_pop_tournament_question returned next_qid={next_qid}, next_seq={next_seq}")
                     if next_qid:
