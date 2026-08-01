@@ -56,6 +56,14 @@ def convert_to_legacy_html(rich_html: str) -> str:
     text = re.sub(r'</li>', "\n", text)
     text = re.sub(r'</?u[lo](?:\s+[^>]*)?>', "", text)
 
+    # FIX: Convert line breaks, paragraph tags, and image elements to standard formats
+    # supported natively by the Telegram Bot API HTML parser. This prevents TIER 3 
+    # fallback crashes from entity parsing errors.
+    print(f"[DEBUG-LEGACY-CONVERT] Sanitizing and stripping layout tags (<br>, <p>, <img>) from payload of size {len(rich_html)}", flush=True)
+    text = text.replace("<br/>", "\n").replace("<br>", "\n")
+    text = text.replace("<p>", "").replace("</p>", "\n")
+    text = re.sub(r'<img[^>]*>', "", text)
+
     # Convert complex visual tables to aligned key-value summaries
     def table_sub(match):
         table_content = match.group(1)
@@ -219,8 +227,8 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
     try:
         client = get_shared_client()
         
-        # FIX: Dynamically select endpoint to target based on the presence of diagrams/photos.
-        # This prevents "unsupported tag / method clashing" on media messages.
+        # FIX: Dynamically select endpoint based on media context.
+        # This keeps the custom server layout synchronized without triggering bad requests on photo nodes.
         endpoint = "editMessageCaption" if has_media else "editMessageText"
         url = f"https://api.telegram.org/bot{bot.token}/{endpoint}"
 
@@ -262,7 +270,7 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
                 print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on primary endpoint '{endpoint}'.", flush=True)
                 return Message.de_json(resp_json["result"], bot)
 
-        # Fallback to the other endpoint if the primary one returned an error.
+        # Fallback to the alternate endpoint if the primary request failed.
         fallback_endpoint = "editMessageText" if has_media else "editMessageCaption"
         print(f"[DEBUG-FIX-EDIT-FALLBACK] Primary endpoint '{endpoint}' failed (HTTP {resp.status_code}). Retrying with: '{fallback_endpoint}'", flush=True)
         fallback_url = f"https://api.telegram.org/bot{bot.token}/{fallback_endpoint}"
@@ -282,7 +290,7 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
     legacy_html = convert_to_legacy_html(normalized_content)
     print(f"[DEBUG-FIX-EDIT-FALLBACK] Falling back to TIER 2 legacy editing for message_id: {message_id}", flush=True)
 
-    # Try edit_message_text first. If it fails (e.g. because of photo constraints), it retries with edit_message_caption.
+    # Try editing text-only first. If it fails, fallback to updating caption.
     try:
         with timed(f"TIER2 legacy edit_message_text msg={message_id}"):
             return await bot.edit_message_text(

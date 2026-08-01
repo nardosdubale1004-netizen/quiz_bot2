@@ -33,6 +33,8 @@ _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
 _LAST_COUNTDOWN_TEXT = {}
 _LAUNCH_LOCK = asyncio.Lock()
+
+# FIX: Initialize the central tracking reference to float 0.0 using database-side clock checks.
 _LAST_ROUND_CLOSED_AT = 0.0
 
 # Central tracking for live interval and delay countdown messaging
@@ -303,7 +305,11 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
 async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False, halt_reason: str = None):
     """Concludes the round on the channel and resolves pending student DMs concurrently with complete diagnostics."""
     global _LAST_ROUND_CLOSED_AT
-    _LAST_ROUND_CLOSED_AT = time.time()  # Start interval cooldown
+    
+    # FIX: Fetch the database-side clock timestamp immediately to strictly preserve timezone alignment.
+    # This prevents timing logic lockups across multiple hosts.
+    _LAST_ROUND_CLOSED_AT = await asyncio.to_thread(engine.db_get_current_epoch)
+    print(f"[DEBUG-FINALIZE-CLOCK] Logged database-side round closure time: {_LAST_ROUND_CLOSED_AT}", flush=True)
 
     mid = track['message_id']
     if mid in _FINALIZING_ROUNDS or str(mid).startswith("launching_"):
@@ -669,6 +675,8 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 pass
 
                 cooldown = queue.get('cooldown_seconds', 15)
+                
+                # FIX: Set 'time_since_close' using synchronized database epochs to keep calculations locked.
                 time_since_close = db_epoch - _LAST_ROUND_CLOSED_AT
 
                 if _LAST_ROUND_CLOSED_AT > 0.0 and time_since_close < cooldown:
