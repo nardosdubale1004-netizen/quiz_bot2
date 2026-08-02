@@ -158,31 +158,27 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     why = exp.get('why', 'No detailed explanation provided.')
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
+    # IMPORTANT: no <blockquote> tags inside the spoiler below — Telegram
+    # clients silently drop the spoiler blur when a blockquote is nested
+    # inside <tg-spoiler>, even though the API accepts it. Grouping is done
+    # with bold headers + dividers instead, so the whole thing stays hidden.
     general_principle = (
-        f"<blockquote>"
-        f"<b>🏛️ GENERAL PRINCIPLE:</b><br/>"
+        f"🏛️ <b>GENERAL PRINCIPLE:</b>\n"
         f"<i>{beautify_markdown_math(rule_text)}</i>"
-        f"</blockquote>"
     )
 
     step_by_step_parts = [
-        f"<blockquote expandable>"
-        f"<b>🔢 STEP-BY-STEP DERIVATION:</b>\n"
+        f"🔢 <b>STEP-BY-STEP DERIVATION:</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
     if exp.get('analogy'):
         step_by_step_parts.append(f"💡 <b>Analogy:</b>\n{beautify_markdown_math(exp['analogy'])}")
     if exp.get('memory_tip'):
         step_by_step_parts.append(f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}")
-
-    step_by_step_parts.append("</blockquote>")
     step_by_step = "\n\n".join(step_by_step_parts)
 
     options_analysis = q.get('options_analysis', [])
-    breakdown_parts = [
-        f"<blockquote expandable>",
-        f"<b>🔍 OPTION BREAKDOWN</b>\n"
-    ]
+    breakdown_parts = [f"🔍 <b>OPTION BREAKDOWN</b>\n"]
     for i, o_text in enumerate(q['options']):
         let = chr(65 + i)
         is_correct = (i == q['correct_option'])
@@ -198,15 +194,19 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)} ."
         breakdown_parts.append(analysis_line)
-
-    breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
     general_principle = replace_code_with_italic(general_principle)
     step_by_step = replace_code_with_italic(step_by_step)
     breakdown_block = replace_code_with_italic(breakdown_block)
 
-    spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
+    divider = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    spoiler_content = (
+        f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n"
+        f"{general_principle}\n{divider}\n"
+        f"{step_by_step}\n{divider}\n"
+        f"{breakdown_block}"
+    )
     spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
 
     components = [
