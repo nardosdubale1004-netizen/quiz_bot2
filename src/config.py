@@ -32,6 +32,24 @@ CONFIG = {
     "kroki_url": os.getenv("KROKI_URL") or local_config.get("kroki_url") or "https://kroki.io"
 }
 
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.strip().isdigit()] \
+    or [int(x) for x in local_config.get("admin_ids", [])]
+
+FEEDBACK_CATEGORIES = {
+    "bug": "🐛 Bug / Something's Broken",
+    "feature": "💡 Feature Request",
+    "confusing": "❓ Confusing / Unclear",
+    "general": "⭐ General Feedback",
+}
+
+FEEDBACK_STATUS_LABELS = {
+    "open": "🆕 Open",
+    "in_progress": "🔧 In Progress",
+    "planned": "🗓️ Planned Next Update",
+    "resolved": "✅ Resolved",
+    "wontfix": "🚫 Not Planned",
+}
+
 # --- Shared In-Memory Tracking for Lockout States ---
 LOCKOUT_MESSAGES = set()
 SHUTTING_DOWN = False

@@ -334,6 +334,18 @@ class QuizEngine:
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country VARCHAR(50) DEFAULT 'Ethiopia';")
                 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS feedback (
+                        id SERIAL PRIMARY KEY,
+                        user_id VARCHAR(20) NOT NULL,
+                        category VARCHAR(20) NOT NULL,
+                        message TEXT NOT NULL,
+                        status VARCHAR(20) DEFAULT 'open',
+                        admin_reply TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -625,6 +637,8 @@ class QuizEngine:
         finally:
             if conn:
                 self.release_connection(conn)
+
+
 
     @staticmethod
     def load_json(path):
@@ -1757,7 +1771,7 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 def db_get_organization_roster(org_id: int):
     """Retrieves all mapped scholars and their scores inside an organization (excluding pending requests)."""
     conn = None
@@ -2019,6 +2033,138 @@ def db_set_user_referrer(user_id, referrer_id):
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to set user referrer: {e}", flush=True)
         return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_submit_feedback(user_id, category: str, message: str) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO feedback (user_id, category, message)
+                VALUES (%s, %s, %s) RETURNING id;
+            """, (str(user_id), category, message))
+            fid = cur.fetchone()['id']
+            conn.commit()
+            return fid
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to submit feedback: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_feedback_list(status: str = None, category: str = None, limit: int = 8, offset: int = 0):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            clauses, params = [], []
+            if status:
+                clauses.append("f.status = %s")
+                params.append(status)
+            if category:
+                clauses.append("f.category = %s")
+                params.append(category)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            params.extend([limit, offset])
+            cur.execute(f"""
+                SELECT f.*, us.nickname, us.username, us.first_name
+                FROM feedback f
+                LEFT JOIN user_stats us ON f.user_id = us.user_id
+                {where}
+                ORDER BY f.created_at DESC
+                LIMIT %s OFFSET %s;
+            """, tuple(params))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to list feedback: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_feedback_by_id(feedback_id: int):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT f.*, us.nickname, us.username, us.first_name
+                FROM feedback f
+                LEFT JOIN user_stats us ON f.user_id = us.user_id
+                WHERE f.id = %s;
+            """, (int(feedback_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch feedback {feedback_id}: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_update_feedback_status(feedback_id: int, status: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE feedback SET status = %s, updated_at = NOW() WHERE id = %s;
+            """, (status, int(feedback_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update feedback status: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_save_feedback_reply(feedback_id: int, reply_text: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE feedback SET admin_reply = %s, status = 'in_progress', updated_at = NOW() WHERE id = %s;
+            """, (reply_text, int(feedback_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to save feedback reply: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_feedback_stats():
+    """Returns counts grouped by category and by status — powers the admin progress dashboard."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT category, COUNT(*) AS cnt FROM feedback GROUP BY category;")
+            by_cat = {r['category']: r['cnt'] for r in cur.fetchall()}
+            cur.execute("SELECT status, COUNT(*) AS cnt FROM feedback GROUP BY status;")
+            by_status = {r['status']: r['cnt'] for r in cur.fetchall()}
+            cur.execute("SELECT COUNT(*) AS cnt FROM feedback;")
+            total = cur.fetchone()['cnt']
+            return {"by_category": by_cat, "by_status": by_status, "total": total}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch feedback stats: {e}", flush=True)
+        return {"by_category": {}, "by_status": {}, "total": 0}
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

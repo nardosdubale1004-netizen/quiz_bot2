@@ -22,7 +22,7 @@ for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.e
 from telegram import Update, BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES
 from src.database import (
     QuizEngine,
     db_get_user_profile,
@@ -49,9 +49,14 @@ from src.database import (
     db_set_user_referrer,
     db_count_referrals,
     db_find_similar_organizations,
+    db_submit_feedback,
+    db_get_feedback_by_id,
+    db_update_feedback_status,
+    db_save_feedback_reply,
+    db_get_feedback_stats,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
-from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text
+from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
@@ -69,6 +74,7 @@ BOT_COMMANDS = [
     BotCommand("leaderboard", "View individual rank standings or school rankings"),
     BotCommand("invite", "Get your referral link & earn bonus marks"),
     BotCommand("help", "How the bot works, step by step"),
+    BotCommand("feedback", "Report a bug, request a feature, or share feedback"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -827,6 +833,47 @@ async def help_command(update: Update, context):
         ]])
     )
 
+async def feedback_command(update: Update, context):
+    buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
+    await send_rich_message_safe(
+        context.bot, chat_id=update.message.chat_id,
+        html_content="<h2>💬 SHARE FEEDBACK</h2>\n<hr/>\nWhat's this about?",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
+    if not ADMIN_IDS:
+        return
+    text = build_feedback_item_text(fb)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔧 In Progress", callback_data=f"fb_status|{fb_id}|in_progress"),
+         InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb_id}|planned")],
+        [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb_id}|resolved"),
+         InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb_id}|wontfix")],
+        [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")]
+    ])
+    for admin_id in ADMIN_IDS:
+        try:
+            await send_rich_message_safe(context.bot, chat_id=admin_id, html_content=f"🆕 <b>NEW FEEDBACK</b>\n\n{text}", reply_markup=kb)
+        except Exception:
+            pass
+
+
+async def feedback_admin_command(update: Update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    stats = await asyncio.to_thread(db_get_feedback_stats)
+    from src.config import FEEDBACK_CATEGORIES
+    buttons = [[InlineKeyboardButton(label, callback_data=f"fb_browse|{key}|open")] for key, label in FEEDBACK_CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton("📋 ALL OPEN ITEMS", callback_data="fb_browse|all|open")])
+    await send_rich_message_safe(
+        context.bot, chat_id=update.message.chat_id,
+        html_content=build_feedback_stats_text(stats),
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
 # --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
 
 async def _delete_silent(bot, chat_id, mid):
@@ -1052,6 +1099,49 @@ async def handle_fsm_message(update: Update, context):
                 f"✅ <b>Location updated!</b>\n📍 {clean_city}, {clean_country}",
                 profile_nav_kb
             )
+
+        elif state == "AWAITING_FEEDBACK_TEXT":
+            category = session.get("category", "general")
+            clean_msg = text_input[:1000].strip()
+            if not clean_msg:
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Message can't be empty.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
+                return
+
+            fid = await asyncio.to_thread(db_submit_feedback, user_id, category, clean_msg)
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
+
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
+                f"✅ <b>Thanks! Feedback #{fid} submitted.</b>\n\n"
+                f"You'll get a message here if there's a reply or update on it.",
+                profile_nav_kb
+            )
+            if fid:
+                fb = await asyncio.to_thread(db_get_feedback_by_id, fid)
+                if fb:
+                    await _notify_admins_new_feedback(context, fid, fb)
+
+        elif state == "AWAITING_ADMIN_REPLY":
+            target_fb_id = session.get("fb_id")
+            target_user_id = session.get("target_user_id")
+            reply_text = text_input[:1000].strip()
+            if not reply_text:
+                return
+
+            await asyncio.to_thread(db_save_feedback_reply, target_fb_id, reply_text)
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
+
+            try:
+                await send_rich_message_safe(
+                    context.bot, chat_id=int(target_user_id),
+                    html_content=f"💬 <b>Reply to your feedback #{target_fb_id}</b>\n\n<blockquote>{html.escape(reply_text)}</blockquote>"
+                )
+            except Exception:
+                pass
+
+            await _fsm_advance(context, update.message.chat_id, edit_mid, f"✅ Reply sent to user for feedback #{target_fb_id}.", None)
     except Exception:
         traceback.print_exc()
         await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Connection Error: Failed to commit your input.", profile_nav_kb)
@@ -1123,6 +1213,8 @@ def main():
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CommandHandler("invite", invite_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("feedback", feedback_command))
+    app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
     # Priority FSM handler filtering text messages during active state dialog sessions

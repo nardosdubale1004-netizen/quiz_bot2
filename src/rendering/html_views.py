@@ -837,3 +837,30 @@ def build_bot_roadmap_text() -> str:
         "<hr/>\n"
         "<i>Every step loops back to answering — that's always where the real marks come from.</i>"
     )
+
+
+def build_feedback_stats_text(stats: dict) -> str:
+    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
+    cat_lines = [f" • {label}: <b>{stats['by_category'].get(key, 0)}</b>" for key, label in FEEDBACK_CATEGORIES.items()]
+    status_lines = [f" • {label}: <b>{stats['by_status'].get(key, 0)}</b>" for key, label in FEEDBACK_STATUS_LABELS.items()]
+    return (
+        f"<h2>📊 FEEDBACK DASHBOARD</h2>\n<hr/>\n"
+        f"<b>Total submissions:</b> {stats['total']}\n\n"
+        f"<b>By Category</b>\n" + "\n".join(cat_lines) + "\n\n"
+        f"<b>By Status</b>\n" + "\n".join(status_lines)
+    )
+
+
+def build_feedback_item_text(fb: dict) -> str:
+    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
+    name = format_public_name(fb)
+    cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
+    status_label = FEEDBACK_STATUS_LABELS.get(fb['status'], fb['status'])
+    reply_block = f"\n\n<b>💬 Your reply:</b>\n<blockquote>{html.escape(fb['admin_reply'])}</blockquote>" if fb.get('admin_reply') else ""
+    return (
+        f"<b>#{fb['id']} • {cat_label}</b>\n"
+        f"👤 {name} (<code>{fb['user_id']}</code>)\n"
+        f"📌 Status: <b>{status_label}</b>\n\n"
+        f"<blockquote>{html.escape(fb['message'])}</blockquote>"
+        f"{reply_block}"
+    )

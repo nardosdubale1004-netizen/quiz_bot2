@@ -3,7 +3,7 @@ import asyncio
 import traceback
 import httpx
 import io
-from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.database import (
@@ -25,6 +25,9 @@ from src.database import (
     db_get_user_organizations,
     db_dissolve_organization,
     db_set_user_nickname,
+    db_get_feedback_by_id,
+    db_update_feedback_status,
+    db_get_feedback_list,
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -32,6 +35,7 @@ from src.rendering.html_views import (
     build_organization_card_text,
     build_full_documentation_text,
     build_bot_roadmap_text,
+    build_feedback_item_text,
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -420,6 +424,102 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             f"<code>{invite_link}</code>",
             reply_markup=kb, parse_mode="HTML"
         )
+        return
+
+    elif action == "fb_cat":
+        await query.answer()
+        category = d_id
+        USER_STATES[user_id] = "AWAITING_FEEDBACK_TEXT"
+        USER_PAYLOADS[user_id] = {"category": category, "edit_mid": query.message.message_id}
+        label = FEEDBACK_CATEGORIES.get(category, category)
+        await query.edit_message_text(
+            f"{label}\n\n✍ Describe it in your own words — as much detail helps:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")]]),
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "fb_cancel":
+        await query.answer("Cancelled.")
+        USER_STATES.pop(user_id, None)
+        USER_PAYLOADS.pop(user_id, None)
+        await query.delete_message()
+        return
+
+    elif action == "fb_status":
+        if user_id not in ADMIN_IDS:
+            await query.answer("Admins only.", show_alert=True)
+            return
+        fb_id, new_status = d_id, data[2]
+        await asyncio.to_thread(db_update_feedback_status, int(fb_id), new_status)
+        await query.answer(f"Marked {FEEDBACK_STATUS_LABELS.get(new_status, new_status)}")
+
+        fb = await asyncio.to_thread(db_get_feedback_by_id, int(fb_id))
+        if fb:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔧 In Progress", callback_data=f"fb_status|{fb_id}|in_progress"),
+                 InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb_id}|planned")],
+                [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb_id}|resolved"),
+                 InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb_id}|wontfix")],
+                [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")]
+            ])
+            await query.edit_message_text(build_feedback_item_text(fb), reply_markup=kb, parse_mode="HTML")
+
+            # Only tell the user for meaningful outcomes — not every intermediate nudge.
+            if new_status in ("planned", "resolved"):
+                try:
+                    nice_msg = (
+                        f"🗓️ Your feedback #{fb_id} has been <b>added to our plans for a future update</b>!"
+                        if new_status == "planned" else
+                        f"✅ Your feedback #{fb_id} has been <b>resolved</b>! Thanks for helping improve the bot."
+                    )
+                    await context.bot.send_message(chat_id=int(fb['user_id']), text=nice_msg, parse_mode="HTML")
+                except Exception:
+                    pass
+        return
+
+    elif action == "fb_reply":
+        if user_id not in ADMIN_IDS:
+            await query.answer("Admins only.", show_alert=True)
+            return
+        fb_id = int(d_id)
+        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+        if not fb:
+            await query.answer("Not found.", show_alert=True)
+            return
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_ADMIN_REPLY"
+        USER_PAYLOADS[user_id] = {"fb_id": fb_id, "target_user_id": fb['user_id'], "edit_mid": query.message.message_id}
+        await query.edit_message_text(
+            f"💬 <b>Type your reply to this user for feedback #{fb_id}:</b>\n\n{build_feedback_item_text(fb)}",
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "fb_browse":
+        if user_id not in ADMIN_IDS:
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+        category, status = d_id, data[2]
+        cat_filter = None if category == "all" else category
+        items = await asyncio.to_thread(db_get_feedback_list, status, cat_filter, 5, 0)
+
+        if not items:
+            await query.edit_message_text("📭 No items match this filter.", reply_markup=return_kb)
+            return
+
+        # Send each as its own actionable card so status buttons work per item.
+        await query.delete_message()
+        for fb in items:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔧 In Progress", callback_data=f"fb_status|{fb['id']}|in_progress"),
+                 InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb['id']}|planned")],
+                [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb['id']}|resolved"),
+                 InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb['id']}|wontfix")],
+                [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb['id']}")]
+            ])
+            await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=build_feedback_item_text(fb), reply_markup=kb)
         return
 
     # --- ORIGINAL CORE ENGINE FLOWS ---
