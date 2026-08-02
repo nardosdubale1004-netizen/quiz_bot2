@@ -19,6 +19,7 @@ from src.database import (
     db_update_user_consent_state,
     db_leave_organization,
     db_join_organization,
+    db_join_organization_by_id,
     db_create_organization,
     db_get_organization_roster,
     db_get_user_organizations,
@@ -28,7 +29,9 @@ from src.database import (
 from src.rendering.html_views import (
     build_profile_card_text,
     build_alliance_info_text,
-    build_organization_card_text, 
+    build_organization_card_text,
+    build_full_documentation_text,
+    build_bot_roadmap_text,
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -86,7 +89,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
             [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
             [InlineKeyboardButton("📍 UPDATE MY LOCATION", callback_data="set_location_fsm|0")],
-            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
+            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")],
+            [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0"),
+             InlineKeyboardButton("🗺️ ROADMAP", callback_data="roadmap|0")]
         ]
         buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
         
@@ -111,7 +116,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
             [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
             [InlineKeyboardButton("📍 UPDATE MY LOCATION", callback_data="set_location_fsm|0")],
-            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
+            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")],
+            [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0"),
+             InlineKeyboardButton("🗺️ ROADMAP", callback_data="roadmap|0")]
         ]
         buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
@@ -143,7 +150,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             text = (
                 "🏰 <b>YOUR REGISTERED TEAMS</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "You are actively registered on the following study team rosters. "
                 "Select a team below to view details, rosters, or manage settings:\n"
             )
             buttons = []
@@ -153,22 +159,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 InlineKeyboardButton("✨ ESTABLISH TEAM", callback_data="fsm_create_org|0"),
                 InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
             ])
-            buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
-            buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
         else:
             text = (
                 "🏰 <b>ALLIANCE CLAN PORTAL</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "You are not registered in any Study Alliance. School alliances merge and rank scores collectively!\n\n"
-                "Choose an action below to establish or integrate with a group:"
+                "You are not registered in any Study Alliance yet.\n\n"
+                "Choose an action below:"
             )
             buttons = [
                 [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
-                [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
-                [InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")],
-                [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
+                [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")]
             ]
 
+        buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
+        buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
     elif action == "alliance_info":
@@ -229,7 +233,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         ]
         if user_role == "creator":
             buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
-            
+        buttons.append([InlineKeyboardButton("🔗 GET TEAM INVITE LINK", callback_data=f"team_invite|{org_id}")])
         buttons.append([InlineKeyboardButton("🔙 BACK TO TEAM LIST", callback_data="alliance_portal|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
@@ -347,7 +351,76 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("Dashboard closed.")
         await query.delete_message()
         return
+    elif action == "full_docs":
+        await query.answer()
+        text = build_full_documentation_text()
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗺️ VIEW ROADMAP", callback_data="roadmap|0"),
+            InlineKeyboardButton("🔙 BACK", callback_data="privacy_menu|0")
+        ]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
 
+    elif action == "roadmap":
+        await query.answer()
+        text = build_bot_roadmap_text()
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📖 FULL DOCS", callback_data="full_docs|0"),
+            InlineKeyboardButton("🔙 BACK", callback_data="privacy_menu|0")
+        ]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "quickjoin_org":
+        await query.answer()
+        org_id = int(d_id)
+        join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, org_id)
+        USER_PAYLOADS.pop(user_id, None)
+        USER_STATES[user_id] = "IDLE"
+
+        if not join_data:
+            await query.edit_message_text("⚠️ That team no longer exists.", reply_markup=return_kb)
+            return
+
+        if join_data["role_assigned"] == "pending":
+            text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
+        else:
+            text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+        await query.edit_message_text(text, reply_markup=return_kb, parse_mode="HTML")
+        return
+
+    elif action == "force_create_org":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        org_name = session.get("org_name")
+        if not org_name:
+            await query.edit_message_text("⚠️ Session expired. Please start again from 🏰 STUDY ALLIANCE TEAMS.", reply_markup=return_kb)
+            return
+
+        USER_STATES[user_id] = "AWAITING_ORG_TAG"
+        USER_PAYLOADS[user_id] = {"org_name": org_name, "edit_mid": query.message.message_id}
+        await query.edit_message_text(
+            f"🏫 Name Accepted: <b>{org_name}</b>\n\n"
+            "✍ Enter a short, uppercase Code Tag identifier for your group (2-15 characters, no spaces):\n"
+            "<i>(Example: ABYSSINIA)</i>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")]]),
+            parse_mode="HTML"
+        )
+        return
+
+    elif action == "team_invite":
+        await query.answer()
+        org_id = int(d_id)
+        bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
+        invite_link = f"https://t.me/{bot_username}?start=join_{org_id}"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
+        await query.edit_message_text(
+            f"🔗 <b>TEAM INVITE LINK</b>\n\n"
+            f"Share this — anyone who opens it and taps Start joins your team directly:\n\n"
+            f"<code>{invite_link}</code>",
+            reply_markup=kb, parse_mode="HTML"
+        )
+        return
 
     # --- ORIGINAL CORE ENGINE FLOWS ---
 

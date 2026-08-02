@@ -788,3 +788,52 @@ def build_round_completion_text(display_id, total_users: int, accuracy_pct: int,
     stats_block += "</blockquote>"
 
     return f"{body}\n{stats_block}"
+
+def build_full_documentation_text() -> str:
+    """Full 'How it works' doc — sent via the RICH renderer (send/edit_rich_message_safe),
+    not convert_to_legacy_html, so tables/lists render in Telegram's newer rich format."""
+    return (
+        "<h2>📖 QUIZ MASTER PRO — HOW IT WORKS</h2>\n"
+        "<hr/>\n"
+        "<blockquote expandable>"
+        "<b>🎯 Answering Questions</b><br/>"
+        "Tap an option under any question in the channel. You'll get a private DM with the "
+        "correct answer, full derivation, and your updated score.<br/><br/>"
+        "<b>🏆 Scoring</b><br/>"
+        "<ul>"
+        "<li>First correct answer on a question: bonus marks</li>"
+        "<li>Later correct answers: standard marks</li>"
+        "<li>Daily streaks multiply your marks the longer you stay consistent</li>"
+        "</ul>"
+        "<b>🏫 Study Alliance Teams</b><br/>"
+        "Create or join a school team from /profile → 🏰 STUDY ALLIANCE TEAMS. Every correct "
+        "answer you submit also adds to your team's score automatically. Public teams need "
+        "creator approval to join; private teams let anyone with the code join instantly.<br/><br/>"
+        "<b>🤝 Invites</b><br/>"
+        "Use /invite for your personal link. When someone joins through it, you earn a small "
+        "<b>+1 Mark</b> bonus per correct answer they submit — capped to two levels deep, and "
+        "only ever triggered by real answering, never by the invite itself.<br/><br/>"
+        "<b>📍 Leaderboards</b><br/>"
+        "Weekly grade leaderboard, school alliance leaderboard, plus city/country standings."
+        "</blockquote>\n"
+        "<hr/>\n"
+        "<i>Tap 🗺️ ROADMAP below for a step-by-step visual flow.</i>"
+    )
+
+
+def build_bot_roadmap_text() -> str:
+    """Visual step-by-step roadmap, rendered as a rich <table> rather than plain text."""
+    return (
+        "<h2>🗺️ YOUR JOURNEY THROUGH QUIZ MASTER PRO</h2>\n"
+        "<hr/>\n"
+        "<table>"
+        "<tr><td>1️⃣</td><td><b>/start</b> — pick your grade level</td></tr>"
+        "<tr><td>2️⃣</td><td>Answer questions posted in the channel</td></tr>"
+        "<tr><td>3️⃣</td><td>Check your DM for the solution + score update</td></tr>"
+        "<tr><td>4️⃣</td><td><b>/profile</b> — set a nickname, join/create a team</td></tr>"
+        "<tr><td>5️⃣</td><td><b>/invite</b> — share your link for bonus marks</td></tr>"
+        "<tr><td>6️⃣</td><td><b>/leaderboard</b> — track your rank weekly</td></tr>"
+        "</table>\n"
+        "<hr/>\n"
+        "<i>Every step loops back to answering — that's always where the real marks come from.</i>"
+    )

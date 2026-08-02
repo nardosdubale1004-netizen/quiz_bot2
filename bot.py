@@ -43,10 +43,12 @@ from src.database import (
     db_set_user_nickname,
     db_create_organization,
     db_join_organization,
+    db_join_organization_by_id,
     db_get_organization_roster,
     db_update_user_location,
     db_set_user_referrer,
-    db_join_organization,
+    db_count_referrals,
+    db_find_similar_organizations,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text
@@ -66,6 +68,7 @@ BOT_COMMANDS = [
     BotCommand("profile", "Open scoreboard visibility, nickname & school alliance dashboard"),
     BotCommand("leaderboard", "View individual rank standings or school rankings"),
     BotCommand("invite", "Get your referral link & earn bonus marks"),
+    BotCommand("help", "How the bot works, step by step"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -548,11 +551,42 @@ async def start_command(update: Update, context):
             return
 
     if args and args[0].startswith("ref_"):
-            referrer_id = args[0][4:].strip()
-            if referrer_id.isdigit():
-                linked = await asyncio.to_thread(db_set_user_referrer, user_id, referrer_id)
-                if linked:
-                    print(f"[REFERRAL] User {user_id} linked to referrer {referrer_id}.", flush=True)
+        referrer_id = args[0][4:].strip()
+        if referrer_id.isdigit():
+            linked = await asyncio.to_thread(db_set_user_referrer, user_id, referrer_id)
+            if linked:
+                print(f"[REFERRAL] User {user_id} linked to referrer {referrer_id}.", flush=True)
+                ref_count = await asyncio.to_thread(db_count_referrals, referrer_id)
+                # Notify for the first 10 individually, then only every 5th afterward —
+                # keeps power-inviters from getting flooded with notifications.
+                should_notify = (ref_count <= 10) or (ref_count % 5 == 0)
+                if should_notify:
+                    try:
+                        new_name = html.escape(user.first_name or user.username or "A student")
+                        await context.bot.send_message(
+                            chat_id=int(referrer_id),
+                            text=(
+                                f"🤝 <b>{new_name}</b> joined using your invite link!\n"
+                                f"You'll earn bonus marks from their correct answers.\n\n"
+                                f"📊 Total referrals so far: <b>{ref_count}</b>"
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+
+    if args and args[0].startswith("join_"):
+        org_id_str = args[0][5:].strip()
+        if org_id_str.isdigit():
+            join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, int(org_id_str))
+            if join_data:
+                if join_data["role_assigned"] == "pending":
+                    msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
+                else:
+                    msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+            else:
+                msg = "⚠️ This team invite link is invalid or the team no longer exists."
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=msg)
 
     # Check and render fallback grade profile if mapped
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
@@ -783,7 +817,36 @@ async def invite_command(update: Update, context):
         )
     )
 
+async def help_command(update: Update, context):
+    from src.rendering.html_views import build_full_documentation_text
+    await send_rich_message_safe(
+        context.bot, chat_id=update.message.chat_id,
+        html_content=build_full_documentation_text(),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗺️ VIEW ROADMAP", callback_data="roadmap|0")
+        ]])
+    )
+
 # --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
+
+async def _delete_silent(bot, chat_id, mid):
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=mid)
+    except Exception:
+        pass
+
+async def _fsm_advance(context, chat_id, edit_mid, html_content, reply_markup=None):
+    """Edits the SAME prompt message across an entire multi-step flow (nickname, org
+    creation, location) instead of sending a fresh message each step — the whole
+    conversation reads as one continuously-updating card."""
+    if edit_mid:
+        try:
+            m = await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=edit_mid, html_content=html_content, reply_markup=reply_markup)
+            return m.message_id if m else edit_mid
+        except Exception:
+            pass
+    m = await send_rich_message_safe(context.bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
+    return m.message_id if m else None
 
 async def handle_fsm_message(update: Update, context):
     """Global message filter intercepting user response messages for active state configurations."""
@@ -798,150 +861,145 @@ async def handle_fsm_message(update: Update, context):
     session = USER_PAYLOADS.get(user_id, {})
     edit_mid = session.get("edit_mid")
 
+    # Every keystroke-driven message gets removed right away — the whole flow
+    # should feel like one card being updated, not a growing chat log.
+    await _delete_silent(context.bot, update.message.chat_id, update.message.message_id)
+
+    profile_nav_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")
+    ]])
+    cancel_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+    ]])
+
     if text_input.lower() == "/cancel":
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
-        await update.message.reply_text("❌ Action cancelled. Session discarded.")
+        await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
         return
 
     try:
-        # Dynamic return option to keep the navigation cycle alive
-        profile_nav_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")
-        ]])
-
         if state == "AWAITING_NICKNAME":
             clean_name = re.sub(r'[^\w\s\-@]', '', text_input)[:20].strip()
             if not clean_name:
-                await update.message.reply_text("⚠️ Invalid format. Only letters, spaces and underscores are allowed.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid format. Only letters, spaces and underscores are allowed.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
-            
+
             await asyncio.to_thread(db_set_user_nickname, user_id, clean_name)
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
-            
-            await update.message.reply_text(f"✅ Nickname registered successfully: <b>{clean_name}</b>!", reply_markup=profile_nav_kb, parse_mode="HTML")
+            await _fsm_advance(context, update.message.chat_id, edit_mid, f"✅ Nickname registered successfully: <b>{clean_name}</b>!", profile_nav_kb)
 
         elif state == "AWAITING_ORG_NAME":
             clean_org_name = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
             if not clean_org_name:
-                await update.message.reply_text("⚠️ Invalid formal name. Please try again.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid formal name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
-            
-            USER_PAYLOADS[user_id]["org_name"] = clean_org_name
+
+            similar = await asyncio.to_thread(db_find_similar_organizations, clean_org_name)
+            if similar:
+                USER_PAYLOADS[user_id] = {"org_name": clean_org_name, "edit_mid": edit_mid}
+                USER_STATES[user_id] = "IDLE"
+
+                lines = ["🔎 <b>Found similar existing team(s):</b>\n"]
+                buttons = []
+                for org in similar:
+                    loc = f" — {org.get('city','')}, {org.get('country','')}" if org.get('city') else ""
+                    lines.append(f"🏫 <b>{org['org_name']}</b> (#{org['org_tag']}){loc}")
+                    buttons.append([InlineKeyboardButton(f"🔑 Join #{org['org_tag']} instead", callback_data=f"quickjoin_org|{org['org_id']}")])
+                buttons.append([InlineKeyboardButton("✨ No, create new anyway", callback_data="force_create_org|0")])
+                buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="privacy_menu|0")])
+                lines.append("\n<i>Joining an existing team keeps everyone's scores together instead of splitting them across duplicates.</i>")
+
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "\n".join(lines), InlineKeyboardMarkup(buttons))
+                return
+
+            USER_PAYLOADS[user_id] = {"org_name": clean_org_name, "edit_mid": edit_mid}
             USER_STATES[user_id] = "AWAITING_ORG_TAG"
-            
-            # Form conversational prompt with direct return navigation buttons
-            await update.message.reply_text(
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
                 f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
-                "✍ Enter a short, uppercase Code Tag identifier for your group (2-15 characters, no spaces):\n"
+                "✍ Enter a short, uppercase Code Tag identifier (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
-                ]]),
-                parse_mode="HTML"
+                cancel_kb
             )
 
         elif state == "AWAITING_ORG_TAG":
             clean_tag = re.sub(r'\W', '', text_input).upper()[:15].strip()
             if len(clean_tag) < 2:
-                await update.message.reply_text("⚠️ Tag too short. Enter at least 2 alphanumeric characters.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Tag too short. Enter at least 2 alphanumeric characters.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
-                
-            org_name = USER_PAYLOADS[user_id]["org_name"]
-            
-            try:
-                # Add support for geographic location variables during Team Registration
-                USER_PAYLOADS[user_id]["org_tag"] = clean_tag
-                USER_STATES[user_id] = "AWAITING_ORG_CITY"
-                
-                await update.message.reply_text(
-                    f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
-                    "✍ <b>PROMPT: Team City Location</b>\n"
-                    "Please enter the city where your school or academy is located:\n"
-                    "<i>(Example: Addis Ababa)</i>",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
-                    ]]),
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                await update.message.reply_text("⚠️ Setup failed due to a database exception. Please try again.")
+
+            USER_PAYLOADS[user_id]["org_tag"] = clean_tag
+            USER_STATES[user_id] = "AWAITING_ORG_CITY"
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
+                f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
+                "✍ <b>PROMPT: Team City Location</b>\n"
+                "Please enter the city where your school or academy is located:\n"
+                "<i>(Example: Addis Ababa)</i>",
+                cancel_kb
+            )
 
         elif state == "AWAITING_ORG_CITY":
             clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
             if not clean_city:
-                await update.message.reply_text("⚠️ Invalid city name. Please try again.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid city name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
-            
+
             USER_PAYLOADS[user_id]["org_city"] = clean_city
             USER_STATES[user_id] = "AWAITING_ORG_COUNTRY"
-            
-            await update.message.reply_text(
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
                 f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
                 "✍ <b>PROMPT: Team Country Location</b>\n"
                 "Please enter the country where your school or academy is located:\n"
                 "<i>(Example: Ethiopia)</i>",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
-                ]]),
-                parse_mode="HTML"
+                cancel_kb
             )
 
         elif state == "AWAITING_ORG_COUNTRY":
             clean_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
             if not clean_country:
-                await update.message.reply_text("⚠️ Invalid country name. Please try again.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid country name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
-            
+
             org_name = USER_PAYLOADS[user_id]["org_name"]
             org_tag = USER_PAYLOADS[user_id]["org_tag"]
             org_city = USER_PAYLOADS[user_id]["org_city"]
-            
+
             try:
-                # Create the organization with full geographic variables
-                org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "School", True, org_city, clean_country)
+                await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "School", True, org_city, clean_country)
                 USER_STATES[user_id] = "IDLE"
                 USER_PAYLOADS.pop(user_id, None)
-                
-                await update.message.reply_text(
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
                     f"✅ <b>Alliance Registered Successfully!</b>\n\n"
                     f"🏫 Institution: <b>{org_name}</b>\n"
                     f"🔑 Short Domain Tag: <code>#{org_tag}</code>\n"
                     f"📍 Location: <b>{org_city}, {clean_country}</b>\n\n"
-                    f"Provide this Tag to your student members so they can link and aggregate scores collectively!",
-                    reply_markup=profile_nav_kb,
-                    parse_mode="HTML"
+                    f"Share your team's invite link (from the team page) so students can join directly.",
+                    profile_nav_kb
                 )
             except Exception as e:
                 if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                    await update.message.reply_text(
-                        f"⚠️ Error: The tag <code>#{org_tag}</code> is already registered. Enter a unique tag:",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
-                        ]]),
-                        parse_mode="HTML"
-                    )
+                    await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Error: <code>#{org_tag}</code> is already taken. Enter a unique tag:", cancel_kb)
                 else:
-                    await update.message.reply_text("⚠️ Setup failed due to a database exception. Please try again.")
+                    await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed due to a database exception.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
 
         elif state == "AWAITING_ORG_JOIN":
             clean_tag = re.sub(r'\W', '', text_input).upper().strip()
-            
-            # Map join response to structural anti-cheat pipeline
             join_data = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
             if join_data:
                 USER_STATES[user_id] = "IDLE"
                 USER_PAYLOADS.pop(user_id, None)
-                
+
                 if join_data["role_assigned"] == "pending":
                     response_text = (
                         f"📥 <b>ADMISSION REQ SENT!</b>\n\n"
-                        f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>).\n"
-                        f"Since this is a Public Team, the group Creator/Admin has been notified. You will appear on their roster once they approve your admission!"
+                        f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>). "
+                        f"The Creator/Admin has been notified."
                     )
-                    
-                    # Notify organization creator of pending admission request with direct approve buttons
                     try:
                         approve_kb = InlineKeyboardMarkup([
                             [InlineKeyboardButton("🟢 APPROVE MEMBER", callback_data=f"process_req|{join_data['org_id']}|{user_id}|1"),
@@ -950,74 +1008,53 @@ async def handle_fsm_message(update: Update, context):
                         await context.bot.send_message(
                             chat_id=int(join_data["creator_id"]),
                             text=(
-                                f"📥 <b>NEW ADMISSION REQUEST DETECTED!</b>\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                                f"Student <b>{html.escape(user.first_name)}</b> is requesting to join your team: <b>{join_data['org_name']}</b>.\n"
-                                f"Review and process their request below:"
+                                f"📥 <b>NEW ADMISSION REQUEST</b>\n"
+                                f"Student <b>{html.escape(user.first_name)}</b> is requesting to join <b>{join_data['org_name']}</b>."
                             ),
-                            reply_markup=approve_kb,
-                            parse_mode="HTML"
+                            reply_markup=approve_kb, parse_mode="HTML"
                         )
                     except Exception:
                         pass
                 else:
-                    response_text = (
-                        f"✅ <b>Integrated Successfully!</b>\n\n"
-                        f"You are now registered as a student member of <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>).\n"
-                        f"Your correct answers will automatically scale points for your alliance global scoreboard!"
-                    )
-                
-                await update.message.reply_text(response_text, reply_markup=profile_nav_kb, parse_mode="HTML")
+                    response_text = f"✅ <b>Integrated Successfully!</b> You're now registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>)."
+
+                await _fsm_advance(context, update.message.chat_id, edit_mid, response_text, profile_nav_kb)
             else:
-                await update.message.reply_text(
-                    f"⚠️ Alliance code <code>#{clean_tag}</code> does not exist on our records. Please enter a valid Tag:",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
-                    ]]),
-                    parse_mode="HTML"
-                )
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Alliance code <code>#{clean_tag}</code> not found. Please enter a valid Tag:", cancel_kb)
+
         elif state == "AWAITING_LOCATION_CITY":
             clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
             if not clean_city:
-                await update.message.reply_text("⚠️ Invalid city name. Please try again.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid city name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
 
             USER_PAYLOADS[user_id]["loc_city"] = clean_city
             USER_STATES[user_id] = "AWAITING_LOCATION_COUNTRY"
-
-            await update.message.reply_text(
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
                 f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
-                "✍ <b>PROMPT: YOUR COUNTRY</b>\n"
-                "Please type the country you're studying in:\n"
-                "<i>(Example: Ethiopia)</i>",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
-                ]]),
-                parse_mode="HTML"
+                "✍ <b>PROMPT: YOUR COUNTRY</b>\nPlease type the country you're studying in:\n<i>(Example: Ethiopia)</i>",
+                cancel_kb
             )
 
         elif state == "AWAITING_LOCATION_COUNTRY":
             clean_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
             if not clean_country:
-                await update.message.reply_text("⚠️ Invalid country name. Please try again.")
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid country name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
 
             clean_city = USER_PAYLOADS[user_id].get("loc_city", "")
             await asyncio.to_thread(db_update_user_location, user_id, clean_city, clean_country)
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
-
-            await update.message.reply_text(
-                f"✅ <b>Location updated!</b>\n📍 {clean_city}, {clean_country}\n\n"
-                f"<i>Note: if you're on a school team, your team's city/country is still what counts toward "
-                f"leaderboards — this only applies while you're solo.</i>",
-                reply_markup=profile_nav_kb,
-                parse_mode="HTML"
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
+                f"✅ <b>Location updated!</b>\n📍 {clean_city}, {clean_country}",
+                profile_nav_kb
             )
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
-        await update.message.reply_text("⚠️ Connection Error: Failed to commit your input payload.")
-
+        await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Connection Error: Failed to commit your input.", profile_nav_kb)
 
 async def run_cloud_server(app, port):
     PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
@@ -1085,6 +1122,7 @@ def main():
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CommandHandler("invite", invite_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
     # Priority FSM handler filtering text messages during active state dialog sessions

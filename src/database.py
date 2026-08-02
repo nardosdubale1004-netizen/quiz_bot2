@@ -2,6 +2,7 @@
 import os
 import json
 import time
+import re
 import psycopg2
 import psycopg2.extensions
 from psycopg2.extras import RealDictCursor, Json
@@ -1690,7 +1691,73 @@ def db_get_user_organizations(user_id):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+def db_count_referrals(referrer_id) -> int:
+    """Counts how many users this person has referred — used to throttle notifications."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM user_stats WHERE referred_by = %s;", (str(referrer_id),))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count referrals: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
+
+def db_find_similar_organizations(name: str):
+    """Looks for existing teams with a similar name before letting someone create a duplicate."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            core = re.sub(r'[^\w\s]', '', name).strip()
+            if not core:
+                return []
+            cur.execute("""
+                SELECT org_id, org_name, org_tag, city, country
+                FROM organizations
+                WHERE org_name ILIKE %s
+                LIMIT 5;
+            """, (f"%{core}%",))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB-ORG-ERROR] Similar org search failed: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_join_organization_by_id(user_id, org_id: int) -> dict:
+    """Same as db_join_organization but by org_id — used for team deep-links (?start=join_<id>)."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE org_id = %s;", (int(org_id),))
+            row = cur.fetchone()
+            if not row:
+                return None
+            role = "pending" if row['is_public'] else "member"
+            cur.execute("""
+                INSERT INTO org_memberships (user_id, org_id, org_role)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, org_id) DO NOTHING;
+            """, (str(user_id), int(org_id), role))
+            conn.commit()
+            return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Join by id failed: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 def db_get_organization_roster(org_id: int):
     """Retrieves all mapped scholars and their scores inside an organization (excluding pending requests)."""
     conn = None
