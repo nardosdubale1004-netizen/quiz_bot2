@@ -721,7 +721,7 @@ def build_champions_podium_html(ind_val: str, sch_val: str, city_val: str, cnt_v
     card instead of blending into the round-complete/question cards.
     """
     text = (
-        f"👑👑👑 <b>TOURNAMENT SERIES COMPLETE</b> 👑👑👑\n\n"
+        f"👑 <b>TOURNAMENT SERIES COMPLETE</b> 👑\n\n"
         f"All rounds in this synchronized showdown have been resolved!\n\n"
         f"<blockquote expandable>"
         f"🎖️ <b>GRAND CHAMPIONS LEAGUE</b>\n\n"
