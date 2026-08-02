@@ -92,9 +92,10 @@ def get_next_rank_info(marks: int) -> str:
     if marks < 1200: return f"Earn <b>{1200 - marks} Marks</b> to unlock <b>Legend</b>"
     return "Maximum Mastery Level Reached! 🌌"
 
-def build_closed_static_view(q, display_id: str, compact=False, continuation=False) -> str:
+def build_closed_static_view(q, display_id: str, compact=False, continuation=False, round_number: int = None, total_rounds: int = None) -> str:
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
+    round_tag = f" • Round {round_number}/{total_rounds}" if round_number and total_rounds else ""
 
     hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     channel_name = CONFIG.get("channel", "@QuizOva")
@@ -102,7 +103,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     footer = (
         f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+        f"<b>REF <code>{display_id}</code></b>{round_tag} │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
         f"{' '.join(hashtag_list)}"
     )
 
@@ -111,7 +112,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     if compact:
         raw_question = beautify_markdown_math(q['question'])
-        body_plain = f"<b>PROBLEM PROPOSITION</b>\n{raw_question}"
+        body_plain = f"<b>PROBLEM PROPOSITION</b>{round_tag}\n{raw_question}"
 
         opts_list = []
         for i, o in enumerate(q['options']):
@@ -132,13 +133,14 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             allowed_question_len = max(150, len(raw_question) - excess)
 
             truncated_question = smart_truncate_html(raw_question, allowed_question_len)
-            body_plain = f"<b>PROBLEM PROPOSITION</b>\n{truncated_question}"
+            body_plain = f"<b>PROBLEM PROPOSITION</b>{round_tag}\n{truncated_question}"
 
             components = [body_plain, opts_block, spoiler_block, footer]
             caption_text = "\n\n".join(components)
 
         return caption_text
-    banner = f"📚📚📚 <b>{q.get('subject','QUESTION').upper()}</b> 📚📚📚\n"
+
+    banner = f"📚📚📚 <b>{q.get('subject','QUESTION').upper()}</b>{round_tag} 📚📚📚\n"
     body = (
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b><br/>"
@@ -218,7 +220,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     ]
 
     if continuation:
-        connection_header = f"<b>📖 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
+        connection_header = f"<b>📖 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code>{round_tag}</b>\n<hr/>"
         components = [
             banner,
             connection_header,
@@ -761,16 +763,17 @@ def check_tag_balance(html_str: str) -> list:
         problems.append(f"unclosed tag(s) at end of string: {stack}")
     return problems
 
-def build_round_completion_text(display_id, total_users: int, accuracy_pct: int, podium_lines: list, alliance_lines: list) -> str:
+def build_round_completion_text(display_id, total_users: int, accuracy_pct: int, podium_lines: list, alliance_lines: list, round_number: int = None, total_rounds: int = None) -> str:
     """
     'Round complete' scoreboard card. Checkered-flag banner (unique from the
     champions/question cards) + one expandable blockquote (collapsed by
     default) instead of two separate stacked blockquote boxes.
     """
     podium_block = "\n".join(podium_lines) if podium_lines else "<i>No correct answers recorded this round.</i>"
+    round_tag = f" • Round {round_number}/{total_rounds}" if round_number and total_rounds else ""
 
     body = (
-        f"🏁 <b>ROUND COMPLETE</b> 🏁\n"
+        f"🏁 <b>ROUND COMPLETE</b>{round_tag} 🏁\n"
         f"<b>REF <code>{display_id}</code></b>\n\n"
         f"👥 <b>{total_users}</b> submissions logged  │  🎯 <b>{accuracy_pct}%</b> accuracy\n"
     )
@@ -911,6 +914,24 @@ def build_feedback_item_text(fb: dict) -> str:
         f"<blockquote>{html.escape(fb['message'])}</blockquote>"
         f"{reply_block}"
     )
+    
+def build_tournament_leaderboard_text(rows: list, current_round: int = None, total_rounds: int = None) -> str:
+    """Ranking scoped ONLY to the current tournament run — sums marks across every
+    round in this series, not the user's all-time/weekly total."""
+    round_tag = f" • Round {current_round}/{total_rounds}" if current_round and total_rounds else ""
+    if not rows:
+        return f"🏆 <b>TOURNAMENT-ONLY RANKING{round_tag}</b>\n<i>No scores yet this tournament.</i>"
+
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    lines = [
+        f"🏆 <b>TOURNAMENT-ONLY RANKING{round_tag}</b>",
+        "<i>(Points from this tournament series only — not your all-time score)</i>\n"
+    ]
+    for i, r in enumerate(rows[:10]):
+        name = format_public_name(r)
+        tag = f" (#{r['alliance_tag']})" if r.get('alliance_tag') else ""
+        lines.append(f" {medals[i]} {name}{tag} — <b>{r['tournament_score']} pts</b> ({r['tournament_correct']} correct)")
+    return "\n".join(lines)
 
 _STATUS_PIPELINE = ["open", "in_progress", "planned", "resolved"]
 _STATUS_PIPELINE_ICONS = {"open": "🆕", "in_progress": "🔧", "planned": "🗓️", "resolved": "✅"}
@@ -960,4 +981,4 @@ def build_user_feedback_list_text(items: list, total_count: int) -> str:
     return (
         f"<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n"
         f"<i>Showing {len(items)} of {total_count} submissions</i>\n<hr/>\n\n{body}"
-    )
+

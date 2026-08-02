@@ -30,10 +30,11 @@ from src.database import (
     db_get_city_leaderboard,
     db_get_country_leaderboard,
     db_get_alliance_leaderboard,
+    db_get_tournament_leaderboard,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
-from src.rendering.html_views import format_public_name, build_champions_podium_html, build_round_completion_text
+from src.rendering.html_views import format_public_name, build_champions_podium_html, build_round_completion_text, build_tournament_announcement_text, build_tournament_leaderboard_text
 
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
@@ -238,9 +239,12 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
     print(f"{Style.CYAN}[DEBUG-LAUNCH] launch_tournament_round called. display_id: {last_seq}, question: {q['id']}, round: {current_round}/{total_rounds}.{Style.RESET}", flush=True)
 
     try:
+        queue = await asyncio.to_thread(db_get_tournament_queue)
+        run_id = (queue.get('tournament_meta') or {}).get('run_id') if queue else None
+
         claimed = await asyncio.to_thread(
             db_try_start_tournament_round, placeholder_mid, q['id'], last_seq,
-            round_seconds, current_round, total_rounds
+            round_seconds, current_round, total_rounds, run_id
         )
         if not claimed:
             print(f"{Style.YELLOW}[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.{Style.RESET}", flush=True)
@@ -248,6 +252,7 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
 
         announcement_text = _render_challenge_text(current_round, total_rounds, last_seq, round_seconds, "")
         ann_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=announcement_text, parse_mode="HTML")
+        await _pin_safe(app.bot, engine.config['channel'], ann_msg.message_id)
 
         await asyncio.sleep(1.5)
 
@@ -289,7 +294,6 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             pass
         raise e
 
-
 async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interrupted: bool = False, halt_reason: str = None):
     """Concludes the round on the channel and resolves pending student DMs concurrently with complete diagnostics."""
     from src.debug_log import dlog, dlog_exception
@@ -298,9 +302,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
          f"display_id={track.get('display_id')}, interrupted={interrupted}")
 
     mid = track['message_id']
-    
-    # FOOLPROOF: Unconditionally bind final_msg_id to mid at the very top of execution 
-    # to prevent any local UnboundLocalError scopes regardless of code branch selection.
     final_msg_id = mid
 
     db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
@@ -311,6 +312,8 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         dlog(f"[DEBUG-FINALIZE-SKIP] mid={mid} already finalizing or is a placeholder id. Skipping.")
         return
     _FINALIZING_ROUNDS.add(mid)
+
+    run_id = track.get('tournament_run_id')
 
     try:
         active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
@@ -351,6 +354,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
         if src.config.SHUTTING_DOWN or interrupted:
             print(f"{Style.YELLOW}[TOURNAMENT] Forcing round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
             if ann_mid:
+                await _unpin_safe(app.bot, engine.config['channel'], ann_mid)
                 try:
                     reason_msg = halt_reason if halt_reason else "the server went offline or experienced an unexpected reboot sequence"
                     shutdown_text = (
@@ -377,7 +381,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 tag = r.get('alliance_tag')
                 if tag:
                     alliance_scores[tag] = alliance_scores.get(tag, 0) + r.get('marks_awarded', 0)
-            
+
             sorted_alliances = sorted(alliance_scores.items(), key=lambda x: x[1], reverse=True)
 
             podium_lines = []
@@ -391,9 +395,16 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             for idx, (tag, score) in enumerate(sorted_alliances[:3]):
                 alliance_lines.append(f"  {medals[idx]} <code>#{tag}</code> — <b>+{score} collective Marks</b>")
 
-            normal_close_text = build_round_completion_text(last_seq, total_users, accuracy_pct, podium_lines, alliance_lines)
+            tourney_rows = await asyncio.to_thread(db_get_tournament_leaderboard, run_id)
+            tourney_board_text = build_tournament_leaderboard_text(tourney_rows, current_round, total_rounds)
+
+            normal_close_text = build_round_completion_text(
+                last_seq, total_users, accuracy_pct, podium_lines, alliance_lines,
+                round_number=current_round, total_rounds=total_rounds
+            ) + "\n\n" + tourney_board_text
 
             if ann_mid:
+                await _unpin_safe(app.bot, engine.config['channel'], ann_mid)
                 try:
                     dlog(f"[DEBUG-FINALIZE] Step 3a: Editing announcement header card (ann_mid={ann_mid})...")
                     await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(ann_mid), text=normal_close_text, parse_mode="HTML")
@@ -422,7 +433,9 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                             if resp and resp.status_code == 200:
                                 media_bytes = resp.content
 
-                closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
+                closed_view = UIFactory.build_closed_static_view(
+                    q, last_seq, compact=False, round_number=current_round, total_rounds=total_rounds
+                )
                 new_msg = await send_rich_message_safe(
                     app.bot, chat_id=engine.config['channel'], html_content=closed_view,
                     reply_markup=None, media_bytes=media_bytes, file_id=cached_file_id
@@ -435,13 +448,14 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
             except Exception as e:
                 dlog_exception(f"finalize_tournament_round Step 4 (photo publish, REF {last_seq})", e)
-                # CRITICAL ANTI-STUCK FIX: DO NOT mark as closed if the Telegram edits/sends failed completely!
                 if 'new_msg' not in locals() or locals()['new_msg'] is None:
                     raise e
                 await asyncio.to_thread(engine.db_update_track_status, new_msg.message_id, "closed", clear_followup=True)
         else:
             try:
-                closed_view = UIFactory.build_closed_static_view(q, last_seq, compact=False)
+                closed_view = UIFactory.build_closed_static_view(
+                    q, last_seq, compact=False, round_number=current_round, total_rounds=total_rounds
+                )
                 await edit_rich_message_safe(
                     app.bot, chat_id=engine.config['channel'], message_id=int(mid),
                     html_content=closed_view, reply_markup=None
@@ -449,7 +463,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 await asyncio.to_thread(engine.db_update_track_status, mid, "closed", clear_followup=True)
             except Exception as e:
                 dlog_exception(f"finalize_tournament_round Step 4 (flat publish, REF {last_seq})", e)
-                # Raise to retry on next tick
                 raise e
 
         dlog(f"[DEBUG-FINALIZE] Step 4 done. final_msg_id={final_msg_id}. Track status set to 'closed'.")
@@ -473,35 +486,26 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             if not src.config.SHUTTING_DOWN and not interrupted and (not queue or not queue.get('remaining_ids')):
                 print(f"{Style.GREEN}[TOURNAMENT] Tournament complete. Rendering final report card...{Style.RESET}", flush=True)
 
-                grade_val = q.get('grade')
                 try:
-                    target_grade = int(grade_val) if grade_val is not None else 12
-                except (ValueError, TypeError):
-                    target_grade = 12
-
-                try:
-                    top_scorers = await asyncio.to_thread(db_get_weekly_leaderboard, target_grade)
+                    top_tourney = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 1)
                     top_alliances = await asyncio.to_thread(db_get_alliance_leaderboard)
                     top_cities = await asyncio.to_thread(db_get_city_leaderboard)
                     top_countries = await asyncio.to_thread(db_get_country_leaderboard)
 
-                    # Dynamic padding and alignment helper for retro monospaced table display
-                    def pad_truncate(val: str, max_len: int = 12) -> str:
-                        val = str(val)[:max_len]
-                        return val.ljust(max_len)
-
                     ind_val = "None"
-                    if top_scorers:
-                        ind_val = format_public_name(top_scorers[0])
-                        if top_scorers[0].get('alliance_tag'):
-                            ind_val = f"{ind_val} (# {top_scorers[0]['alliance_tag']})"
+                    if top_tourney:
+                        ind_val = format_public_name(top_tourney[0])
+                        if top_tourney[0].get('alliance_tag'):
+                            ind_val = f"{ind_val} (# {top_tourney[0]['alliance_tag']})"
 
                     sch_val = top_alliances[0]['org_name'] if top_alliances else "None"
                     city_val = top_cities[0]['city'] if top_cities else "None"
                     cnt_val = top_countries[0]['country'] if top_countries else "None"
 
-                    # Aligned ASCII board formatted cleanly inside an expandable block for beautiful mobile views
                     final_completed_text = build_champions_podium_html(ind_val, sch_val, city_val, cnt_val)
+                    full_tourney_board = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 10)
+                    final_completed_text += "\n\n" + build_tournament_leaderboard_text(full_tourney_board, total_rounds, total_rounds)
+
                     await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
                 except Exception as score_err:
                     dlog_exception("finalize_tournament_round Step 6 (final scoreboard)", score_err)
@@ -512,7 +516,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
     except Exception as e:
         dlog_exception(f"finalize_tournament_round CRASHED for mid={mid}, display_id={track.get('display_id')}", e)
-        # Deep Dynamic Channel Diagnostic Alert (Rate-limited to once per display_id to prevent flooding)
         display_id = track.get('display_id')
         if display_id not in _SENT_ERROR_ALERTS:
             _SENT_ERROR_ALERTS.add(display_id)
@@ -536,7 +539,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     finally:
         _FINALIZING_ROUNDS.discard(mid)
         dlog(f"[DEBUG-FINALIZE-EXIT] finalize_tournament_round finished for mid={mid}.")
-
 
 async def emergency_shutdown_cleanup(app, engine: QuizEngine):
     """Emergency finalization hook triggered immediately on SIGTERM/System Shutdown."""
@@ -700,6 +702,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
                         ann_mid = queue.get('announcement_mid')
                         if ann_mid:
+                            await _unpin_safe(app.bot, engine.config['channel'], ann_mid)
                             try:
                                 await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(ann_mid))
                             except Exception:
@@ -759,7 +762,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         await asyncio.to_thread(db_clear_tournament_queue)
                         continue
 
-                    dlog(f"[2026-08-01 10:32:54.271 UTC] [DEBUG-POP-ATTEMPT] Watcher attempting to pop from queue. remaining_ids={fresh_queue.get('remaining_ids')}")
+                    dlog(f"[DEBUG-POP-ATTEMPT] Watcher attempting to pop from queue. remaining_ids={fresh_queue.get('remaining_ids')}")
                     next_qid, next_seq = await asyncio.to_thread(db_pop_tournament_question)
                     dlog(f"[DEBUG-WATCHER] db_pop_tournament_question returned next_qid={next_qid}, next_seq={next_seq}")
                     if next_qid:
@@ -791,8 +794,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                 dlog(f"[DEBUG-WATCHER] launch_tournament_round returned normally for display_id={next_seq}.")
                             except Exception as launch_err:
                                 dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
-                                
-                                # Queue Rollback on Launch Failure: Restore the question and rollback sequence state
+
                                 try:
                                     dlog(f"[DEBUG-WATCHER-ROLLBACK] Attempting database queue recovery for popped question ID: {next_qid}")
                                     conn = GLOBAL_ENGINE.get_db_connection()
@@ -822,3 +824,23 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             dlog_exception("tournament_watcher_loop main loop iteration", e)
 
         await asyncio.sleep(poll_seconds)
+
+async def _pin_safe(bot, chat_id, mid):
+    """Pins a message so it stays visible at the top of the channel and pushes a
+    notification to members — used for the live/scheduled tournament card so
+    everyone sees round updates until the timer runs out."""
+    if not mid:
+        return
+    try:
+        await bot.pin_chat_message(chat_id=chat_id, message_id=int(mid), disable_notification=False)
+    except Exception as e:
+        print(f"[TOURNAMENT] Pin failed for mid={mid}: {e}", flush=True)
+
+
+async def _unpin_safe(bot, chat_id, mid):
+    if not mid:
+        return
+    try:
+        await bot.unpin_chat_message(chat_id=chat_id, message_id=int(mid))
+    except Exception as e:
+        print(f"[TOURNAMENT] Unpin failed for mid={mid}: {e}", flush=True)

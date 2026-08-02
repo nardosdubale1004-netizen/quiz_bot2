@@ -721,7 +721,7 @@ async def admin_panel(app, engine: QuizEngine):
                 print(f" ├─ Local Host System clock:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
                 print(f" ├─ Neon Database clock context: {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}", flush=True)
                 print(f" └─ Computed Execution Target: {scheduled_start.strftime('%Y-%m-%d %H:%M:%S UTC')} (Trigger in: {delay_seconds} seconds)", flush=True)
-
+            existing_queue = await asyncio.to_thread(db_get_tournament_queue)
             meta_payload = {
                 "subject": subject_name,
                 "topics": topics_list,
@@ -730,7 +730,8 @@ async def admin_panel(app, engine: QuizEngine):
                 "round_seconds": round_seconds,
                 "cooldown_seconds": cooldown_seconds,
                 "target_time_utc": target_time_utc_str,
-                "target_time_eat": target_time_eat_str
+                "target_time_eat": target_time_eat_str,
+                "run_id": uuid.uuid4().hex,
             }
 
             from src.rendering.html_views import build_tournament_announcement_text
@@ -755,6 +756,8 @@ async def admin_panel(app, engine: QuizEngine):
                     channel_id = engine.config['channel']
                     ann_msg = await app.bot.send_message(chat_id=channel_id, text=proposed_ann_text, parse_mode="HTML")
                     announcement_mid = ann_msg.message_id
+                    from src.tournament import _pin_safe
+                    await _pin_safe(app.bot, channel_id, announcement_mid)
                 except Exception as ann_err:
                     print(f"{Style.YELLOW}Could not post scheduled announcement to channel: {ann_err}{Style.RESET}")
 
@@ -769,7 +772,7 @@ async def admin_panel(app, engine: QuizEngine):
                 total_count = len(tournament_qs)
 
                 active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
-                existing_queue = await asyncio.to_thread(db_get_tournament_queue)
+                
                 has_pending_series = bool(existing_queue and existing_queue.get('remaining_ids'))
 
                 if active_rounds or has_pending_series:
