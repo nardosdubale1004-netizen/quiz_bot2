@@ -775,92 +775,98 @@ def build_round_completion_text(display_id, total_users: int, accuracy_pct: int,
 
     return f"{body}\n{stats_block}"
 
-def build_full_documentation_text() -> str:
-    return (
-        "<h2>🎓 QUIZ MASTER PRO — HOW IT WORKS</h2>\n<hr/>\n"
-        "Answer questions in the channel → get an instant private scorecard → build a streak → climb the leaderboard. Everything below is optional depth.\n\n"
-
-        "<h3>🏆 Scoring Formula</h3>\n"
-        "<code>Points = Difficulty × Speed × Challenge × Streak</code>\n"
-        "<table><tr><td>🟢 Easy</td><td>3</td></tr><tr><td>🟡 Medium</td><td>6</td></tr><tr><td>🔴 Hard</td><td>12</td></tr></table>\n"
-        "<blockquote expandable>"
-        "<b>⚡ Speed:</b> ≤60s ×1.5 │ ≤5min ×1.2 │ after ×1.0 (still full credit)\n"
-        "<b>🎯 Challenge:</b> above your grade ×1.5 │ same grade ×1.0 │ below ×0.3\n"
-        "<b>🔥 Streak:</b> see below\n\n"
-        "<i>Example: Hard + above-grade + 45s + 7-day streak = 12×1.5×1.5×1.5 ≈ 40 pts. Same question slow, no streak = 3 pts.</i>"
-        "</blockquote>\n\n"
-
-        "<h3>🎖️ Mastery Ranks</h3>\n"
-        "<blockquote expandable><table>"
-        "<tr><td>0</td><td>🌱 Candidate</td></tr>"
-        "<tr><td>1–49</td><td>🛡️ Bronze</td></tr>"
-        "<tr><td>50–149</td><td>⚔️ Silver</td></tr>"
-        "<tr><td>150–499</td><td>👑 Gold</td></tr>"
-        "<tr><td>500–1199</td><td>💎 Platinum</td></tr>"
-        "<tr><td>1200+</td><td>🌌 Legend</td></tr>"
-        "</table></blockquote>\n\n"
-
-        "<h3>🔥 Streaks</h3>\n"
-        "<table><tr><td>Days 1–2</td><td>×1.0</td></tr><tr><td>Days 3–6</td><td>×1.2</td></tr><tr><td>Day 7+</td><td>×1.5</td></tr></table>\n"
-        "Miss a day → resets to 1. Lifetime score untouched.\n\n"
-
-        "<h3>📚 Subject Mastery</h3>\n"
-        "Points are tracked per subject too — see your personal skill map on /profile.\n\n"
-
-        "<h3>⚔️ Live Tournaments</h3>\n"
-        "<blockquote expandable>"
-        "Pinned announcements, live countdown, everyone answers the same question on the same clock. Round podium (top 3 fastest correct) + a tournament-only leaderboard, separate from your lifetime score. Missing one costs nothing — every answer still banks to your regular stats."
-        "</blockquote>\n\n"
-
-        "<h3>🏫 Study Alliances</h3>\n"
-        "<blockquote expandable>"
-        "Join/create from /profile → 🏰 STUDY ALLIANCE TEAMS. Correct answers auto-add to your team's total. 🌐 Public teams need creator approval; 🔒 Private teams join instantly by code. Leaving never touches your personal score."
-        "</blockquote>\n\n"
-
-        "<h3>🤝 Invite &amp; Earn</h3>\n"
-        "<blockquote expandable>"
-        "/invite gives your personal link. When someone joins and answers correctly, you earn a small share of their points — two levels deep. No reward for recruiting alone; it's always tied to real learning."
-        "</blockquote>\n\n"
-
-        "<h3>🔄 The Feed Never Repeats</h3>\n"
-        "No question repeats within 3+ weeks, and subjects/difficulty stay balanced automatically.\n\n"
-
-        "<h3>📊 Leaderboards</h3>\n"
-        "🗓️ Weekly (by grade) │ 🏫 School Alliance │ 🌆 City │ 🌍 Country — see /leaderboard\n\n"
-
-        "<h3>🔐 Your Privacy</h3>\n"
-        "<blockquote expandable>"
-        "<table>"
-        "<tr><td>🕵️ Private (default)</td><td>Anonymous ID</td></tr>"
-        "<tr><td>🟢 Public (opt-in)</td><td>Your username/name</td></tr>"
-        "<tr><td>✍️ Nickname</td><td>Always available, either mode</td></tr>"
-        "</table>"
-        "No selling, no ads, no exceptions. Toggle anytime from /profile."
-        "</blockquote>\n\n"
-
-        "<h3>📋 Commands</h3>\n"
-        "<table>"
-        "<tr><td>/start</td><td>Set grade level</td></tr>"
-        "<tr><td>/profile</td><td>Score, streak, team, privacy</td></tr>"
-        "<tr><td>/leaderboard</td><td>Weekly rank (add 'school' for team)</td></tr>"
-        "<tr><td>/invite</td><td>Referral link</td></tr>"
-        "<tr><td>/feedback</td><td>Report/track issues</td></tr>"
-        "<tr><td>/name</td><td>Set/clear nickname</td></tr>"
-        "<tr><td>/school CODE</td><td>Join a team by code</td></tr>"
-        "</table>\n\n"
-
-        "<hr/>\n<i>Tap 🗺️ VIEW ROADMAP below for the visual step-by-step flow.</i>"
-    )
 
 
-def build_bot_roadmap_text() -> str:
-    return (
-        "<h2>🗺️ QUICK ROADMAP</h2>\n<hr/>\n"
-        "1️⃣ <b>/start</b> → pick your grade\n"
+HELP_TOPICS = {
+    "start": ("🗺️ Quick Start", (
+        "<b>🗺️ QUICK START</b>\n"
+        "1️⃣ /start → pick your grade\n"
         "2️⃣ Answer in the channel → get scored by DM\n"
-        "3️⃣ <b>/profile</b> → nickname, team, visibility\n"
-        "4️⃣ <b>/leaderboard</b> → track your rank\n"
-    )
+        "3️⃣ /profile → nickname, team, visibility\n"
+        "4️⃣ /leaderboard → track your rank"
+    )),
+    "scoring": ("🏆 Scoring & Ranks", (
+        "<b>🏆 HOW POINTS WORK</b>\n"
+        "<code>Points = Difficulty × Speed × Challenge × Streak</code>\n\n"
+        "🟢 Easy 3  │  🟡 Medium 6  │  🔴 Hard 12\n"
+        "⚡ ≤60s ×1.5  │  🏃 ≤5min ×1.2  │  🚶 after ×1.0\n"
+        "🎯 Above grade ×1.5  │  Same ×1.0  │  Below ×0.3\n\n"
+        "<b>🎖️ Ranks</b>\n"
+        "🌱 0 │ 🛡️ 1–49 │ ⚔️ 50–149 │ 👑 150–499 │ 💎 500–1199 │ 🌌 1200+"
+    )),
+    "streaks": ("🔥 Streaks", (
+        "<b>🔥 DAILY STREAKS</b>\n"
+        "Answer once a day to keep it alive.\n\n"
+        "Days 1–2 ×1.0 │ Days 3–6 ×1.2 │ Day 7+ ×1.5\n\n"
+        "Miss a day → resets to 1. Lifetime score is never touched."
+    )),
+    "tournaments": ("⚔️ Tournaments", (
+        "<b>⚔️ LIVE TOURNAMENTS</b>\n"
+        "Everyone answers the same question on the same clock.\n\n"
+        "🏆 Round podium — top 3 fastest correct\n"
+        "📊 Tournament-only leaderboard\n"
+        "🔁 Every answer also counts toward your lifetime score\n\n"
+        "Missing a round costs nothing."
+    )),
+    "teams": ("🏫 Study Teams", (
+        "<b>🏫 STUDY ALLIANCES</b>\n"
+        "Join or create from /profile → 🏰 MY TEAM.\n\n"
+        "✅ Correct answers auto-add to your team's total\n"
+        "🌐 Public teams need approval │ 🔒 Private join instantly\n"
+        "🚪 Leaving never affects your personal score"
+    )),
+    "invite": ("🤝 Invite & Earn", (
+        "<b>🤝 INVITE FRIENDS</b>\n"
+        "/invite gives your personal link.\n\n"
+        "When someone joins and answers correctly, you earn a small "
+        "share — two levels deep. No reward for recruiting alone."
+    )),
+    "privacy": ("🔐 Privacy", (
+        "<b>🔐 YOUR PRIVACY</b>\n"
+        "🕵️ Private (default) — anonymous ID\n"
+        "🟢 Public (opt-in) — your username/name\n"
+        "✍️ Nickname — always available\n\n"
+        "No selling, no ads. Toggle anytime in /profile → ⚙️ Settings."
+    )),
+    "commands": ("📋 Commands", (
+        "<b>📋 ALL COMMANDS</b>\n"
+        "/start — set grade\n"
+        "/profile — score, streak, team\n"
+        "/leaderboard — weekly rank\n"
+        "/invite — referral link\n"
+        "/feedback — report or track issues\n"
+        "/name — set/clear nickname\n"
+        "/school CODE — join a team"
+    )),
+}
+
+
+def build_help_menu_text() -> str:
+    return "<b>🎓 QUIZ MASTER PRO — HELP</b>\nPick a topic below 👇"
+
+
+def build_help_menu_keyboard() -> InlineKeyboardMarkup:
+    keys = list(HELP_TOPICS.keys())
+    rows = []
+    for i in range(0, len(keys), 2):
+        rows.append([
+            InlineKeyboardButton(HELP_TOPICS[k][0], callback_data=f"help_topic|{k}")
+            for k in keys[i:i+2]
+        ])
+    rows.append([InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_help_topic_text(key: str) -> str:
+    topic = HELP_TOPICS.get(key)
+    return topic[1] if topic else "⚠️ Topic not found."
+
+
+def build_help_topic_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 BACK TO HELP", callback_data="help_menu|0")
+    ]])
+
 
 def build_feedback_stats_text(stats: dict) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
@@ -902,38 +908,9 @@ def build_admin_dashboard_text(stats: dict) -> str:
     )
 
 
-def build_user_directory_text(users: list) -> str:
-    """Rich-text paginated user list for the admin dashboard."""
-    if not users:
-        return "<h2>👥 USER DIRECTORY</h2>\n<hr/>\n<i>No users found.</i>"
 
-    rows = []
-    for u in users:
-        name = format_public_name(u)
-        rows.append(
-            f"<tr><td>{html.escape(name)}</td><td>Gr.{u.get('grade') or '-'}</td>"
-            f"<td>{u.get('total_marks', 0)}</td><td>{html.escape(str(u.get('country','-')))}</td></tr>"
-        )
 
-    return (
-        "<h2>👥 USER DIRECTORY (Most Recently Active)</h2>\n<hr/>\n"
-        "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
-        + "".join(rows) + "</table>"
-    )
 
-def build_feedback_item_text(fb: dict) -> str:
-    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
-    name = format_public_name(fb)
-    cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
-    status_label = FEEDBACK_STATUS_LABELS.get(fb['status'], fb['status'])
-    reply_block = f"\n\n<b>💬 Your reply:</b>\n<blockquote>{html.escape(fb['admin_reply'])}</blockquote>" if fb.get('admin_reply') else ""
-    return (
-        f"<b>#{fb['id']} • {cat_label}</b>\n"
-        f"👤 {name} (<code>{fb['user_id']}</code>)\n"
-        f"📌 Status: <b>{status_label}</b>\n\n"
-        f"<blockquote>{html.escape(fb['message'])}</blockquote>"
-        f"{reply_block}"
-    )
 
 def build_tournament_leaderboard_text(rows: list, current_round: int = None, total_rounds: int = None) -> str:
     """Ranking scoped ONLY to the current tournament run — sums marks across every
@@ -1027,70 +1004,7 @@ def build_feedback_menu_text() -> str:
     )
 
 
-def build_admin_dashboard_text(stats: dict) -> str:
-    """Rich-text admin dashboard overview — sent via send_rich_message_safe so <table> renders
-    as Telegram's native rich table, not the legacy bullet-list fallback."""
-    if not stats:
-        return "<h2>⚠️ ADMIN DASHBOARD</h2>\n<hr/>\nFailed to load stats — check the database connection."
 
-    country_rows = "".join(
-        f"<tr><td>{html.escape(str(r['country']))}</td><td>{r['cnt']}</td></tr>"
-        for r in stats["by_country"]
-    ) or "<tr><td colspan='2'><i>No location data yet.</i></td></tr>"
-
-    subject_rows = "".join(
-        f"<tr><td>{html.escape(str(r['subject']))}</td><td>{r['cnt']}</td></tr>"
-        for r in stats["by_subject"]
-    ) or "<tr><td colspan='2'><i>No questions imported yet.</i></td></tr>"
-
-    return (
-        "<h2>📊 ADMIN DASHBOARD</h2>\n<hr/>\n"
-        f"<b>👥 Total Registered Students:</b> {stats['total_users']}\n"
-        f"<b>🏫 Total School Teams:</b> {stats['total_orgs']}\n"
-        f"<b>📝 Total Question Bank Size:</b> {stats['total_questions']}\n"
-        f"<b>✅ Total Answers Submitted:</b> {stats['total_responses']}\n\n"
-        "<h3>🌍 Students by Country</h3>\n"
-        f"<table><tr><td><b>Country</b></td><td><b>Students</b></td></tr>{country_rows}</table>\n\n"
-        "<h3>📚 Questions by Subject</h3>\n"
-        f"<table><tr><td><b>Subject</b></td><td><b>Count</b></td></tr>{subject_rows}</table>"
-    )
-
-
-def build_user_directory_text(users: list) -> str:
-    """Rich-text paginated user list for the admin dashboard."""
-    if not users:
-        return "<h2>👥 USER DIRECTORY</h2>\n<hr/>\n<i>No users found.</i>"
-
-    rows = []
-    for u in users:
-        name = format_public_name(u)
-        rows.append(
-            f"<tr><td>{html.escape(name)}</td><td>Gr.{u.get('grade') or '-'}</td>"
-            f"<td>{u.get('total_marks', 0)}</td><td>{html.escape(str(u.get('country', '-')))}</td></tr>"
-        )
-
-    return (
-        "<h2>👥 USER DIRECTORY (Most Recently Active)</h2>\n<hr/>\n"
-        "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
-        + "".join(rows) + "</table>"
-    )
-
-
-def build_feedback_item_text(fb: dict) -> str:
-    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
-    name = format_public_name(fb)
-    cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
-    status_label = FEEDBACK_STATUS_LABELS.get(fb['status'], fb['status'])
-    reply_block = ""
-    if fb.get('admin_reply'):
-        reply_block = f"\n\n<b>💬 Your reply:</b>\n<blockquote>{html.escape(fb['admin_reply'])}</blockquote>"
-    return (
-        f"<b>#{fb['id']} • {cat_label}</b>\n"
-        f"👤 {name} (<code>{fb['user_id']}</code>)\n"
-        f"📌 Status: <b>{status_label}</b>\n\n"
-        f"<blockquote>{html.escape(fb['message'])}</blockquote>"
-        f"{reply_block}"
-    )
 
 def build_feedback_browse_list_text(items: list, category: str, status: str, offset: int, total: int) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS

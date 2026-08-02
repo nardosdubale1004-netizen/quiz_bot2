@@ -38,10 +38,12 @@ from src.rendering.html_views import (
     build_profile_card_text,
     build_alliance_info_text,
     build_organization_card_text,
-    build_full_documentation_text,
-    build_bot_roadmap_text,
+    build_help_menu_text,
+    build_help_menu_keyboard,
+    build_help_topic_text,
+    build_help_topic_keyboard,
     build_feedback_item_text,
-    build_admin_dashboard_text, 
+    build_admin_dashboard_text,
     build_user_directory_text,
     build_user_feedback_list_text,
     build_feedback_menu_text,
@@ -371,24 +373,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("Dashboard closed.")
         await query.delete_message()
         return
+  
     elif action == "full_docs":
         await query.answer()
-        text = build_full_documentation_text()
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🗺️ VIEW ROADMAP", callback_data="roadmap|0"),
-            InlineKeyboardButton("🔙 BACK", callback_data="privacy_menu|0")
-        ]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_help_menu_text(), reply_markup=build_help_menu_keyboard()
+        )
         return
 
-    elif action == "roadmap":
+    elif action == "help_menu":
         await query.answer()
-        text = build_bot_roadmap_text()
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📖 FULL DOCS", callback_data="full_docs|0"),
-            InlineKeyboardButton("🔙 BACK", callback_data="privacy_menu|0")
-        ]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_help_menu_text(), reply_markup=build_help_menu_keyboard()
+        )
+        return
+
+    elif action == "help_topic":
+        await query.answer()
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_help_topic_text(d_id), reply_markup=build_help_topic_keyboard()
+        )
         return
 
     elif action == "quickjoin_org":

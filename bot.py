@@ -675,17 +675,13 @@ async def profile_command(update: Update, context):
         return
 
     org_id = profile.get("org_id")
-    roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
     from src.database import db_get_user_subject_marks
     subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
     text = build_profile_card_text(profile, None, subject_marks)
     from src.rendering.html_views import build_profile_main_keyboard
     kb = build_profile_main_keyboard(has_team=bool(org_id))
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
-
-    buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
-
+    
 async def school_command(update: Update, context):
     """Shortcut: /school <TAG> joins (or requests to join) an existing school team by its Team Code."""
     user = update.effective_user
@@ -860,13 +856,11 @@ async def invite_command(update: Update, context):
     )
 
 async def help_command(update: Update, context):
-    from src.rendering.html_views import build_full_documentation_text
+    from src.rendering.html_views import build_help_menu_text, build_help_menu_keyboard
     await send_rich_message_safe(
         context.bot, chat_id=update.message.chat_id,
-        html_content=build_full_documentation_text(),
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🗺️ VIEW ROADMAP", callback_data="roadmap|0")
-        ]])
+        html_content=build_help_menu_text(),
+        reply_markup=build_help_menu_keyboard()
     )
 
 async def feedback_command(update: Update, context):
