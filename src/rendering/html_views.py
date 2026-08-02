@@ -770,7 +770,7 @@ def build_round_completion_text(display_id, total_users: int, accuracy_pct: int,
     podium_block = "\n".join(podium_lines) if podium_lines else "<i>No correct answers recorded this round.</i>"
 
     body = (
-        f"🏁🏁🏁 <b>ROUND COMPLETE</b> 🏁🏁🏁\n"
+        f"🏁 <b>ROUND COMPLETE</b> 🏁\n"
         f"<b>REF <code>{display_id}</code></b>\n\n"
         f"👥 <b>{total_users}</b> submissions logged  │  🎯 <b>{accuracy_pct}%</b> accuracy\n"
     )
