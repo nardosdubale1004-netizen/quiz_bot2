@@ -1848,21 +1848,20 @@ def db_promote_member(user_id, org_id: int, promote: bool) -> bool:
             GLOBAL_ENGINE.release_connection(conn)
 
 
-# --- DYNAMIC GEOGRAPHIC LEADERBOARD SYSTEM ---
+# --- DYNAMIC GEOGRAPHIC LEAGUE ANALYTICS ---
 
 def db_get_city_leaderboard():
-    """Retrieves and ranks the top cities globally based on aggregated school alliance scores."""
+    """Retrieves top performing cities based on collective student scores."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT o.city, SUM(u.total_marks) AS total_score, COUNT(DISTINCT m.user_id) AS active_members
-                FROM organizations o
-                JOIN org_memberships m ON o.org_id = m.org_id
-                JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_role != 'pending'
-                GROUP BY o.city
+                SELECT COALESCE(o.city, u.personal_city) AS city, SUM(u.total_marks) as total_score
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                GROUP BY city
                 ORDER BY total_score DESC
                 LIMIT 5;
             """)
@@ -1875,18 +1874,17 @@ def db_get_city_leaderboard():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_country_leaderboard():
-    """Retrieves and ranks the top countries globally based on aggregated school alliance scores."""
+    """Retrieves top performing countries based on collective student scores."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT o.country, SUM(u.total_marks) AS total_score, COUNT(DISTINCT m.user_id) AS active_members
-                FROM organizations o
-                JOIN org_memberships m ON o.org_id = m.org_id
-                JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_role != 'pending'
-                GROUP BY o.country
+                SELECT COALESCE(o.country, u.personal_country) AS country, SUM(u.total_marks) as total_score
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                GROUP BY country
                 ORDER BY total_score DESC
                 LIMIT 5;
             """)
