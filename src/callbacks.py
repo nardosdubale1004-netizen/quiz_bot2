@@ -50,6 +50,17 @@ from src.rendering.html_views import build_profile_card_text, build_alliance_inf
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
+async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
+    """Deletes a status-update DM after a delay — the student still sees it
+    when it arrives, but it clears out of the chat afterward. The record
+    itself is untouched and always stays viewable in /myfeedback."""
+    try:
+        await asyncio.sleep(delay_seconds)
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
+        
 def check_message_has_lockout(user_id, message) -> bool:
     if not message:
         return False
@@ -486,12 +497,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             # Only tell the user for meaningful outcomes — not every intermediate nudge.
             if new_status in ("planned", "resolved"):
                 try:
-                    nice_msg = (
+                    notice_text = (
                         f"🗓️ Your feedback #{fb_id} has been <b>added to our plans for a future update</b>!"
                         if new_status == "planned" else
                         f"✅ Your feedback #{fb_id} has been <b>resolved</b>! Thanks for helping improve the bot."
                     )
-                    await context.bot.send_message(chat_id=int(fb['user_id']), text=nice_msg, parse_mode="HTML")
+                    notice_text += "\n\n<i>This note will clear itself after a while — the full history always stays in /myfeedback.</i>"
+                    notice_msg = await context.bot.send_message(chat_id=int(fb['user_id']), text=notice_text, parse_mode="HTML")
+                    asyncio.create_task(_delayed_delete(context.bot, int(fb['user_id']), notice_msg.message_id))
                 except Exception:
                     pass
         return

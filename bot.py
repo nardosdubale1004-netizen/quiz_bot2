@@ -55,10 +55,12 @@ from src.database import (
     db_save_feedback_reply,
     db_get_feedback_stats,
     db_join_organization_by_token,
-    db_call_guarded
+    db_call_guarded,
+    db_get_user_feedback_list,
+    db_count_user_feedback,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
-from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text
+from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
@@ -77,7 +79,6 @@ BOT_COMMANDS = [
     BotCommand("invite", "Get your referral link & earn bonus marks"),
     BotCommand("help", "How the bot works, step by step"),
     BotCommand("feedback", "Report a bug, request a feature, or share feedback"),
-    BotCommand("myfeedback", "Track the status of your feedback & feature requests"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -619,6 +620,7 @@ async def start_command(update: Update, context):
     # Check and render fallback grade profile if mapped
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
     if profile and profile.get("grade"):
+        asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
         await profile_command(update, context)
         return
 
@@ -632,6 +634,7 @@ async def start_command(update: Update, context):
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await send_rich_message_safe(
         context.bot,
         chat_id=update.message.chat_id,
@@ -864,12 +867,42 @@ async def feedback_command(update: Update, context):
     buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
     buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
     buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
+
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+
     await send_rich_message_safe(
         context.bot, chat_id=update.message.chat_id,
         html_content=build_feedback_menu_text(),
         reply_markup=InlineKeyboardMarkup(buttons)
     )
-    
+
+async def myfeedback_command(update: Update, context):
+    """Standalone /myfeedback command — kept working for anyone who types it,
+    but intentionally left out of BOT_COMMANDS so it doesn't clutter the '/'
+    menu. The button inside /feedback is the main entry point."""
+    user = update.effective_user
+    user_id = user.id
+
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+
+    items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, 0)
+    total = await asyncio.to_thread(db_count_user_feedback, user_id)
+    text = build_user_feedback_list_text(items, total)
+
+    nav_row = []
+    if total > 5:
+        nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5"))
+    buttons = [nav_row] if nav_row else []
+    buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
+
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+
+    await send_rich_message_safe(
+        context.bot, chat_id=update.message.chat_id,
+        html_content=text,
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
 async def claim_admin_command(update: Update, context):
     """Hidden, unlisted command. Grants admin only if the caller supplies the exact bootstrap secret."""
     from src.config import ADMIN_BOOTSTRAP_SECRET
@@ -966,6 +999,18 @@ def db_get_all_admin_ids():
 async def _delete_silent(bot, chat_id, mid):
     try:
         await bot.delete_message(chat_id=chat_id, message_id=mid)
+    except Exception:
+        pass
+
+async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
+    """Deletes a message after a delay — used for ephemeral notifications
+    (e.g. 'your feedback was resolved') that should stay visible for a while but
+    not clutter the chat forever. The record stays fully visible in /myfeedback's
+    history — this only removes the transient push-notification bubble.
+    Default: 3 hours."""
+    try:
+        await asyncio.sleep(delay_seconds)
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
     except Exception:
         pass
 
@@ -1316,6 +1361,7 @@ def main():
     app.add_handler(CommandHandler("invite", invite_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("feedback", feedback_command))
+    app.add_handler(CommandHandler("myfeedback", myfeedback_command))
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
     app.add_handler(CommandHandler(["admin_dashboard", "admindashboard"], admin_dashboard_command))
     app.add_handler(CommandHandler("claimadmin", claim_admin_command))

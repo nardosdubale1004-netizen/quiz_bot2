@@ -939,6 +939,8 @@ _STATUS_PIPELINE_ICONS = {"open": "🆕", "in_progress": "🔧", "planned": "�
 
 def _status_progress_line(status: str) -> str:
     """Linear step-tracker so a user can see exactly where their request sits."""
+    from src.config import FEEDBACK_STATUS_LABELS
+
     if status == "wontfix":
         return "🚫 <b>Not Planned</b> — reviewed, but won't be implemented."
 
@@ -968,20 +970,28 @@ def build_user_feedback_list_text(items: list, total_count: int) -> str:
         )
 
     from src.config import FEEDBACK_CATEGORIES
+
     blocks = []
     for fb in items:
         cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
         created = fb['created_at'].strftime('%b %d, %Y') if fb.get('created_at') else ""
-        snippet = html.escape(fb['message'][:120] + ("…" if len(fb['message']) > 120 else ""))
-        reply_line = ""
+        snippet = html.escape(fb['message'][:160] + ("…" if len(fb['message']) > 160 else ""))
+        reply_block = ""
         if fb.get('admin_reply'):
-            reply_line = f"\n💬 <i>Reply: {html.escape(fb['admin_reply'][:150])}</i>"
+            reply_block = (
+                f"\n💬 <b>Reply from the team:</b>\n"
+                f"<i>{html.escape(fb['admin_reply'][:200])}</i>\n"
+            )
         blocks.append(
-            f"<b>#{fb['id']}</b> • {cat_label} • <i>{created}</i>\n"
-            f"{snippet}\n{_status_progress_line(fb['status'])}{reply_line}"
+            f"<blockquote>"
+            f"<b>#{fb['id']} • {cat_label}</b>  <i>({created})</i>\n"
+            f"{snippet}\n\n"
+            f"{_status_progress_line(fb['status'])}"
+            f"{reply_block}"
+            f"</blockquote>"
         )
 
-    body = "\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n".join(blocks)
+    body = "\n\n".join(blocks)
     return (
         f"<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n"
         f"<i>Showing {len(items)} of {total_count} submissions</i>\n<hr/>\n\n{body}"
