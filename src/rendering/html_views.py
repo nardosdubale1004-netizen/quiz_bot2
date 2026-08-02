@@ -805,54 +805,99 @@ def build_round_completion_text(display_id, total_users: int, accuracy_pct: int,
     return f"{body}\n{stats_block}"
 
 def build_full_documentation_text() -> str:
-    """Full 'How it works' doc — sent via the RICH renderer (send/edit_rich_message_safe),
-    not convert_to_legacy_html, so tables/lists render in Telegram's newer rich format."""
     return (
-        "<h2>📖 QUIZ MASTER PRO — HOW IT WORKS</h2>\n"
-        "<hr/>\n"
+        "<h2>🎓 QUIZ MASTER PRO — HOW IT WORKS</h2>\n<hr/>\n"
+        "Answer questions in the channel → get an instant private scorecard → build a streak → climb the leaderboard. Everything below is optional depth.\n\n"
+
+        "<h3>🏆 Scoring Formula</h3>\n"
+        "<code>Points = Difficulty × Speed × Challenge × Streak</code>\n"
+        "<table><tr><td>🟢 Easy</td><td>3</td></tr><tr><td>🟡 Medium</td><td>6</td></tr><tr><td>🔴 Hard</td><td>12</td></tr></table>\n"
         "<blockquote expandable>"
-        "<b>🎯 Answering Questions</b><br/>"
-        "Tap an option under any question in the channel. You'll get a private DM with the "
-        "correct answer, full derivation, and your updated score.<br/><br/>"
-        "<b>🏆 Scoring</b><br/>"
-        "<ul>"
-        "<li>First correct answer on a question: bonus marks</li>"
-        "<li>Later correct answers: standard marks</li>"
-        "<li>Daily streaks multiply your marks the longer you stay consistent</li>"
-        "</ul>"
-        "<b>🏫 Study Alliance Teams</b><br/>"
-        "Create or join a school team from /profile → 🏰 STUDY ALLIANCE TEAMS. Every correct "
-        "answer you submit also adds to your team's score automatically. Public teams need "
-        "creator approval to join; private teams let anyone with the code join instantly.<br/><br/>"
-        "<b>🤝 Invites</b><br/>"
-        "Use /invite for your personal link. When someone joins through it, you earn a small "
-        "<b>+1 Mark</b> bonus per correct answer they submit — capped to two levels deep, and "
-        "only ever triggered by real answering, never by the invite itself.<br/><br/>"
-        "<b>📍 Leaderboards</b><br/>"
-        "Weekly grade leaderboard, school alliance leaderboard, plus city/country standings."
-        "</blockquote>\n"
-        "<hr/>\n"
-        "<i>Tap 🗺️ ROADMAP below for a step-by-step visual flow.</i>"
+        "<b>⚡ Speed:</b> ≤60s ×1.5 │ ≤5min ×1.2 │ after ×1.0 (still full credit)\n"
+        "<b>🎯 Challenge:</b> above your grade ×1.5 │ same grade ×1.0 │ below ×0.3\n"
+        "<b>🔥 Streak:</b> see below\n\n"
+        "<i>Example: Hard + above-grade + 45s + 7-day streak = 12×1.5×1.5×1.5 ≈ 40 pts. Same question slow, no streak = 3 pts.</i>"
+        "</blockquote>\n\n"
+
+        "<h3>🎖️ Mastery Ranks</h3>\n"
+        "<blockquote expandable><table>"
+        "<tr><td>0</td><td>🌱 Candidate</td></tr>"
+        "<tr><td>1–49</td><td>🛡️ Bronze</td></tr>"
+        "<tr><td>50–149</td><td>⚔️ Silver</td></tr>"
+        "<tr><td>150–499</td><td>👑 Gold</td></tr>"
+        "<tr><td>500–1199</td><td>💎 Platinum</td></tr>"
+        "<tr><td>1200+</td><td>🌌 Legend</td></tr>"
+        "</table></blockquote>\n\n"
+
+        "<h3>🔥 Streaks</h3>\n"
+        "<table><tr><td>Days 1–2</td><td>×1.0</td></tr><tr><td>Days 3–6</td><td>×1.2</td></tr><tr><td>Day 7+</td><td>×1.5</td></tr></table>\n"
+        "Miss a day → resets to 1. Lifetime score untouched.\n\n"
+
+        "<h3>📚 Subject Mastery</h3>\n"
+        "Points are tracked per subject too — see your personal skill map on /profile.\n\n"
+
+        "<h3>⚔️ Live Tournaments</h3>\n"
+        "<blockquote expandable>"
+        "Pinned announcements, live countdown, everyone answers the same question on the same clock. Round podium (top 3 fastest correct) + a tournament-only leaderboard, separate from your lifetime score. Missing one costs nothing — every answer still banks to your regular stats."
+        "</blockquote>\n\n"
+
+        "<h3>🏫 Study Alliances</h3>\n"
+        "<blockquote expandable>"
+        "Join/create from /profile → 🏰 STUDY ALLIANCE TEAMS. Correct answers auto-add to your team's total. 🌐 Public teams need creator approval; 🔒 Private teams join instantly by code. Leaving never touches your personal score."
+        "</blockquote>\n\n"
+
+        "<h3>🤝 Invite &amp; Earn</h3>\n"
+        "<blockquote expandable>"
+        "/invite gives your personal link. When someone joins and answers correctly, you earn a small share of their points — two levels deep. No reward for recruiting alone; it's always tied to real learning."
+        "</blockquote>\n\n"
+
+        "<h3>🔄 The Feed Never Repeats</h3>\n"
+        "No question repeats within 3+ weeks, and subjects/difficulty stay balanced automatically.\n\n"
+
+        "<h3>📊 Leaderboards</h3>\n"
+        "🗓️ Weekly (by grade) │ 🏫 School Alliance │ 🌆 City │ 🌍 Country — see /leaderboard\n\n"
+
+        "<h3>🔐 Your Privacy</h3>\n"
+        "<blockquote expandable>"
+        "<table>"
+        "<tr><td>🕵️ Private (default)</td><td>Anonymous ID</td></tr>"
+        "<tr><td>🟢 Public (opt-in)</td><td>Your username/name</td></tr>"
+        "<tr><td>✍️ Nickname</td><td>Always available, either mode</td></tr>"
+        "</table>"
+        "No selling, no ads, no exceptions. Toggle anytime from /profile."
+        "</blockquote>\n\n"
+
+        "<h3>📋 Commands</h3>\n"
+        "<table>"
+        "<tr><td>/start</td><td>Set grade level</td></tr>"
+        "<tr><td>/profile</td><td>Score, streak, team, privacy</td></tr>"
+        "<tr><td>/leaderboard</td><td>Weekly rank (add 'school' for team)</td></tr>"
+        "<tr><td>/invite</td><td>Referral link</td></tr>"
+        "<tr><td>/feedback</td><td>Report/track issues</td></tr>"
+        "<tr><td>/name</td><td>Set/clear nickname</td></tr>"
+        "<tr><td>/school CODE</td><td>Join a team by code</td></tr>"
+        "</table>\n\n"
+
+        "<hr/>\n<i>Tap 🗺️ VIEW ROADMAP below for the visual step-by-step flow.</i>"
     )
 
 
 def build_bot_roadmap_text() -> str:
-    """Visual step-by-step roadmap, rendered as a rich <table> rather than plain text."""
     return (
         "<h2>🗺️ YOUR JOURNEY THROUGH QUIZ MASTER PRO</h2>\n"
         "<hr/>\n"
         "<table>"
-        "<tr><td>1️⃣</td><td><b>/start</b> — pick your grade level</td></tr>"
+        "<tr><td>1️⃣</td><td><b>/start</b> — pick your grade level (once)</td></tr>"
         "<tr><td>2️⃣</td><td>Answer questions posted in the channel</td></tr>"
-        "<tr><td>3️⃣</td><td>Check your DM for the solution + score update</td></tr>"
+        "<tr><td>3️⃣</td><td>Check your DM for the solution + updated score</td></tr>"
         "<tr><td>4️⃣</td><td><b>/profile</b> — set a nickname, join/create a team</td></tr>"
-        "<tr><td>5️⃣</td><td><b>/invite</b> — share your link for bonus marks</td></tr>"
-        "<tr><td>6️⃣</td><td><b>/leaderboard</b> — track your rank weekly</td></tr>"
+        "<tr><td>5️⃣</td><td>Jump into a ⚔️ live tournament round when one's announced</td></tr>"
+        "<tr><td>6️⃣</td><td><b>/invite</b> — share your link for bonus marks</td></tr>"
+        "<tr><td>7️⃣</td><td><b>/leaderboard</b> — track your rank weekly</td></tr>"
         "</table>\n"
         "<hr/>\n"
         "<i>Every step loops back to answering — that's always where the real marks come from.</i>"
     )
-
 
 def build_feedback_stats_text(stats: dict) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
