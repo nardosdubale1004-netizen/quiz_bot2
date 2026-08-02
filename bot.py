@@ -58,6 +58,8 @@ from src.database import (
     db_call_guarded,
     db_get_user_feedback_list,
     db_count_user_feedback,
+    db_mark_question_shown,
+    db_get_user_subject_marks
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
@@ -179,7 +181,10 @@ async def check_and_publish_scheduled(app):
 
                 if time_diff.total_seconds() > 3600:
                     print(f"{Style.YELLOW}[SCHEDULER] Skipping question {q['id']} (scheduled for {q['scheduled_for']} in the past). Archiving.{Style.RESET}", flush=True)
+
                     await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                    from src.database import db_mark_question_shown
+                    await asyncio.to_thread(db_mark_question_shown, q['id'])
                     continue
 
                 print(f"{Style.YELLOW}[SCHEDULER] Found scheduled question REF: {q['id']}. Publishing...{Style.RESET}", flush=True)
@@ -227,6 +232,8 @@ async def check_and_publish_scheduled(app):
 
                 await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, type_str, msg_type)
                 await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                from src.database import db_mark_question_shown
+                await asyncio.to_thread(db_mark_question_shown, q['id'])
                 print(f"{Style.GREEN}[SCHEDULER] Successfully posted scheduled quiz REF: {last_seq} to channel.{Style.RESET}", flush=True)
         except Exception as e:
             traceback.print_exc()

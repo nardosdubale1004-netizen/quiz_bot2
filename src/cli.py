@@ -229,6 +229,7 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [5] ⚔️  Launch Live Synchronous Tournament")
         print(f" [6] 📅 Control Center (Scheduled Quizzes & Tournaments)")
         print(f" [7] 🛑 Emergency Stop / Pause Live Tournament")
+        print(f" [8] 🎯 Smart Scheduler (Suggest Next Batch)")
         print(f" [0] 🚪 Shutdown System")
 
         choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
@@ -387,6 +388,9 @@ async def admin_panel(app, engine: QuizEngine):
 
                     await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, "premium", msg_type)
                     await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                    from src.database import db_mark_question_shown
+                    await asyncio.to_thread(db_mark_question_shown, q['id'])
+
                     print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{msg_type}]{Style.RESET}")
 
                     await asyncio.sleep(1.5)
@@ -841,6 +845,9 @@ async def admin_panel(app, engine: QuizEngine):
         elif choice == "7":
             await render_emergency_stop_panel(app, engine, cli)
 
+        elif choice == "8":
+            await render_smart_scheduler(app, engine, cli)
+
 
 async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
     """Control panel that lists and modifies scheduled single questions and pending tournaments."""
@@ -1077,6 +1084,132 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
                         print(f"{Style.RED}✅ Scheduled tournament deleted and queue flushed.{Style.RESET}")
                         await asyncio.sleep(1.5)
                         break
+
+async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
+    """Admin sets policy once (subject weights, difficulty target); the algorithm
+    proposes a diversified, cooldown-safe batch. Admin reviews a summary — not a
+    raw list — and confirms, regenerates, or swaps individual slots."""
+    from src.database import (
+        db_get_scheduling_pool, db_get_recent_post_history, db_mark_question_shown,
+        db_get_question_by_id
+    )
+    from src.scheduler import select_batch
+
+    clear_screen()
+    print(f"{Style.MAGENTA}{Style.BOLD}--- 🎯 SMART SCHEDULER ---{Style.RESET}\n")
+    print("Set your posting policy (press Enter to use sensible defaults).\n")
+
+    cooldown_in = await cli.ask("<b>Cooldown days before a question can repeat (default 21): </b>")
+    cooldown_days = int(cooldown_in) if cooldown_in and cooldown_in.isdigit() else 21
+
+    batch_in = await cli.ask("<b>How many questions to schedule? (default 5): </b>")
+    batch_n = int(batch_in) if batch_in and batch_in.isdigit() else 5
+
+    diff_in = await cli.ask("<b>Difficulty target easy/medium/hard % (default 40/40/20, e.g. '30 50 20'): </b>")
+    if diff_in:
+        try:
+            e, m, h = [int(x) / 100.0 for x in diff_in.split()]
+            difficulty_target = {"easy": e, "medium": m, "hard": h}
+        except Exception:
+            difficulty_target = {"easy": 0.4, "medium": 0.4, "hard": 0.2}
+    else:
+        difficulty_target = {"easy": 0.4, "medium": 0.4, "hard": 0.2}
+
+    boost_in = await cli.ask("<b>Curriculum boost — topic name to prioritize this run (or Enter to skip): </b>")
+    topic_boosts = {boost_in.strip(): 2.0} if boost_in and boost_in.strip() else {}
+
+    pool = await asyncio.to_thread(db_get_scheduling_pool, cooldown_days)
+    if not pool:
+        print(f"{Style.RED}No eligible questions — everything is inside the {cooldown_days}-day cooldown window.{Style.RESET}")
+        await cli.ask("\nPress Enter to return...")
+        return
+
+    history = await asyncio.to_thread(db_get_recent_post_history, 7)
+
+    while True:
+        selected = select_batch(
+            pool, history, n=batch_n,
+            difficulty_target=difficulty_target,
+            topic_boosts=topic_boosts
+        )
+
+        if not selected:
+            print(f"{Style.RED}Scheduler couldn't fill a batch — pool too small after cooldown filtering.{Style.RESET}")
+            await cli.ask("\nPress Enter to return...")
+            return
+
+        subj_tally, diff_tally = {}, {}
+        clear_screen()
+        print(f"{Style.YELLOW}{Style.BOLD}--- PROPOSED BATCH ({len(selected)} questions) ---{Style.RESET}\n")
+        for i, q in enumerate(selected):
+            diff = q.get("difficulty", "medium")
+            subj_tally[q["subject"]] = subj_tally.get(q["subject"], 0) + 1
+            diff_tally[diff] = diff_tally.get(diff, 0) + 1
+            print(f"  {i+1}. [{q['subject']} • {diff}] {q['question'][:55]}...")
+
+        print(f"\n{Style.CYAN}Mix: {' | '.join(f'{k}: {v}' for k,v in subj_tally.items())}")
+        print(f"Difficulty: {' | '.join(f'{k}: {v}' for k,v in diff_tally.items())}{Style.RESET}\n")
+
+        print("[c] Confirm & Send Now  [r] Regenerate  [s] Swap one slot  [b] Back")
+        action = await cli.ask("<b>Action > </b>")
+
+        if not action or action == 'b':
+            return
+
+        if action == 'r':
+            continue
+
+        if action == 's':
+            idx_in = await cli.ask(f"<b>Slot to swap (1-{len(selected)}): </b>")
+            if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(selected):
+                idx = int(idx_in) - 1
+                remaining_pool = [q for q in pool if q["id"] not in [s["id"] for s in selected]]
+                if remaining_pool:
+                    replacement = select_batch(remaining_pool, history, n=1, difficulty_target=difficulty_target, topic_boosts=topic_boosts)
+                    if replacement:
+                        selected[idx] = replacement[0]
+            continue
+
+        if action == 'c':
+            tracks = await asyncio.to_thread(engine.db_get_all_tracks)
+            last_seq = max((v.get('display_id', 100) for v in tracks.values()), default=100)
+
+            for q in selected:
+                last_seq += 1
+                try:
+                    img_url, caption = UIFactory.create_question_assets(q, last_seq)
+                    kb = UIFactory.build_keyboard(q, last_seq)
+                    cache_key = f"q:{q['id']}:diagram"
+                    cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+
+                    media_bytes = None
+                    if img_url and not cached_file_id:
+                        async with httpx.AsyncClient() as client:
+                            resp = await fetch_kroki_image(client, img_url)
+                            if resp and resp.status_code == 200:
+                                media_bytes = resp.content
+
+                    m = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=caption, reply_markup=kb, media_bytes=media_bytes, file_id=cached_file_id)
+                    msg_type = "photo" if img_url else "text"
+                    if img_url and not cached_file_id and m.photo:
+                        await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+
+                    await asyncio.to_thread(engine.db_save_track, m.message_id, q['id'], "active", last_seq, "premium", msg_type)
+                    await asyncio.to_thread(db_mark_question_as_sent, q['id'])
+                    await asyncio.to_thread(db_mark_question_shown, q['id'])
+                    print(f"{Style.GREEN}✅ Sent REF: {last_seq} [{q['subject']} • {q.get('difficulty')}]{Style.RESET}")
+                    await asyncio.sleep(1.5)
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f"{Style.RED}❌ Failed REF: {last_seq} | {e}{Style.RESET}")
+
+            local_sent_tracks = engine.load_json("logs/sent_tracks.json")
+            local_sent_tracks["last_seq"] = last_seq
+            engine.save_json("logs/sent_tracks.json", local_sent_tracks)
+
+            print(f"\n{Style.GREEN}Batch sent. {len(selected)} questions posted, cooldown timers reset.{Style.RESET}")
+            await asyncio.sleep(2.0)
+            return
 
 
 async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):

@@ -285,6 +285,8 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
 
         await asyncio.to_thread(engine.db_swap_track_message_id, placeholder_mid, m.message_id)
         await asyncio.to_thread(engine.db_update_track_followup_and_type, m.message_id, ann_msg.message_id, msg_type)
+        from src.database import db_mark_question_shown
+        await asyncio.to_thread(db_mark_question_shown, q['id'])
         print(f"{Style.GREEN}[DEBUG-LAUNCH] Round launched successfully. REF: {last_seq} message_id: {m.message_id}{Style.RESET}", flush=True)
 
     except Exception as e:

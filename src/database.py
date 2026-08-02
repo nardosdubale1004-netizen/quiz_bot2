@@ -394,6 +394,17 @@ class QuizEngine:
                         PRIMARY KEY (user_id, subject)
                     );
                 """)
+                cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS last_shown_at TIMESTAMPTZ;")
+                cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS times_shown INT DEFAULT 0;")
+                # One-time backfill from existing send history so cooldown works immediately
+                cur.execute("""
+                    UPDATE questions q SET last_shown_at = sub.max_sent, times_shown = sub.cnt
+                    FROM (
+                        SELECT q_id, MAX(sent_at) AS max_sent, COUNT(*) AS cnt
+                        FROM sent_tracks GROUP BY q_id
+                    ) sub
+                    WHERE q.id = sub.q_id AND q.last_shown_at IS NULL;
+                """)
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -1100,6 +1111,76 @@ def db_get_question_by_id(q_id):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_scheduling_pool(cooldown_days: int = 21, subject: str = None):
+    """Returns candidate questions that haven't been shown within cooldown_days.
+    This is the hard filter — cooldown-violating questions never even reach the scorer."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            params = [cooldown_days]
+            clause = "WHERE (last_shown_at IS NULL OR last_shown_at < NOW() - (%s || ' days')::interval)"
+            if subject:
+                clause += " AND lower(subject) = lower(%s)"
+                params.append(subject)
+            cur.execute(f"""
+                SELECT id, subject, topic, difficulty, tags, question, last_shown_at, times_shown
+                FROM questions
+                {clause}
+                ORDER BY COALESCE(times_shown, 0) ASC;
+            """, tuple(params))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch scheduling pool: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_recent_post_history(days: int = 7):
+    """Feeds the diversity/balance scoring — what's actually gone out recently."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT q.subject, q.difficulty, q.topic, st.sent_at
+                FROM sent_tracks st
+                JOIN questions q ON st.q_id = q.id
+                WHERE st.sent_at >= NOW() - (%s || ' days')::interval
+                ORDER BY st.sent_at DESC;
+            """, (days,))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch recent post history: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_mark_question_shown(q_id: str):
+    """Call this every time a question is actually sent — scheduled, manual, or tournament.
+    This is what makes the cooldown filter work."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE questions
+                SET last_shown_at = NOW(), times_shown = COALESCE(times_shown, 0) + 1
+                WHERE id = %s;
+            """, (q_id,))
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to mark question shown: {e}", flush=True)
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 
 def db_get_track_and_question(display_id: int):
     cache_key = f"trackq:{display_id}"
