@@ -96,7 +96,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
 
-    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', []))
     channel_name = CONFIG.get("channel", "@QuizOva")
     channel_username = channel_name.lstrip('@')
 
@@ -159,12 +159,15 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     rule_text = exp.get('governing_principle') or exp.get('rule') or 'General Concept'
 
     general_principle = (
-        f"🏛️ <b>GENERAL PRINCIPLE:</b>\n"
-        f"<i>{beautify_markdown_math(rule_text)}</i>\n"
+        f"<blockquote>"
+        f"<b>🏛️ GENERAL PRINCIPLE:</b><br/>"
+        f"<i>{beautify_markdown_math(rule_text)}</i>"
+        f"</blockquote>"
     )
 
     step_by_step_parts = [
-        f"🔢 <b>STEP-BY-STEP DERIVATION:</b>\n"
+        f"<blockquote expandable>"
+        f"<b>🔢 STEP-BY-STEP DERIVATION:</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
     if exp.get('analogy'):
@@ -172,11 +175,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     if exp.get('memory_tip'):
         step_by_step_parts.append(f"🧠 <b>Memory Tip:</b>\n{beautify_markdown_math(exp['memory_tip'])}")
 
+    step_by_step_parts.append("</blockquote>")
     step_by_step = "\n\n".join(step_by_step_parts)
 
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
-        f"🔍 <b>OPTION BREAKDOWN:</b>\n"
+        f"<blockquote expandable>",
+        f"<b>🔍 OPTION BREAKDOWN</b>\n"
     ]
     for i, o_text in enumerate(q['options']):
         let = chr(65 + i)
@@ -194,6 +199,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             analysis_line += f"\n  {beautify_markdown_math(example_text)} ."
         breakdown_parts.append(analysis_line)
 
+    breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
     general_principle = replace_code_with_italic(general_principle)
@@ -249,14 +255,14 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
 
     general_principle = (
         f"<blockquote>"
-        f"<b>🏛️ GENERAL PRINCIPLE</b><br/>"
+        f"<b>🏛️ GENERAL PRINCIPLE:</b><br/>"
         f"<i>{beautify_markdown_math(rule_text)}</i>"
         f"</blockquote>"
     )
 
     step_by_step_parts = [
         f"<blockquote expandable>"
-        f"<b>🔢 STEP-BY-STEP DERIVATION</b>\n"
+        f"<b>🔢 STEP-BY-STEP DERIVATION:</b>\n"
         f"{beautify_markdown_math(why)}"
     ]
     if exp.get('analogy'):
@@ -269,8 +275,8 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
 
     options_analysis = q.get('options_analysis', [])
     breakdown_parts = [
-        f"<blockquote expandable>"
-        f"<b>🔍 OPTION BREAKDOWN</b>\n"
+        f"<blockquote expandable>",
+        f"<b>🔍 OPTION BREAKDOWN:</b>\n"
     ]
     for i, o_text in enumerate(q['options']):
         let = chr(65 + i)
@@ -286,6 +292,7 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         analysis_line = f"{status_icon} <b>Option {let} ({beautify_markdown_math(o_text)}):</b> {beautify_markdown_math(why_text)}"
         if example_text:
             analysis_line += f"\n  {beautify_markdown_math(example_text)}"
+        breakdown_parts.append(analysis_line)
     breakdown_parts.append("</blockquote>")
     breakdown_block = "\n".join(breakdown_parts)
 
