@@ -45,6 +45,7 @@ from src.database import (
     db_join_organization,
     db_get_organization_roster,
     db_update_user_location,
+    db_set_user_referrer,
     db_join_organization,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
@@ -64,6 +65,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Register your academic profile / level"),
     BotCommand("profile", "Open scoreboard visibility, nickname & school alliance dashboard"),
     BotCommand("leaderboard", "View individual rank standings or school rankings"),
+    BotCommand("invite", "Get your referral link & earn bonus marks"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -545,6 +547,13 @@ async def start_command(update: Update, context):
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=diagnostic_html, reply_markup=channel_kb)
             return
 
+    if args and args[0].startswith("ref_"):
+            referrer_id = args[0][4:].strip()
+            if referrer_id.isdigit():
+                linked = await asyncio.to_thread(db_set_user_referrer, user_id, referrer_id)
+                if linked:
+                    print(f"[REFERRAL] User {user_id} linked to referrer {referrer_id}.", flush=True)
+
     # Check and render fallback grade profile if mapped
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
     if profile and profile.get("grade"):
@@ -749,6 +758,30 @@ async def leaderboard_command(update: Update, context):
 
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
 
+async def invite_command(update: Update, context):
+    """Generates the student's personal referral deep-link (small answering-based bonus, not a recruitment payout)."""
+    user = update.effective_user
+    user_id = user.id
+
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+
+    bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
+    invite_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+
+    await send_rich_message_safe(
+        context.bot,
+        chat_id=update.message.chat_id,
+        html_content=(
+            "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
+            "Share your personal link below. When a friend joins through it and answers "
+            "correctly, you get <b>+1 Mark</b> per correct answer they submit — and if they "
+            "later invite someone too, you still get <b>+1 Mark</b> from that second-level "
+            "friend's correct answers.\n\n"
+            "There's no bonus just for recruiting — the marks only come from real answering, "
+            "so most of your score always comes from your own practice.\n\n"
+            f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>"
+        )
+    )
 
 # --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
 
@@ -1051,6 +1084,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
+    app.add_handler(CommandHandler("invite", invite_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
     # Priority FSM handler filtering text messages during active state dialog sessions

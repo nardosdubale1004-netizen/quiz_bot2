@@ -21,8 +21,14 @@ from src.database import (
     db_join_organization,
     db_create_organization,
     db_get_organization_roster,
+    db_get_user_organizations,
     db_dissolve_organization,
     db_set_user_nickname,
+)
+from src.rendering.html_views import (
+    build_profile_card_text,
+    build_alliance_info_text,
+    build_organization_card_text, 
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -132,7 +138,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "alliance_portal":
         await query.answer()
         orgs = await asyncio.to_thread(db_get_user_organizations, user_id)
-        
+
         if orgs:
             text = (
                 "🏰 <b>YOUR REGISTERED TEAMS</b>\n"
@@ -143,14 +149,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             buttons = []
             for org in orgs:
                 buttons.append([InlineKeyboardButton(f"🏫 {org['org_name']} (#{org['org_tag']})", callback_data=f"view_org|{org['org_id']}")])
-                
             buttons.append([
                 InlineKeyboardButton("✨ ESTABLISH TEAM", callback_data="fsm_create_org|0"),
                 InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
             ])
             buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
             buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         else:
             text = (
                 "🏰 <b>ALLIANCE CLAN PORTAL</b>\n"
@@ -158,13 +162,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 "You are not registered in any Study Alliance. School alliances merge and rank scores collectively!\n\n"
                 "Choose an action below to establish or integrate with a group:"
             )
-            kb = InlineKeyboardMarkup([
+            buttons = [
                 [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
                 [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
+                [InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")],
                 [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
-            ])
-            buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
-            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            ]
+
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
     elif action == "alliance_info":
         await query.answer()

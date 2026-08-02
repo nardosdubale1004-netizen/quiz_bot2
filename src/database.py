@@ -1920,3 +1920,38 @@ def db_update_user_location(user_id, city: str, country: str):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_set_user_referrer(user_id, referrer_id):
+    """
+    Links a new user to whoever referred them — one-time only, no self-referral,
+    referrer must already be a registered user. This only sets the link; the
+    actual points come from fn_process_user_score (+1 mark to referrer per
+    correct answer the referred user submits, capped at 2 tiers) — not from
+    the act of recruiting itself, so it can't be gamed like a pyramid scheme.
+    """
+    conn = None
+    try:
+        if str(user_id) == str(referrer_id):
+            return False
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM user_stats WHERE user_id = %s;", (str(referrer_id),))
+            if not cur.fetchone():
+                return False
+
+            cur.execute("""
+                INSERT INTO user_stats (user_id, referred_by, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    referred_by = COALESCE(user_stats.referred_by, EXCLUDED.referred_by)
+                WHERE user_stats.referred_by IS NULL;
+            """, (str(user_id), str(referrer_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set user referrer: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
