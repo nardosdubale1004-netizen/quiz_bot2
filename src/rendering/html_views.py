@@ -208,7 +208,13 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     spoiler_content = f"🎯 <b>CORRECT OPTION: [{correct_letter}]</b>\n\n{general_principle}\n{step_by_step}\n{breakdown_block}"
     spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
-    spoiler_content = replace_code_with_italic(spoiler_content)
+
+    components = [
+        body,
+        opts_block,
+        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content.strip()}</tg-spoiler>",
+        footer
+    ]
 
     if continuation:
         connection_header = f"<b>📖 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
@@ -219,15 +225,15 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content.strip()}</tg-spoiler>",
             footer
         ]
-        return "\n\n".join(components)
 
-    components = [
-        body,
-        opts_block,
-        f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content.strip()}</tg-spoiler>",
-        footer
-    ]
-    return "\n\n".join(components)
+    final_html = "\n\n".join(components)
+
+    problems = check_tag_balance(final_html)
+    if problems:
+        from src.debug_log import dlog
+        dlog(f"[TAG-BALANCE-WARNING] q_id={q.get('id')} display_id={display_id} issues: {problems}")
+
+    return final_html
 
 def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
     if compact is not None:
@@ -698,3 +704,30 @@ def build_champions_podium_html(ind_val: str, sch_val: str, city_val: str, cnt_v
         f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
     )
     return text
+
+def check_tag_balance(html_str: str) -> list:
+    """
+    Scans assembled HTML for unclosed/mismatched tags before it's sent to Telegram.
+    Returns a list of problem descriptions (empty list = balanced). Self-closing
+    tags (<br/>, <hr/>) and void tags (br, hr) are ignored.
+    """
+    stack = []
+    problems = []
+    for m in re.finditer(r'</?([a-zA-Z][\w-]*)[^>]*>', html_str):
+        tag = m.group(1).lower()
+        if tag in ("br", "hr"):
+            continue
+        is_close = m.group(0).startswith("</")
+        is_self_closing = m.group(0).endswith("/>")
+        if is_self_closing:
+            continue
+        if is_close:
+            if stack and stack[-1] == tag:
+                stack.pop()
+            else:
+                problems.append(f"unexpected closing </{tag}> at pos {m.start()}")
+        else:
+            stack.append(tag)
+    if stack:
+        problems.append(f"unclosed tag(s) at end of string: {stack}")
+    return problems
