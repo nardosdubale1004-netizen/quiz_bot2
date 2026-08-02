@@ -138,7 +138,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
             caption_text = "\n\n".join(components)
 
         return caption_text
-
+    banner = f"📚📚📚 <b>{q.get('subject','QUESTION').upper()}</b> 📚📚📚\n"
     body = (
         f"<blockquote>"
         f"<b>PROBLEM PROPOSITION</b><br/>"
@@ -210,6 +210,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     spoiler_content = spoiler_content.replace("<tg-math-block>", "<tg-math>").replace("</tg-math-block>", "</tg-math>")
 
     components = [
+        banner,
         body,
         opts_block,
         f"<hr/>\n🎯 <b>TAP TO REVEAL KEY ANSWER & SOLUTION:</b>\n<tg-spoiler>{spoiler_content.strip()}</tg-spoiler>",
@@ -219,6 +220,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     if continuation:
         connection_header = f"<b>📖 DETAILED EXPLANATION SHEET • REF <code>{display_id}</code></b>\n<hr/>"
         components = [
+            banner,
             connection_header,
             body,
             opts_block,
