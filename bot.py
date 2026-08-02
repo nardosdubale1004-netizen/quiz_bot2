@@ -44,6 +44,8 @@ from src.database import (
     db_create_organization,
     db_join_organization,
     db_get_organization_roster,
+    db_update_user_location,
+    db_join_organization,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text
@@ -554,8 +556,8 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
-        [InlineKeyboardButton("🎒 SET PUBLIC NICKNAME", callback_data="prompt_nickname|0")],
-        [InlineKeyboardButton("🎒 SET ALLIANCE TAG", callback_data="prompt_alliance|0")],
+        [InlineKeyboardButton("📝 SET PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
+        [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -601,26 +603,43 @@ async def profile_command(update: Update, context):
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def school_command(update: Update, context):
+    """Shortcut: /school <TAG> joins (or requests to join) an existing school team by its Team Code."""
     user = update.effective_user
     user_id = user.id
 
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     if not context.args:
-        await update.message.reply_text("⚠️ Please specify your school name. Example: <code>/school ABYSSINIA</code>", parse_mode="HTML")
+        await update.message.reply_text(
+            "⚠️ Please specify a team's Code. Example: <code>/school ABYSSINIA</code>\n\n"
+            "No code yet, or want to create your own team? Type /profile → 🏰 STUDY ALLIANCE TEAMS.",
+            parse_mode="HTML"
+        )
         return
 
-    school_name = "_".join(context.args)
-    saved_tag = await asyncio.to_thread(db_set_user_alliance, user_id, school_name)
+    tag = context.args[0].strip()
+    join_data = await asyncio.to_thread(db_join_organization, user_id, tag)
 
-    if saved_tag:
+    if not join_data:
         await update.message.reply_text(
-            f"✅ <b>Success!</b> You are now registered under the study alliance: <b>#{saved_tag}</b>.\n"
-            f"Your correct answers will now earn points for your school's global leaderboard!",
+            f"⚠️ No team found with the code <code>#{tag.upper()}</code>. Double-check with your school admin, "
+            f"or type /profile → 🏰 STUDY ALLIANCE TEAMS to create your own.",
+            parse_mode="HTML"
+        )
+        return
+
+    if join_data["role_assigned"] == "pending":
+        await update.message.reply_text(
+            f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> (<code>#{tag.upper()}</code>) requires admin "
+            f"approval — you'll be added to the roster once the team creator confirms.",
             parse_mode="HTML"
         )
     else:
-        await update.message.reply_text("⚠️ Invalid tag format. Please use alphanumeric characters only.")
+        await update.message.reply_text(
+            f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b> "
+            f"(<code>#{tag.upper()}</code>). Every correct answer you submit now also scores for your team!",
+            parse_mode="HTML"
+        )
 
 async def name_command(update: Update, context):
     """Sets a custom scoreboard nickname for the player."""
@@ -924,7 +943,44 @@ async def handle_fsm_message(update: Update, context):
                     ]]),
                     parse_mode="HTML"
                 )
+        elif state == "AWAITING_LOCATION_CITY":
+            clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            if not clean_city:
+                await update.message.reply_text("⚠️ Invalid city name. Please try again.")
+                return
 
+            USER_PAYLOADS[user_id]["loc_city"] = clean_city
+            USER_STATES[user_id] = "AWAITING_LOCATION_COUNTRY"
+
+            await update.message.reply_text(
+                f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
+                "✍ <b>PROMPT: YOUR COUNTRY</b>\n"
+                "Please type the country you're studying in:\n"
+                "<i>(Example: Ethiopia)</i>",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+                ]]),
+                parse_mode="HTML"
+            )
+
+        elif state == "AWAITING_LOCATION_COUNTRY":
+            clean_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            if not clean_country:
+                await update.message.reply_text("⚠️ Invalid country name. Please try again.")
+                return
+
+            clean_city = USER_PAYLOADS[user_id].get("loc_city", "")
+            await asyncio.to_thread(db_update_user_location, user_id, clean_city, clean_country)
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
+
+            await update.message.reply_text(
+                f"✅ <b>Location updated!</b>\n📍 {clean_city}, {clean_country}\n\n"
+                f"<i>Note: if you're on a school team, your team's city/country is still what counts toward "
+                f"leaderboards — this only applies while you're solo.</i>",
+                reply_markup=profile_nav_kb,
+                parse_mode="HTML"
+            )
     except Exception as e:
         traceback.print_exc()
         await update.message.reply_text("⚠️ Connection Error: Failed to commit your input payload.")

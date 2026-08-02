@@ -1895,3 +1895,28 @@ def db_get_country_leaderboard():
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_update_user_location(user_id, city: str, country: str):
+    """Sets the student's own personal city/country — used for city/country
+    leaderboards only while the student isn't linked to a team (a team's
+    location takes precedence once they join one)."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, personal_city, personal_country, total, correct, total_marks)
+                VALUES (%s, %s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    personal_city = EXCLUDED.personal_city,
+                    personal_country = EXCLUDED.personal_country;
+            """, (str(user_id), city, country))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update user location: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

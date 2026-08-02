@@ -24,7 +24,7 @@ from src.database import (
     db_dissolve_organization,
     db_set_user_nickname,
 )
-from src.rendering.html_views import build_profile_card_text
+from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
@@ -79,6 +79,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
             [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
             [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
+            [InlineKeyboardButton("📍 UPDATE MY LOCATION", callback_data="set_location_fsm|0")],
             [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
         ]
         buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
@@ -103,6 +104,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
             [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
             [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
+            [InlineKeyboardButton("📍 UPDATE MY LOCATION", callback_data="set_location_fsm|0")],
             [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
         ]
         buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
@@ -146,6 +148,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 InlineKeyboardButton("✨ ESTABLISH TEAM", callback_data="fsm_create_org|0"),
                 InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
             ])
+            buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
             buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         else:
@@ -160,7 +163,35 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")],
                 [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
             ])
+            buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
             await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
+    elif action == "alliance_info":
+        await query.answer()
+        text = build_alliance_info_text()
+        back_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 BACK TO ALLIANCE PORTAL", callback_data="alliance_portal|0")
+        ]])
+        await query.edit_message_text(text, reply_markup=back_kb, parse_mode="HTML")
+        return
+
+    elif action == "set_location_fsm":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_LOCATION_CITY"
+        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+
+        fsm_cancel_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+        ]])
+        await query.edit_message_text(
+            "📍 <b>PROMPT: YOUR CITY</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Only matters if you're not on a school team — it powers the 🌆 City leaderboard for solo scholars.\n\n"
+            "Please type the city you're studying in:\n"
+            "<i>(Example: Addis Ababa)</i>",
+            reply_markup=fsm_cancel_kb,
+            parse_mode="HTML"
+        )
         return
 
     elif action == "view_org":

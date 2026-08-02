@@ -534,10 +534,6 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
 
 
 def build_profile_card_text(profile: dict, roster: list = None) -> str:
-    """
-    Builds a beautifully simple student profile dossier card
-    incorporating Telegram's advanced <blockquote expandable> layout.
-    """
     real_name = format_public_name(profile)
     grade = profile.get("grade") or "Not selected"
     marks = profile.get("total_marks", 0)
@@ -547,20 +543,26 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
     accuracy = int((correct / total) * 100) if total > 0 else 0
     mastery = get_grade_mastery_title(marks)
     next_rank = get_next_rank_info(marks)
-    
-    # Reassuring and precise vocabulary surrounding the Privacy Toggle
+
     if profile.get("public_consent_granted"):
         consent_status = "🟢 PUBLIC ACCESS\n<i>(Your actual Telegram name is displayed publicly on weekly leaderboards)</i>"
     else:
         consent_status = "🕵️ PRIVATE ACCESS\n<i>(Your real name is completely hidden. You appear anonymously as an ID)</i>"
-        
+
     nickname_label = profile.get("nickname") or "<i>None set (using default masked id)</i>"
-    
+
     org_tag = profile.get("org_tag")
     org_name = profile.get("org_name")
     org_role = profile.get("org_role")
 
-    # Simple visual indicator progress bar
+    personal_city = profile.get("personal_city") or "Not set"
+    personal_country = profile.get("personal_country") or "Not set"
+    location_note = (
+        "<i>Used for the 🌆 City and 🌍 Country leaderboards.</i>"
+        if not org_tag else
+        f"<i>Your team's city/country (<b>{org_name}</b>) is what counts toward leaderboards while you're on a team.</i>"
+    )
+
     filled = min(10, max(0, int(accuracy / 10)))
     progress = f"<code>[{'■' * filled}{' ' * (10 - filled)}]</code>"
 
@@ -571,6 +573,9 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
         f"• <b>Custom score Name:</b> {nickname_label}\n"
         f"• <b>Academic Level:</b> <code>Grade {grade}</code>\n"
         f"• <b>Scoreboard Visibility:</b> {consent_status}\n\n"
+        f"📍 <b>YOUR LOCATION:</b>\n"
+        f"• <b>City:</b> {personal_city}  │  <b>Country:</b> {personal_country}\n"
+        f"{location_note}\n\n"
         f"📊 <b>YOUR PRACTICE STATS:</b>\n"
         f"<blockquote expandable>"
         f"🏆 <b>Practice Score:</b> {marks} Marks\n"
@@ -585,14 +590,14 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
         text += (
             f"🏫 <b>YOUR ACTIVE SCHOOL ALLIANCE:</b>\n"
             f"• <b>Institution:</b> {org_name}\n"
-            f"• <b>Domain Code:</b> <code>#{org_tag}</code> (Role: {org_role.capitalize()})\n\n"
+            f"• <b>Domain Code:</b> <code>#{org_tag}</code> (Role: {org_role.capitalize()})\n"
+            f"• <i>Every correct answer you score also adds those same Marks to your team's total — automatic, no extra steps.</i>\n\n"
         )
         if roster:
             total_marks = sum(r.get("total_marks", 0) for r in roster)
             text += f"👥 <b>ALLIANCE MEMBERS ({len(roster)}):</b>\n"
             text += f"<blockquote expandable>\n"
             text += f"🏆 <b>Total Alliance Score:</b> {total_marks} Marks\n\n"
-            
             medals = ["🥇", "🥈", "🥉", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️"]
             for idx, r in enumerate(roster[:10]):
                 user_label = format_public_name(r)
@@ -602,11 +607,37 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
     else:
         text += (
             f"🏫 <b>SCHOOL TEAM ALLIANCE:</b>\n"
-            f"<i>You are not linked to any school or study club team yet. Join or establish one using the buttons below to compare and aggregate scores collectively!</i>\n"
+            f"<i>You're not linked to a team yet. Tap 'Study Alliance Teams' below to create one or join with a "
+            f"Team Code — your future correct answers will start counting toward that team's score automatically.</i>\n"
         )
 
     text += "\n━━━━━━━━━━━━━━━━━━━━━━━"
     return text
+
+
+def build_alliance_info_text() -> str:
+    """Single explainer card: how to reference/join a team, how scoring works, and roles."""
+    return (
+        f"❓ <b>HOW STUDY ALLIANCES WORK</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔑 <b>1. Referencing a Team</b>\n"
+        f"Every team has a short <b>Team Code</b> (e.g. <code>#ABYSSINIA</code>) set by its creator. Get the code "
+        f"from your school admin, then tap <b>🔑 JOIN TEAM</b> and enter it — or use <code>/school CODE</code> directly.\n\n"
+        f"🏆 <b>2. How Scoring Works</b>\n"
+        f"Nothing extra to do — every correct answer you submit automatically adds the same Marks to your "
+        f"team's collective total. Your personal score and your team's score grow from the same answers.\n\n"
+        f"🌆 <b>3. City &amp; Country Standings</b>\n"
+        f"On a team? Your team's registered city/country counts toward the City/Country leaderboards. "
+        f"Solo? Set your own from your Profile (📍 UPDATE MY LOCATION) so your answers still count locally.\n\n"
+        f"👑 <b>4. Roles</b>\n"
+        f"<blockquote>"
+        f"👑 <b>Creator</b> — approves join requests, can dissolve the team\n"
+        f"🛡️ <b>Admin</b> — promoted by the creator, helps manage members\n"
+        f"👤 <b>Member</b> — standard roster spot, scores for the team\n"
+        f"</blockquote>\n"
+        f"🌐 <b>Public teams</b> need creator approval to join. 🔒 <b>Private teams</b> let anyone with the code join instantly.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━"
+    )
 
 
 def build_organization_card_text(org: dict, roster: list) -> str:
