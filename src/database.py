@@ -392,7 +392,7 @@ class QuizEngine:
         finally:
             if conn:
                 self.release_connection(conn)
-                
+
     def get_db_connection(self):
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
@@ -2431,3 +2431,17 @@ async def db_call_guarded(fn, *args, **kwargs):
     except TimeoutError:
         print(f"[DB-OVERLOAD] Call to {fn.__name__} timed out waiting for DB capacity.", flush=True)
         raise
+def db_get_all_admin_ids():
+    """Returns a list of user_ids flagged as admin. Used to notify admins of new feedback."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM user_stats WHERE is_admin = TRUE;")
+            return [r["user_id"] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch admin ids: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

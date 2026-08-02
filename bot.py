@@ -1198,9 +1198,12 @@ async def handle_fsm_message(update: Update, context):
                 profile_nav_kb
             )
             if fid:
-                fb = await asyncio.to_thread(db_get_feedback_by_id, fid)
-                if fb:
-                    await _notify_admins_new_feedback(context, fid, fb)
+                try:
+                    fb = await asyncio.to_thread(db_get_feedback_by_id, fid)
+                    if fb:
+                        await _notify_admins_new_feedback(context, fid, fb)
+                except Exception as notify_err:
+                    print(f"[FEEDBACK-NOTIFY-ERROR] Failed to notify admins for feedback #{fid}: {notify_err}", flush=True)
 
         elif state == "AWAITING_ADMIN_REPLY":
             target_fb_id = session.get("fb_id")
