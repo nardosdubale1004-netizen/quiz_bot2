@@ -33,7 +33,7 @@ from src.database import (
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe
-from src.rendering.html_views import format_public_name, build_champions_podium_html
+from src.rendering.html_views import format_public_name, build_champions_podium_html, build_round_completion_text
 
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
@@ -387,33 +387,11 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 tag_suffix = f" (<b>#{r['alliance_tag']}</b>)" if r.get('alliance_tag') else ""
                 podium_lines.append(f"  {medals[idx]} <b>{formatted_identity}</b>{tag_suffix}")
 
-            podium_block = ("\n🏆 <b>ROUND PODIUM (FASTEST CORRECT):</b>\n" + "\n".join(podium_lines)) if podium_lines else \
-                "\n🏆 <b>ROUND PODIUM:</b>\n  <i>No correct answers recorded this round.</i>"
-
-            # Render dynamic Alliance standings inside an expandable block
-            alliance_podium_lines = []
+            alliance_lines = []
             for idx, (tag, score) in enumerate(sorted_alliances[:3]):
-                alliance_podium_lines.append(f"  {medals[idx]} <code>#{tag}</code> — <b>+{score} collective Marks</b>")
-            
-            alliance_block = ""
-            if alliance_podium_lines:
-                alliance_block = (
-                    f"\n🏫 <b>ALLIANCE TEAM STANDINGS (ROUND GAIN):</b>\n"
-                    f"<blockquote expandable>\n"
-                    f"{chr(10).join(alliance_podium_lines)}\n"
-                    f"</blockquote>"
-                )
+                alliance_lines.append(f"  {medals[idx]} <code>#{tag}</code> — <b>+{score} collective Marks</b>")
 
-            normal_close_text = (
-                f"🏁 <b>ROUND COMPLETED • REF {last_seq}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"👥 <b>Submissions:</b> <code>{total_users} logged</code> │ ✅ <b>Accuracy:</b> <code>{accuracy_pct}% correct</code>\n\n"
-                f"🏆 <b>ROUND PODIUM (FASTEST):</b>\n"
-                f"<blockquote>\n"
-                f"{podium_block}\n"
-                f"</blockquote>\n"
-                f"{alliance_block}"
-            )
+            normal_close_text = build_round_completion_text(last_seq, total_users, accuracy_pct, podium_lines, alliance_lines)
 
             if ann_mid:
                 try:

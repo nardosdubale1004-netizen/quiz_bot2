@@ -683,23 +683,19 @@ def build_comparative_standings_text(top_alliances: list, user_org: dict = None)
 
 def build_champions_podium_html(ind_val: str, sch_val: str, city_val: str, cnt_val: str) -> str:
     """
-    Builds a beautifully styled, mobile-safe vertical grand standings podium 
-    utilizing Telegram's native advanced expandable blockquotes.
+    Grand finale standings card. Distinct crown banner + one expandable
+    blockquote (collapsed by default) so this reads as a single compact
+    card instead of blending into the round-complete/question cards.
     """
     text = (
-        f"🏆 <b>TOURNAMENT SERIES COMPLETED!</b> 🏆\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"All active rounds in this synchronized showdown series have been resolved!\n\n"
-        f"🎖️ <b>GRAND CHAMPIONS LEAGUE STANDINGS:</b>\n"
-        f"<blockquote expandable>\n"
-        f"🥇 <b>INDIVIDUAL CHAMPION (PERSON):</b>\n"
-        f"└─ 👤 <b>{ind_val}</b>\n\n"
-        f"🏫 <b>SCHOOL TEAM CHAMPION (ALLIANCE):</b>\n"
-        f"└─ 🏛️ <code>#{sch_val}</code>\n\n"
-        f"🌆 <b>METROPOLITAN CHAMPION (CITY):</b>\n"
-        f"└─ 📍 <code>{city_val}</code>\n\n"
-        f"🌍 <b>NATIONAL CHAMPION (COUNTRY):</b>\n"
-        f"└─ 🗺️ <code>{cnt_val}</code>\n"
+        f"👑👑👑 <b>TOURNAMENT SERIES COMPLETE</b> 👑👑👑\n\n"
+        f"All rounds in this synchronized showdown have been resolved!\n\n"
+        f"<blockquote expandable>"
+        f"🎖️ <b>GRAND CHAMPIONS LEAGUE</b>\n\n"
+        f"🥇 <b>Individual:</b> {ind_val}\n"
+        f"🏫 <b>School Alliance:</b> #{sch_val}\n"
+        f"🌆 <b>City:</b> {city_val}\n"
+        f"🌍 <b>Country:</b> {cnt_val}"
         f"</blockquote>\n\n"
         f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
     )
@@ -731,3 +727,31 @@ def check_tag_balance(html_str: str) -> list:
     if stack:
         problems.append(f"unclosed tag(s) at end of string: {stack}")
     return problems
+
+def build_round_completion_text(display_id, total_users: int, accuracy_pct: int, podium_lines: list, alliance_lines: list) -> str:
+    """
+    'Round complete' scoreboard card. Checkered-flag banner (unique from the
+    champions/question cards) + one expandable blockquote (collapsed by
+    default) instead of two separate stacked blockquote boxes.
+    """
+    podium_block = "\n".join(podium_lines) if podium_lines else "<i>No correct answers recorded this round.</i>"
+
+    body = (
+        f"🏁🏁🏁 <b>ROUND COMPLETE</b> 🏁🏁🏁\n"
+        f"<b>REF <code>{display_id}</code></b>\n\n"
+        f"👥 <b>{total_users}</b> submissions logged  │  🎯 <b>{accuracy_pct}%</b> accuracy\n"
+    )
+
+    stats_block = (
+        f"<blockquote expandable>"
+        f"🏆 <b>ROUND PODIUM (FASTEST CORRECT)</b>\n\n"
+        f"{podium_block}"
+    )
+    if alliance_lines:
+        stats_block += (
+            f"\n\n🏫 <b>ALLIANCE GAINS THIS ROUND</b>\n\n"
+            f"{chr(10).join(alliance_lines)}"
+        )
+    stats_block += "</blockquote>"
+
+    return f"{body}\n{stats_block}"
