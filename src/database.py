@@ -14,7 +14,10 @@ import traceback
 from src.config import CONFIG, Style
 from src.perf import timed_sync
 from src.cache import track_question_cache
-
+import asyncio as _asyncio
+from src.cache import TTLCache
+user_profile_cache = TTLCache(default_ttl=8.0)
+DB_SEMAPHORE = _asyncio.Semaphore(int(os.getenv("DB_MAX_INFLIGHT", "80")))
 _FN_PROCESS_USER_SCORE_SQL = """
 CREATE OR REPLACE FUNCTION fn_process_user_score(
     p_user_id text,
@@ -1165,6 +1168,7 @@ def db_set_user_grade(user_id, grade: int):
                 VALUES (%s, %s, 0, 0, 0)
                 ON CONFLICT (user_id) DO UPDATE SET grade = EXCLUDED.grade;
             """, (str(user_id), int(grade)))
+            user_profile_cache.invalidate(f"profile:{user_id}")
             conn.commit()
     except Exception as e:
         if conn: conn.rollback()
@@ -1174,12 +1178,16 @@ def db_set_user_grade(user_id, grade: int):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_user_profile(user_id):
+    cache_key = f"profile:{user_id}"
+    cached = user_profile_cache.get(cache_key)
+    if cached is not None:
+        return dict(cached)
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT u.*, 
+                SELECT u.*,
                        (SELECT o.org_name FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_name,
                        (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_tag,
                        (SELECT m.org_role FROM org_memberships m WHERE m.user_id = u.user_id LIMIT 1) AS org_role,
@@ -1188,7 +1196,10 @@ def db_get_user_profile(user_id):
                 WHERE u.user_id = %s;
             """, (str(user_id),))
             row = cur.fetchone()
-            return dict(row) if row else None
+            result = dict(row) if row else None
+            if result:
+                user_profile_cache.set(cache_key, result)
+            return result
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch user profile: {e}")
         return None
@@ -1572,6 +1583,7 @@ def db_set_user_nickname(user_id, nickname):
                 ON CONFLICT (user_id) DO UPDATE SET
                     nickname = EXCLUDED.nickname;
             """, (str(user_id), nickname))
+            user_profile_cache.invalidate(f"profile:{user_id}")
             conn.commit()
             print(f"[DEBUG-DB-NICKNAME] User {user_id} configured custom nickname to: '{nickname}'", flush=True)
             return True
@@ -1861,6 +1873,7 @@ def db_update_user_consent_state(user_id, consent: bool) -> bool:
                 ON CONFLICT (user_id) DO UPDATE SET
                     public_consent_granted = EXCLUDED.public_consent_granted;
             """, (str(user_id), bool(consent)))
+            user_profile_cache.invalidate(f"profile:{user_id}")
             conn.commit()
             return True
     except Exception as e:
@@ -2008,6 +2021,7 @@ def db_update_user_location(user_id, city: str, country: str):
                     personal_city = EXCLUDED.personal_city,
                     personal_country = EXCLUDED.personal_country;
             """, (str(user_id), city, country))
+            user_profile_cache.invalidate(f"profile:{user_id}")
             conn.commit()
             return True
     except Exception as e:
@@ -2365,3 +2379,16 @@ def db_is_admin(user_id) -> bool:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+
+async def db_call_guarded(fn, *args, **kwargs):
+    """Runs a sync DB function in a thread, but bounded by DB_SEMAPHORE so a traffic
+    spike queues politely instead of exhausting the connection pool and hanging every
+    request indefinitely. Raises TimeoutError if the queue itself is too backed up."""
+    try:
+        async with _asyncio.timeout(8.0):
+            async with DB_SEMAPHORE:
+                return await _asyncio.to_thread(fn, *args, **kwargs)
+    except TimeoutError:
+        print(f"[DB-OVERLOAD] Call to {fn.__name__} timed out waiting for DB capacity.", flush=True)
+        raise

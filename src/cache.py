@@ -49,4 +49,4 @@ class TTLCache:
 
 # Process-wide cache instance for track/question lookups.
 # Corrected: Set default_ttl=5.0 instead of None so stale cache records automatically expire and refresh.
-track_question_cache = TTLCache(default_ttl=5.0)
+track_question_cache = TTLCache(default_ttl=20.0)

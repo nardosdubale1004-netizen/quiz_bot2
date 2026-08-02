@@ -55,6 +55,7 @@ from src.database import (
     db_save_feedback_reply,
     db_get_feedback_stats,
     db_join_organization_by_token,
+    db_call_guarded
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text
@@ -111,7 +112,10 @@ async def handle_http_request(reader, writer, app):
             update_dict = json.loads(body)
             update = Update.de_json(update_dict, app.bot)
 
-            await app.process_update(update)
+            # Fire-and-forget: don't block the HTTP response on full update processing.
+            # This lets the server accept the next incoming webhook immediately instead
+            # of serializing all traffic through one connection's processing time.
+            asyncio.create_task(_process_update_safe(app, update))
 
             response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             writer.write(response.encode("utf-8"))
@@ -135,6 +139,14 @@ async def handle_http_request(reader, writer, app):
             await writer.wait_closed()
         except Exception:
             pass
+
+async def _process_update_safe(app, update):
+    """Wraps app.process_update so a crash in one update's processing never
+    surfaces as an unhandled task exception or takes down the event loop."""
+    try:
+        await app.process_update(update)
+    except Exception as e:
+        print(f"[BACKGROUND UPDATE EXCEPTION]: {e}", file=sys.stderr, flush=True)
 
 async def check_and_publish_scheduled(app):
     while True:
@@ -320,7 +332,11 @@ async def start_command(update: Update, context):
                 is_correct = (user_selection == question_data['correct_option'])
 
                 print(f"[TRACE-STEP 5] Calling process_user_score in database module...", flush=True)
-                perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+                try:
+                    perf_card = await db_call_guarded(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+                except TimeoutError:
+                    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ We're experiencing very high traffic right now. Please tap your answer again in a few seconds.", reply_markup=channel_kb)
+                    return
                 if perf_card is None:
                     print(f"{Style.RED}[TRACE-FAILURE] process_user_score returned None! Database transaction failed.{Style.RESET}", flush=True)
                     
@@ -471,7 +487,11 @@ async def start_command(update: Update, context):
 
             print(f"[TRACE-STEP 4] Standard active path. Calculating first-time response...", flush=True)
             is_correct = (user_selection == question_data['correct_option'])
-            perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+            try:
+                perf_card = await db_call_guarded(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+            except TimeoutError:
+                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ We're experiencing very high traffic right now. Please tap your answer again in a few seconds.", reply_markup=channel_kb)
+                return
             if perf_card is None:
                 print(f"{Style.RED}[TRACE-FAILURE] process_user_score returned None! Database transaction failed.{Style.RESET}", flush=True)
                 await send_rich_message_safe(
@@ -1299,6 +1319,8 @@ def main():
         PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
 
         loop = asyncio.new_event_loop()
+        from concurrent.futures import ThreadPoolExecutor
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=100))
         asyncio.set_event_loop(loop)
         src.config.ACTIVE_LOOP = loop
 
@@ -1326,7 +1348,7 @@ def main():
                     pass
         except Exception as e:
             print(f"{Style.YELLOW}[WARNING] Failed to register admin-only commands: {e}{Style.RESET}", flush=True)
-            
+
         try:
             loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
         except KeyboardInterrupt:
@@ -1344,6 +1366,8 @@ def main():
             print(f"{Style.YELLOW}⚠️  [COLLISION-PREVENTION] Local background loops (scheduler + tournament watcher) are BYPASSED in interactive TTY mode.{Style.RESET}", flush=True)
             
             loop = asyncio.new_event_loop()
+            from concurrent.futures import ThreadPoolExecutor
+            loop.set_default_executor(ThreadPoolExecutor(max_workers=100))
             asyncio.set_event_loop(loop)
             src.config.ACTIVE_LOOP = loop
 
@@ -1383,6 +1407,8 @@ def main():
                 print(f"System successfully shut down.", flush=True)
         else:
             loop = asyncio.new_event_loop()
+            from concurrent.futures import ThreadPoolExecutor
+            loop.set_default_executor(ThreadPoolExecutor(max_workers=100))
             asyncio.set_event_loop(loop)
             src.config.ACTIVE_LOOP = loop
 

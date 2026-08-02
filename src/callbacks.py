@@ -29,7 +29,8 @@ from src.database import (
     db_update_feedback_status,
     db_get_feedback_list,
     db_get_admin_dashboard_stats,
-    db_get_recent_users
+    db_get_recent_users,
+    db_call_guarded
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -631,14 +632,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             is_correct = (user_selection == question_data['correct_option'])
             
             try:
-                perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
-            except Exception as db_err:
-                try:
-                    from src.debug_log import dlog_exception
-                    dlog_exception(f"callbacks.py -> handle_callback (Standard process_user_score failed for User: {user_id}, Message ID: {mid_key})", db_err)
-                except Exception:
-                    pass
-                raise db_err
+                perf_card = await db_call_guarded(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
+            except TimeoutError:
+                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ We're experiencing very high traffic right now. Please tap your answer again in a few seconds.", reply_markup=channel_kb)
+                return
 
             # Direct to-Telegram inline derivation rendering
             explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=perf_card)

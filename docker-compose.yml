@@ -17,6 +17,14 @@ services:
     tty: true
     environment:
       - KROKI_URL=http://kroki:8000
+      - DB_POOL_PREWARM=15
+      - DB_POOL_MAX=60
+      - DB_MAX_INFLIGHT=80
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
     env_file:
       - .env
     volumes:
