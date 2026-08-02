@@ -897,7 +897,7 @@ def build_user_directory_text(users: list) -> str:
         "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
         + "".join(rows) + "</table>"
     )
-    
+
 def build_feedback_item_text(fb: dict) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
     name = format_public_name(fb)
@@ -910,4 +910,54 @@ def build_feedback_item_text(fb: dict) -> str:
         f"📌 Status: <b>{status_label}</b>\n\n"
         f"<blockquote>{html.escape(fb['message'])}</blockquote>"
         f"{reply_block}"
+    )
+
+_STATUS_PIPELINE = ["open", "in_progress", "planned", "resolved"]
+_STATUS_PIPELINE_ICONS = {"open": "🆕", "in_progress": "🔧", "planned": "🗓️", "resolved": "✅"}
+
+def _status_progress_line(status: str) -> str:
+    """Linear step-tracker so a user can see exactly where their request sits."""
+    if status == "wontfix":
+        return "🚫 <b>Not Planned</b> — reviewed, but won't be implemented."
+
+    steps, reached = [], False
+    for key in _STATUS_PIPELINE:
+        icon = _STATUS_PIPELINE_ICONS[key]
+        label = FEEDBACK_STATUS_LABELS.get(key, key).split(" ", 1)[-1]
+        if key == status:
+            steps.append(f"<b>[{icon} {label}]</b>")
+            reached = True
+        elif not reached:
+            steps.append(f"{icon} {label}")
+        else:
+            steps.append(f"<i>{icon} {label}</i>")
+    return " → ".join(steps)
+
+
+def build_user_feedback_list_text(items: list, total_count: int) -> str:
+    """Customer-facing tracker: what this user submitted + which stage each is at."""
+    if not items:
+        return (
+            "<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n<hr/>\n"
+            "<i>You haven't submitted anything yet. Use /feedback to report a bug, "
+            "request a feature, or share thoughts — you'll be able to track its "
+            "status right here.</i>"
+        )
+
+    from src.config import FEEDBACK_CATEGORIES
+    blocks = []
+    for fb in items:
+        cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
+        created = fb['created_at'].strftime('%b %d, %Y') if fb.get('created_at') else ""
+        snippet = html.escape(fb['message'][:120] + ("…" if len(fb['message']) > 120 else ""))
+        reply_line = f"\n💬 <i>Reply: {html.escape(fb['admin_reply'][:150])}</i>" if fb.get('admin_reply') else ""
+        blocks.append(
+            f"<b>#{fb['id']}</b> • {cat_label} • <i>{created}</i>\n"
+            f"{snippet}\n{_status_progress_line(fb['status'])}{reply_line}"
+        )
+
+    body = "\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n".join(blocks)
+    return (
+        f"<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n"
+        f"<i>Showing {len(items)} of {total_count} submissions</i>\n<hr/>\n\n{body}"
     )

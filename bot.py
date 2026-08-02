@@ -77,6 +77,7 @@ BOT_COMMANDS = [
     BotCommand("invite", "Get your referral link & earn bonus marks"),
     BotCommand("help", "How the bot works, step by step"),
     BotCommand("feedback", "Report a bug, request a feature, or share feedback"),
+    BotCommand("myfeedback", "Track the status of your feedback & feature requests"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -1263,6 +1264,20 @@ async def whoami_command(update: Update, context):
         parse_mode="HTML"
     )
 
+async def my_feedback_command(update: Update, context):
+    user_id = update.effective_user.id
+    from src.database import db_get_user_feedback_list, db_count_user_feedback
+    from src.rendering.html_views import build_user_feedback_list_text
+    items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, 0)
+    total = await asyncio.to_thread(db_count_user_feedback, user_id)
+    text = build_user_feedback_list_text(items, total)
+
+    buttons = []
+    if total > 5:
+        buttons.append([InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5")])
+    buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_new|0")])
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+
 def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
@@ -1310,7 +1325,9 @@ def main():
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
     app.add_handler(CommandHandler(["admin_dashboard", "admindashboard"], admin_dashboard_command))
     app.add_handler(CommandHandler("claimadmin", claim_admin_command))
+    app.add_handler(CommandHandler("myfeedback", my_feedback_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
+
     
     # Priority FSM handler filtering text messages during active state dialog sessions
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_fsm_message), group=-1)

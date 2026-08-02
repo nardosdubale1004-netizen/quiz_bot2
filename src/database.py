@@ -2216,6 +2216,43 @@ def db_get_feedback_stats():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_user_feedback_list(user_id, limit: int = 5, offset: int = 0):
+    """Returns this user's own submitted feedback/feature requests, newest first —
+    powers the customer-facing /myfeedback tracker."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM feedback
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s;
+            """, (str(user_id), limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user feedback list: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_count_user_feedback(user_id) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM feedback WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count user feedback: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 def db_get_admin_dashboard_stats():
     """Aggregates admin-facing platform stats. Each section is isolated so a single
     failing query (e.g. a missing column after a partial migration) doesn't blank
