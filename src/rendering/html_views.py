@@ -936,12 +936,14 @@ def build_tournament_leaderboard_text(rows: list, current_round: int = None, tot
 _STATUS_PIPELINE = ["open", "in_progress", "planned", "resolved"]
 _STATUS_PIPELINE_ICONS = {"open": "🆕", "in_progress": "🔧", "planned": "🗓️", "resolved": "✅"}
 
+
 def _status_progress_line(status: str) -> str:
     """Linear step-tracker so a user can see exactly where their request sits."""
     if status == "wontfix":
         return "🚫 <b>Not Planned</b> — reviewed, but won't be implemented."
 
-    steps, reached = [], False
+    steps = []
+    reached = False
     for key in _STATUS_PIPELINE:
         icon = _STATUS_PIPELINE_ICONS[key]
         label = FEEDBACK_STATUS_LABELS.get(key, key).split(" ", 1)[-1]
@@ -960,9 +962,9 @@ def build_user_feedback_list_text(items: list, total_count: int) -> str:
     if not items:
         return (
             "<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n<hr/>\n"
-            "<i>You haven't submitted anything yet. Use /feedback to report a bug, "
-            "request a feature, or share thoughts — you'll be able to track its "
-            "status right here.</i>"
+            "<i>You haven't submitted anything yet. Tap ✍️ SUBMIT NEW FEEDBACK below to "
+            "report a bug, request a feature, or share thoughts — you'll be able to "
+            "track its status right here.</i>"
         )
 
     from src.config import FEEDBACK_CATEGORIES
@@ -971,7 +973,9 @@ def build_user_feedback_list_text(items: list, total_count: int) -> str:
         cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
         created = fb['created_at'].strftime('%b %d, %Y') if fb.get('created_at') else ""
         snippet = html.escape(fb['message'][:120] + ("…" if len(fb['message']) > 120 else ""))
-        reply_line = f"\n💬 <i>Reply: {html.escape(fb['admin_reply'][:150])}</i>" if fb.get('admin_reply') else ""
+        reply_line = ""
+        if fb.get('admin_reply'):
+            reply_line = f"\n💬 <i>Reply: {html.escape(fb['admin_reply'][:150])}</i>"
         blocks.append(
             f"<b>#{fb['id']}</b> • {cat_label} • <i>{created}</i>\n"
             f"{snippet}\n{_status_progress_line(fb['status'])}{reply_line}"
@@ -981,4 +985,79 @@ def build_user_feedback_list_text(items: list, total_count: int) -> str:
     return (
         f"<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n"
         f"<i>Showing {len(items)} of {total_count} submissions</i>\n<hr/>\n\n{body}"
+    )
 
+
+def build_feedback_menu_text() -> str:
+    """The unified /feedback entry card — category buttons plus the tracker option live here."""
+    return (
+        "<h2>💬 FEEDBACK &amp; FEATURE REQUESTS</h2>\n<hr/>\n"
+        "What's this about? Pick a category to submit something new, or check the "
+        "status of what you've already sent."
+    )
+
+
+def build_admin_dashboard_text(stats: dict) -> str:
+    """Rich-text admin dashboard overview — sent via send_rich_message_safe so <table> renders
+    as Telegram's native rich table, not the legacy bullet-list fallback."""
+    if not stats:
+        return "<h2>⚠️ ADMIN DASHBOARD</h2>\n<hr/>\nFailed to load stats — check the database connection."
+
+    country_rows = "".join(
+        f"<tr><td>{html.escape(str(r['country']))}</td><td>{r['cnt']}</td></tr>"
+        for r in stats["by_country"]
+    ) or "<tr><td colspan='2'><i>No location data yet.</i></td></tr>"
+
+    subject_rows = "".join(
+        f"<tr><td>{html.escape(str(r['subject']))}</td><td>{r['cnt']}</td></tr>"
+        for r in stats["by_subject"]
+    ) or "<tr><td colspan='2'><i>No questions imported yet.</i></td></tr>"
+
+    return (
+        "<h2>📊 ADMIN DASHBOARD</h2>\n<hr/>\n"
+        f"<b>👥 Total Registered Students:</b> {stats['total_users']}\n"
+        f"<b>🏫 Total School Teams:</b> {stats['total_orgs']}\n"
+        f"<b>📝 Total Question Bank Size:</b> {stats['total_questions']}\n"
+        f"<b>✅ Total Answers Submitted:</b> {stats['total_responses']}\n\n"
+        "<h3>🌍 Students by Country</h3>\n"
+        f"<table><tr><td><b>Country</b></td><td><b>Students</b></td></tr>{country_rows}</table>\n\n"
+        "<h3>📚 Questions by Subject</h3>\n"
+        f"<table><tr><td><b>Subject</b></td><td><b>Count</b></td></tr>{subject_rows}</table>"
+    )
+
+
+def build_user_directory_text(users: list) -> str:
+    """Rich-text paginated user list for the admin dashboard."""
+    if not users:
+        return "<h2>👥 USER DIRECTORY</h2>\n<hr/>\n<i>No users found.</i>"
+
+    rows = []
+    for u in users:
+        name = format_public_name(u)
+        rows.append(
+            f"<tr><td>{html.escape(name)}</td><td>Gr.{u.get('grade') or '-'}</td>"
+            f"<td>{u.get('total_marks', 0)}</td><td>{html.escape(str(u.get('country', '-')))}</td></tr>"
+        )
+
+    return (
+        "<h2>👥 USER DIRECTORY (Most Recently Active)</h2>\n<hr/>\n"
+        "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
+        + "".join(rows) + "</table>"
+    )
+
+
+def build_feedback_item_text(fb: dict) -> str:
+    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
+    name = format_public_name(fb)
+    cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
+    status_label = FEEDBACK_STATUS_LABELS.get(fb['status'], fb['status'])
+    reply_block = ""
+    if fb.get('admin_reply'):
+        reply_block = f"\n\n<b>💬 Your reply:</b>\n<blockquote>{html.escape(fb['admin_reply'])}</blockquote>"
+    return (
+        f"<b>#{fb['id']} • {cat_label}</b>\n"
+        f"👤 {name} (<code>{fb['user_id']}</code>)\n"
+        f"📌 Status: <b>{status_label}</b>\n\n"
+        f"<blockquote>{html.escape(fb['message'])}</blockquote>"
+        f"{reply_block}"
+    )

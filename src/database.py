@@ -397,363 +397,363 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
-        def get_db_connection(self):
-            if not self.db_url:
-                raise ConnectionError("DATABASE_URL environment variable is missing.")
+    def get_db_connection(self):
+        if not self.db_url:
+            raise ConnectionError("DATABASE_URL environment variable is missing.")
 
-            if QuizEngine._pool:
-                for _ in range(3):
-                    try:
-                        conn = QuizEngine._pool.getconn()
-                        # FORCE AUTOCOMMIT TO PREVENT STALE TRANSACTION LOCKS & LEAKS ACROSS DUAL PROCESSES
-                        conn.autocommit = True
-                        conn.cursor_factory = RealDictCursor
+        if QuizEngine._pool:
+            for _ in range(3):
+                try:
+                    conn = QuizEngine._pool.getconn()
+                    # FORCE AUTOCOMMIT TO PREVENT STALE TRANSACTION LOCKS & LEAKS ACROSS DUAL PROCESSES
+                    conn.autocommit = True
+                    conn.cursor_factory = RealDictCursor
 
-                        if conn.closed == 0:
-                            return conn
-                        else:
-                            try:
-                                QuizEngine._pool.putconn(conn, close=True)
-                            except Exception:
-                                pass
-                    except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-                        print(f"{Style.YELLOW}[DATABASE] Discarding stale connection from pool: {e}{Style.RESET}")
+                    if conn.closed == 0:
+                        return conn
+                    else:
                         try:
                             QuizEngine._pool.putconn(conn, close=True)
                         except Exception:
                             pass
-                    except Exception as e:
-                        print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool checkout failed: {e}{Style.RESET}")
-                        break
-
-            conn = psycopg2.connect(
-                self.db_url,
-                cursor_factory=RealDictCursor,
-                connect_timeout=5
-            )
-            conn.autocommit = True
-            return conn
-
-        def release_connection(self, conn):
-            if not conn:
-                return
-            if QuizEngine._pool:
-                try:
+                except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                    print(f"{Style.YELLOW}[DATABASE] Discarding stale connection from pool: {e}{Style.RESET}")
                     try:
-                        conn.rollback()
+                        QuizEngine._pool.putconn(conn, close=True)
                     except Exception:
                         pass
+                except Exception as e:
+                    print(f"{Style.YELLOW}[DATABASE WARNING] Connection pool checkout failed: {e}{Style.RESET}")
+                    break
 
-                    if conn.closed != 0:
-                        QuizEngine._pool.putconn(conn, close=True)
-                    else:
-                        QuizEngine._pool.putconn(conn)
-                    return
+        conn = psycopg2.connect(
+            self.db_url,
+            cursor_factory=RealDictCursor,
+            connect_timeout=5
+        )
+        conn.autocommit = True
+        return conn
+
+    def release_connection(self, conn):
+        if not conn:
+            return
+        if QuizEngine._pool:
+            try:
+                try:
+                    conn.rollback()
                 except Exception:
                     pass
-            try:
-                conn.close()
+
+                if conn.closed != 0:
+                    QuizEngine._pool.putconn(conn, close=True)
+                else:
+                    QuizEngine._pool.putconn(conn)
+                return
             except Exception:
                 pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
-        def db_get_current_epoch(self) -> float:
-            conn = None
-            try:
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    cur.execute("SELECT EXTRACT(EPOCH FROM NOW()) AS now_epoch;")
-                    row = cur.fetchone()
-                    return float(row['now_epoch']) if row else time.time()
-            except Exception:
-                return time.time()
-            finally:
-                if conn:
-                    self.release_connection(conn)
+    def db_get_current_epoch(self) -> float:
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT EXTRACT(EPOCH FROM NOW()) AS now_epoch;")
+                row = cur.fetchone()
+                return float(row['now_epoch']) if row else time.time()
+        except Exception:
+            return time.time()
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
-        def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None, round_seconds=None):
-            QuizEngine._tracks_cache_time = 0
-            conn = None
-            try:
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    if round_seconds is not None:
-                        cur.execute("""
-                            INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW() + (%s || ' second')::interval)
-                            ON CONFLICT (message_id) DO UPDATE SET
-                                status = EXCLUDED.status,
-                                followup_mid = EXCLUDED.followup_mid,
-                                round_deadline = EXCLUDED.round_deadline;
-                        """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, int(round_seconds)))
-                    else:
-                        cur.execute("""
-                            INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (message_id) DO UPDATE SET
-                                status = EXCLUDED.status,
-                                followup_mid = EXCLUDED.followup_mid,
-                                round_deadline = EXCLUDED.round_deadline;
-                        """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, round_deadline))
-                    conn.commit()
-                track_question_cache.invalidate(f"trackq:{display_id}")
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"{Style.RED}[DB ERROR] Failed to save track: {e}{Style.RESET}")
-            finally:
-                if conn:
-                    self.release_connection(conn)
+    @timed_sync(lambda self, message_id, *a, **kw: f"db_save_track(msg={message_id})")
+    def db_save_track(self, message_id, q_id, status, display_id, type_, msg_type, followup_mid=None, round_deadline=None, round_seconds=None):
+        QuizEngine._tracks_cache_time = 0
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                if round_seconds is not None:
+                    cur.execute("""
+                        INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW() + (%s || ' second')::interval)
+                        ON CONFLICT (message_id) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            followup_mid = EXCLUDED.followup_mid,
+                            round_deadline = EXCLUDED.round_deadline;
+                    """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, int(round_seconds)))
+                else:
+                    cur.execute("""
+                        INSERT INTO sent_tracks (message_id, q_id, status, display_id, type, msg_type, followup_mid, round_deadline)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (message_id) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            followup_mid = EXCLUDED.followup_mid,
+                            round_deadline = EXCLUDED.round_deadline;
+                    """, (str(message_id), q_id, status, int(display_id), type_, msg_type, followup_mid, round_deadline))
+                conn.commit()
+            track_question_cache.invalidate(f"trackq:{display_id}")
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"{Style.RED}[DB ERROR] Failed to save track: {e}{Style.RESET}")
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        @timed_sync(lambda self, message_id, followup_mid, msg_type: f"db_update_track_followup_and_type")
-        def db_update_track_followup_and_type(self, message_id, followup_mid, msg_type):
-            conn = None
-            try:
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE sent_tracks SET followup_mid = %s, msg_type = %s WHERE message_id = %s;",
-                        (followup_mid, msg_type, str(message_id))
-                    )
-                    conn.commit()
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"[DB ERROR] Failed to update track metadata: {e}")
-            finally:
-                if conn:
-                    self.release_connection(conn)
+    @timed_sync(lambda self, message_id, followup_mid, msg_type: f"db_update_track_followup_and_type")
+    def db_update_track_followup_and_type(self, message_id, followup_mid, msg_type):
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE sent_tracks SET followup_mid = %s, msg_type = %s WHERE message_id = %s;",
+                    (followup_mid, msg_type, str(message_id))
+                )
+                conn.commit()
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"[DB ERROR] Failed to update track metadata: {e}")
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        @timed_sync(lambda self, message_id: f"db_delete_track")
-        def db_delete_track(self, message_id):
-            conn = None
-            try:
-                conn = GLOBAL_ENGINE.get_db_connection()
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
-                    conn.commit()
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"[DB ERROR] Failed to delete track: {e}")
-            finally:
-                if conn:
-                    self.release_connection(conn)
+    @timed_sync(lambda self, message_id: f"db_delete_track")
+    def db_delete_track(self, message_id):
+        conn = None
+        try:
+            conn = GLOBAL_ENGINE.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM sent_tracks WHERE message_id = %s;", (str(message_id),))
+                conn.commit()
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"[DB ERROR] Failed to delete track: {e}")
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        @timed_sync(lambda self: "db_get_all_tracks")
-        def db_get_all_tracks(self):
-            now = time.time()
-            if QuizEngine._tracks_cache and (now - QuizEngine._tracks_cache_time < 5):
+    @timed_sync(lambda self: "db_get_all_tracks")
+    def db_get_all_tracks(self):
+        now = time.time()
+        if QuizEngine._tracks_cache and (now - QuizEngine._tracks_cache_time < 5):
+            return QuizEngine._tracks_cache
+
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM sent_tracks;")
+                rows = cur.fetchall()
+                QuizEngine._tracks_cache = {r['message_id']: dict(r) for r in rows}
+                QuizEngine._tracks_cache_time = now
                 return QuizEngine._tracks_cache
-
-            conn = None
-            try:
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM sent_tracks;")
-                    rows = cur.fetchall()
-                    QuizEngine._tracks_cache = {r['message_id']: dict(r) for r in rows}
-                    QuizEngine._tracks_cache_time = now
-                    return QuizEngine._tracks_cache
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"{Style.RED}[DB ERROR] Failed to retrieve tracks: {e}{Style.RESET}")
-                return {}
-            finally:
-                if conn:
-                    self.release_connection(conn)
-
-        @timed_sync(lambda self, message_id, status, *a, **kw: f"db_update_track_status(msg={message_id})")
-        def db_update_track_status(self, message_id, status, followup_mid=None, clear_followup=False):
-            QuizEngine._tracks_cache_time = 0
-            conn = None
-            try:
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    if clear_followup:
-                        cur.execute("UPDATE sent_tracks SET status = %s, followup_mid = NULL WHERE message_id = %s;", (status, str(message_id)))
-                    elif followup_mid is not None:
-                        cur.execute("UPDATE sent_tracks SET status = %s, followup_mid = %s WHERE message_id = %s;", (status, followup_mid, str(message_id)))
-                    else:
-                        cur.execute("UPDATE sent_tracks SET status = %s WHERE message_id = %s;", (status, str(message_id)))
-                    conn.commit()
-                track_question_cache.invalidate_prefix("trackq:")
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"{Style.RED}[DB ERROR] Failed to update track status: {e}{Style.RESET}")
-            finally:
-                if conn:
-                    self.release_connection(conn)
-
-        @timed_sync(lambda self, old_mid, new_mid: f"db_swap_track_message_id({old_mid}->{new_mid})")
-        def db_swap_track_message_id(self, old_mid, new_mid):
-            QuizEngine._tracks_cache_time = 0
-            conn = None
-            try:
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    try:
-                        cur.execute("UPDATE user_responses SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
-                        print(f"[DEBUG-DB-SWAP] Shifted answers in user_responses {old_mid} -> {new_mid}. Affected: {cur.rowcount}", flush=True)
-                    except Exception as e:
-                        print(f"[DB SWAP WARNING] user_responses update bypassed: {e}")
-
-                    cur.execute("UPDATE sent_tracks SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
-                    print(f"[DEBUG-DB-SWAP] Shifted tracks in sent_tracks {old_mid} -> {new_mid}. Affected: {cur.rowcount}", flush=True)
-                    conn.commit()
-                track_question_cache.invalidate_prefix("trackq:")
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"[DB ERROR] Failed to swap track message ID: {e}")
-            finally:
-                if conn:
-                    self.release_connection(conn)
-
-        @timed_sync(lambda self, json_data: "db_import_questions")
-        def db_import_questions(self, json_data):
-            conn = None
-            try:
-                questions_list = json_data if isinstance(json_data, list) else [json_data]
-                conn = self.get_db_connection()
-                with conn.cursor() as cur:
-                    imported_count = 0
-
-                    for q in questions_list:
-                        if not q.get("id") or not q.get("subject"):
-                            continue
-
-                        tags = q.get("tags")
-                        if not isinstance(tags, list):
-                            tags = [tags] if tags else []
-
-                        options = q.get("options")
-                        if not isinstance(options, list):
-                            options = [options] if options else []
-
-                        native_options = q.get("native_options")
-                        if native_options is not None and not isinstance(native_options, list):
-                            native_options = [native_options]
-
-                        poll_explanation = Json(q.get("poll_explanation", {}))
-                        options_analysis = Json(q.get("options_analysis", []))
-                        scheduled_for = q.get("scheduled_for")
-                        force_image = q.get("force_image", False)
-                        native_question = q.get("native_question")
-
-                        cur.execute("""
-                            INSERT INTO questions (
-                                id, subject, topic, difficulty, tags, question, latex, options,
-                                correct_option, poll_explanation, options_analysis, scheduled_for, force_image,
-                                native_question, native_options
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (id) DO UPDATE SET
-                                subject = EXCLUDED.subject,
-                                topic = EXCLUDED.topic,
-                                difficulty = EXCLUDED.difficulty,
-                                tags = EXCLUDED.tags,
-                                question = EXCLUDED.question,
-                                latex = EXCLUDED.latex,
-                                options = EXCLUDED.options,
-                                correct_option = EXCLUDED.correct_option,
-                                poll_explanation = EXCLUDED.poll_explanation,
-                                options_analysis = EXCLUDED.options_analysis,
-                                scheduled_for = EXCLUDED.scheduled_for,
-                                force_image = EXCLUDED.force_image,
-                                native_question = EXCLUDED.native_question,
-                                native_options = EXCLUDED.native_options;
-                        """, (
-                            q["id"], q["subject"], q["topic"], q.get("difficulty", "medium"),
-                            tags, q["question"], q.get("latex"), options, int(q["correct_option"]),
-                            poll_explanation, options_analysis, scheduled_for, force_image,
-                            native_question, native_options
-                        ))
-                        imported_count += 1
-
-                    conn.commit()
-                    track_question_cache.invalidate_prefix("trackq:")
-                    return imported_count
-            except Exception as e:
-                if conn: conn.rollback()
-                print(f"{Style.RED}[DB ERROR] Failed to import questions: {e}{Style.RESET}")
-                return 0
-            finally:
-                if conn:
-                    self.release_connection(conn)
-
-
-
-        @staticmethod
-        def load_json(path):
-            try:
-                if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        return json.load(f)
-            except Exception as e:
-                print(f"{Style.RED}JSON Load Error ({path}): {e}{Style.RESET}")
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"{Style.RED}[DB ERROR] Failed to retrieve tracks: {e}{Style.RESET}")
             return {}
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        @staticmethod
-        def save_json(path, data):
-            try:
-                os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-            except Exception as e:
-                print(f"{Style.RED}JSON Save Error ({path}): {e}{Style.RESET}")
+    @timed_sync(lambda self, message_id, status, *a, **kw: f"db_update_track_status(msg={message_id})")
+    def db_update_track_status(self, message_id, status, followup_mid=None, clear_followup=False):
+        QuizEngine._tracks_cache_time = 0
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                if clear_followup:
+                    cur.execute("UPDATE sent_tracks SET status = %s, followup_mid = NULL WHERE message_id = %s;", (status, str(message_id)))
+                elif followup_mid is not None:
+                    cur.execute("UPDATE sent_tracks SET status = %s, followup_mid = %s WHERE message_id = %s;", (status, followup_mid, str(message_id)))
+                else:
+                    cur.execute("UPDATE sent_tracks SET status = %s WHERE message_id = %s;", (status, str(message_id)))
+                conn.commit()
+            track_question_cache.invalidate_prefix("trackq:")
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"{Style.RED}[DB ERROR] Failed to update track status: {e}{Style.RESET}")
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        def refresh_database(self, force=False):
-            now = time.time()
-            if self.db and not force and (now - self.last_refresh < self.refresh_interval):
-                return self.db
-
-            self.db = {}
-            self.last_refresh = now
-
-            if self.db_url:
-                conn = None
+    @timed_sync(lambda self, old_mid, new_mid: f"db_swap_track_message_id({old_mid}->{new_mid})")
+    def db_swap_track_message_id(self, old_mid, new_mid):
+        QuizEngine._tracks_cache_time = 0
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
                 try:
-                    conn = self.get_db_connection()
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT * FROM questions;")
-                        rows = cur.fetchall()
-
-                        for row in rows:
-                            q = dict(row)
-                            for field in ["poll_explanation", "options_analysis"]:
-                                if field in q and isinstance(q[field], str):
-                                    try:
-                                        q[field] = json.loads(q[field])
-                                    except Exception:
-                                        pass
-
-                            subject = q.get("subject", "General").lower()
-                            if subject not in self.db:
-                                self.db[subject] = []
-                            self.db[subject].append(q)
-                        return self.db
+                    cur.execute("UPDATE user_responses SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                    print(f"[DEBUG-DB-SWAP] Shifted answers in user_responses {old_mid} -> {new_mid}. Affected: {cur.rowcount}", flush=True)
                 except Exception as e:
-                    print(f"{Style.YELLOW}[DB WARNING] Cloud loading failed, falling back to local files: {e}{Style.RESET}")
-                finally:
-                    if conn:
-                        self.release_connection(conn)
+                    print(f"[DB SWAP WARNING] user_responses update bypassed: {e}")
 
-            return self.refresh_database_local()
+                cur.execute("UPDATE sent_tracks SET message_id = %s WHERE message_id = %s;", (str(new_mid), str(old_mid)))
+                print(f"[DEBUG-DB-SWAP] Shifted tracks in sent_tracks {old_mid} -> {new_mid}. Affected: {cur.rowcount}", flush=True)
+                conn.commit()
+            track_question_cache.invalidate_prefix("trackq:")
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"[DB ERROR] Failed to swap track message ID: {e}")
+        finally:
+            if conn:
+                self.release_connection(conn)
 
-        def refresh_database_local(self):
-            self.db = {}
-            questions_dir = Path("questions")
-            if not questions_dir.exists():
-                questions_dir.mkdir(exist_ok=True)
+    @timed_sync(lambda self, json_data: "db_import_questions")
+    def db_import_questions(self, json_data):
+        conn = None
+        try:
+            questions_list = json_data if isinstance(json_data, list) else [json_data]
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                imported_count = 0
 
-            for file_path in questions_dir.rglob("*.json"):
-                data = self.load_json(str(file_path))
-                questions_list = data if isinstance(data, list) else [data]
                 for q in questions_list:
-                    if not q.get("id"):
+                    if not q.get("id") or not q.get("subject"):
                         continue
-                    subject = q.get("subject", "General").lower()
-                    if subject not in self.db:
-                        self.db[subject] = []
-                    self.db[subject].append(q)
+
+                    tags = q.get("tags")
+                    if not isinstance(tags, list):
+                        tags = [tags] if tags else []
+
+                    options = q.get("options")
+                    if not isinstance(options, list):
+                        options = [options] if options else []
+
+                    native_options = q.get("native_options")
+                    if native_options is not None and not isinstance(native_options, list):
+                        native_options = [native_options]
+
+                    poll_explanation = Json(q.get("poll_explanation", {}))
+                    options_analysis = Json(q.get("options_analysis", []))
+                    scheduled_for = q.get("scheduled_for")
+                    force_image = q.get("force_image", False)
+                    native_question = q.get("native_question")
+
+                    cur.execute("""
+                        INSERT INTO questions (
+                            id, subject, topic, difficulty, tags, question, latex, options,
+                            correct_option, poll_explanation, options_analysis, scheduled_for, force_image,
+                            native_question, native_options
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            subject = EXCLUDED.subject,
+                            topic = EXCLUDED.topic,
+                            difficulty = EXCLUDED.difficulty,
+                            tags = EXCLUDED.tags,
+                            question = EXCLUDED.question,
+                            latex = EXCLUDED.latex,
+                            options = EXCLUDED.options,
+                            correct_option = EXCLUDED.correct_option,
+                            poll_explanation = EXCLUDED.poll_explanation,
+                            options_analysis = EXCLUDED.options_analysis,
+                            scheduled_for = EXCLUDED.scheduled_for,
+                            force_image = EXCLUDED.force_image,
+                            native_question = EXCLUDED.native_question,
+                            native_options = EXCLUDED.native_options;
+                    """, (
+                        q["id"], q["subject"], q["topic"], q.get("difficulty", "medium"),
+                        tags, q["question"], q.get("latex"), options, int(q["correct_option"]),
+                        poll_explanation, options_analysis, scheduled_for, force_image,
+                        native_question, native_options
+                    ))
+                    imported_count += 1
+
+                conn.commit()
+                track_question_cache.invalidate_prefix("trackq:")
+                return imported_count
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"{Style.RED}[DB ERROR] Failed to import questions: {e}{Style.RESET}")
+            return 0
+        finally:
+            if conn:
+                self.release_connection(conn)
+
+
+
+    @staticmethod
+    def load_json(path):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"{Style.RED}JSON Load Error ({path}): {e}{Style.RESET}")
+        return {}
+
+    @staticmethod
+    def save_json(path, data):
+        try:
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"{Style.RED}JSON Save Error ({path}): {e}{Style.RESET}")
+
+    def refresh_database(self, force=False):
+        now = time.time()
+        if self.db and not force and (now - self.last_refresh < self.refresh_interval):
             return self.db
+
+        self.db = {}
+        self.last_refresh = now
+
+        if self.db_url:
+            conn = None
+            try:
+                conn = self.get_db_connection()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM questions;")
+                    rows = cur.fetchall()
+
+                    for row in rows:
+                        q = dict(row)
+                        for field in ["poll_explanation", "options_analysis"]:
+                            if field in q and isinstance(q[field], str):
+                                try:
+                                    q[field] = json.loads(q[field])
+                                except Exception:
+                                    pass
+
+                        subject = q.get("subject", "General").lower()
+                        if subject not in self.db:
+                            self.db[subject] = []
+                        self.db[subject].append(q)
+                    return self.db
+            except Exception as e:
+                print(f"{Style.YELLOW}[DB WARNING] Cloud loading failed, falling back to local files: {e}{Style.RESET}")
+            finally:
+                if conn:
+                    self.release_connection(conn)
+
+        return self.refresh_database_local()
+
+    def refresh_database_local(self):
+        self.db = {}
+        questions_dir = Path("questions")
+        if not questions_dir.exists():
+            questions_dir.mkdir(exist_ok=True)
+
+        for file_path in questions_dir.rglob("*.json"):
+            data = self.load_json(str(file_path))
+            questions_list = data if isinstance(data, list) else [data]
+            for q in questions_list:
+                if not q.get("id"):
+                    continue
+                subject = q.get("subject", "General").lower()
+                if subject not in self.db:
+                    self.db[subject] = []
+                self.db[subject].append(q)
+        return self.db
 
 GLOBAL_ENGINE = QuizEngine()
 
@@ -2221,8 +2221,6 @@ def db_get_feedback_stats():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_user_feedback_list(user_id, limit: int = 5, offset: int = 0):
-    """Returns this user's own submitted feedback/feature requests, newest first —
-    powers the customer-facing /myfeedback tracker."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()

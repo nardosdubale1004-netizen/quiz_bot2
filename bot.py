@@ -857,13 +857,19 @@ async def help_command(update: Update, context):
     )
 
 async def feedback_command(update: Update, context):
+    """Unified feedback entry point: category buttons to submit something new,
+    plus a tracker button to see the status of everything already sent — no
+    separate /myfeedback menu, it all lives here."""
+    from src.rendering.html_views import build_feedback_menu_text
     buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
     buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
     await send_rich_message_safe(
         context.bot, chat_id=update.message.chat_id,
-        html_content="<h2>💬 SHARE FEEDBACK</h2>\n<hr/>\nWhat's this about?",
+        html_content=build_feedback_menu_text(),
         reply_markup=InlineKeyboardMarkup(buttons)
     )
+    
 async def claim_admin_command(update: Update, context):
     """Hidden, unlisted command. Grants admin only if the caller supplies the exact bootstrap secret."""
     from src.config import ADMIN_BOOTSTRAP_SECRET
@@ -1264,19 +1270,7 @@ async def whoami_command(update: Update, context):
         parse_mode="HTML"
     )
 
-async def my_feedback_command(update: Update, context):
-    user_id = update.effective_user.id
-    from src.database import db_get_user_feedback_list, db_count_user_feedback
-    from src.rendering.html_views import build_user_feedback_list_text
-    items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, 0)
-    total = await asyncio.to_thread(db_count_user_feedback, user_id)
-    text = build_user_feedback_list_text(items, total)
 
-    buttons = []
-    if total > 5:
-        buttons.append([InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5")])
-    buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_new|0")])
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
 
 def main():
     if not os.path.exists("logs"):
@@ -1325,7 +1319,6 @@ def main():
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
     app.add_handler(CommandHandler(["admin_dashboard", "admindashboard"], admin_dashboard_command))
     app.add_handler(CommandHandler("claimadmin", claim_admin_command))
-    app.add_handler(CommandHandler("myfeedback", my_feedback_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
     

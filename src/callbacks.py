@@ -43,7 +43,8 @@ from src.rendering.html_views import (
     build_feedback_item_text,
     build_admin_dashboard_text, 
     build_user_directory_text,
-    build_user_feedback_list_text
+    build_user_feedback_list_text,
+    build_feedback_menu_text
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -593,11 +594,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    elif action == "fb_new":
+    elif action == "fb_menu":
         await query.answer()
+        from src.rendering.html_views import build_feedback_menu_text
         buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
+        buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
         buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
-        await query.edit_message_text("<h2>💬 SHARE FEEDBACK</h2>\n<hr/>\nWhat's this about?", reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    elif action == "my_feedback":
+        await query.answer()
+        offset = int(d_id)
+        items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, offset)
+        total = await asyncio.to_thread(db_count_user_feedback, user_id)
+        text = build_user_feedback_list_text(items, total)
+
+        nav_row = []
+        if offset > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_feedback|{max(0, offset - 5)}"))
+        if offset + 5 < total:
+            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_feedback|{offset + 5}"))
+        buttons = [nav_row] if nav_row else []
+        buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
+        buttons.append([InlineKeyboardButton("🔙 BACK", callback_data="fb_menu|0")])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
     # --- ORIGINAL CORE ENGINE FLOWS ---
 
