@@ -115,55 +115,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "privacy_menu":
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        org_id = profile.get("org_id")
-        roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
-        from src.database import db_get_user_subject_marks
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
+        text = build_profile_card_text(profile, None, subject_marks)
+        kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        return
 
-        text = build_profile_card_text(profile, roster, subject_marks)
-    
-        consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
-        consent_target = "0" if profile.get("public_consent_granted") else "1"
-
-        buttons = [
-            [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
-            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
-            [InlineKeyboardButton("📍 UPDATE MY LOCATION", callback_data="set_location_fsm|0")],
-            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")],
-            [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0"),
-             InlineKeyboardButton("🗺️ ROADMAP", callback_data="roadmap|0")]
-        ]
-        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
-
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+    elif action == "settings_menu":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        kb = build_profile_settings_keyboard(profile.get("public_consent_granted", False))
+        await query.edit_message_text(
+            "🎛️ <b>SETTINGS</b>\n<hr/>\nUpdate your visibility, nickname, grade, or location.",
+            reply_markup=kb, parse_mode="HTML"
+        )
         return
 
     elif action == "toggle_consent":
         consent_state = (d_id == "1")
         await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
-        await query.answer("Scoreboard visibility status updated!", show_alert=True)
-        # Re-render the menu instantly
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        org_id = profile.get("org_id")
-        roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
-        text = build_profile_card_text(profile, roster, subject_marks)
-    
-        consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
-        consent_target = "0" if profile.get("public_consent_granted") else "1"
-
-        buttons = [
-            [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-            [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
-            [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
-            [InlineKeyboardButton("📍 UPDATE MY LOCATION", callback_data="set_location_fsm|0")],
-            [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")],
-            [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0"),
-             InlineKeyboardButton("🗺️ ROADMAP", callback_data="roadmap|0")]
-        ]
-        buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
-
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        await query.answer("Visibility updated!")
+        kb = build_profile_settings_keyboard(consent_state)
+        await query.edit_message_text(
+            "🎛️ <b>SETTINGS</b>\n<hr/>\nUpdate your visibility, nickname, grade, or location.",
+            reply_markup=kb, parse_mode="HTML"
+        )
         return
 
     elif action == "reselect_grade_panel":

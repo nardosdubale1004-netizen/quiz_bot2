@@ -670,17 +670,11 @@ async def profile_command(update: Update, context):
     roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
     from src.database import db_get_user_subject_marks
     subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-    text = build_profile_card_text(profile, roster, subject_marks)
-
-    consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
-    consent_target = "0" if profile.get("public_consent_granted") else "1"
-
-    buttons = [
-        [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
-        [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
-        [InlineKeyboardButton("🎒 CHANGE ACADEMIC LEVEL", callback_data="reselect_grade_panel|0")],
-        [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")]
-    ]
+    text = build_profile_card_text(profile, None, subject_marks)
+    from src.rendering.html_views import build_profile_main_keyboard
+    kb = build_profile_main_keyboard(has_team=bool(org_id))
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
+    
     buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
 

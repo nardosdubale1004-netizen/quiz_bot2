@@ -541,8 +541,8 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
 
 
 def build_profile_card_text(profile: dict, roster: list = None, subject_marks: list = None) -> str:
-    real_name = format_public_name(profile)
-    grade = profile.get("grade") or "Not selected"
+    name = format_public_name(profile)
+    grade = profile.get("grade") or "—"
     marks = profile.get("total_marks", 0)
     streak = profile.get("current_streak", 0)
     total = profile.get("total", 0)
@@ -550,84 +550,55 @@ def build_profile_card_text(profile: dict, roster: list = None, subject_marks: l
     accuracy = int((correct / total) * 100) if total > 0 else 0
     mastery = get_grade_mastery_title(marks)
     next_rank = get_next_rank_info(marks)
-
-    if profile.get("public_consent_granted"):
-        consent_status = "🟢 PUBLIC ACCESS\n<i>(Your actual Telegram name is displayed publicly on weekly leaderboards)</i>"
-    else:
-        consent_status = "🕵️ PRIVATE ACCESS\n<i>(Your real name is completely hidden. You appear anonymously as an ID)</i>"
-
-    nickname_label = profile.get("nickname") or "<i>None set (using default masked id)</i>"
+    visibility = "🟢 Public" if profile.get("public_consent_granted") else "🕵️ Private"
+    city = profile.get("personal_city") or "Not set"
 
     org_tag = profile.get("org_tag")
     org_name = profile.get("org_name")
-    org_role = profile.get("org_role")
-
-    personal_city = profile.get("personal_city") or "Not set"
-    personal_country = profile.get("personal_country") or "Not set"
-    location_note = (
-        "<i>Used for the 🌆 City and 🌍 Country leaderboards.</i>"
-        if not org_tag else
-        f"<i>Your team's city/country (<b>{org_name}</b>) is what counts toward leaderboards while you're on a team.</i>"
+    team_line = (
+        f"🏫 <b>{html.escape(org_name)}</b> <code>#{org_tag}</code>"
+        if org_tag else
+        "🏫 <i>No team yet — tap MY TEAM to join or create one</i>"
     )
 
-    filled = min(10, max(0, int(accuracy / 10)))
-    progress = f"<code>[{'■' * filled}{' ' * (10 - filled)}]</code>"
-
-    text = (
-        f"👤 <b>YOUR ACADEMIC DOSSIER</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👋 <b>Welcome!</b> Here is your live study profile and settings:\n\n"
-        f"• <b>Custom score Name:</b> {nickname_label}\n"
-        f"• <b>Academic Level:</b> <code>Grade {grade}</code>\n"
-        f"• <b>Scoreboard Visibility:</b> {consent_status}\n\n"
-        f"📍 <b>YOUR LOCATION:</b>\n"
-        f"• <b>City:</b> {personal_city}  │  <b>Country:</b> {personal_country}\n"
-        f"{location_note}\n\n"
-        f"📊 <b>YOUR PRACTICE STATS:</b>\n"
-        f"<blockquote expandable>"
-        f"🏆 <b>Practice Score:</b> {marks} Marks\n"
-        f"🎖️ <b>Mastery Level:</b> {mastery}\n"
-        f"🔥 <b>Active Streak:</b> {streak} Days\n"
-        f"🎯 <b>Accuracy Rate:</b> {progress} <b>{accuracy}%</b> ({correct}/{total} solved)\n\n"
-        f"<i>💡 Rank Progress: {next_rank}</i>"
-        f"</blockquote>\n\n"
-    )
-
+    subj_line = ""
     if subject_marks:
-        text += "📚 <b>SUBJECT MASTERY:</b>\n<blockquote expandable>\n"
-        for sm in subject_marks:
-            sm_title = get_grade_mastery_title(sm['marks'])
-            text += f"• <b>{html.escape(str(sm['subject']).title())}:</b> {sm_title} ({sm['marks']} marks)\n"
-        text += "</blockquote>\n\n"
+        top = sorted(subject_marks, key=lambda s: s['marks'], reverse=True)[:2]
+        names = [html.escape(str(s['subject']).title()) for s in top]
+        subj_line = f"\n📚 <b>Top:</b> {' · '.join(names)}"
 
-    if org_tag:
-        text += (
-            f"🏫 <b>YOUR ACTIVE SCHOOL ALLIANCE:</b>\n"
-            f"• <b>Institution:</b> {org_name}\n"
-            f"• <b>Domain Code:</b> <code>#{org_tag}</code> (Role: {org_role.capitalize()})\n"
-            f"• <i>Every correct answer you score also adds those same Marks to your team's total — automatic, no extra steps.</i>\n\n"
-        )
-        if roster:
-            total_marks = sum(r.get("total_marks", 0) for r in roster)
-            text += f"👥 <b>ALLIANCE MEMBERS ({len(roster)}):</b>\n"
-            text += f"<blockquote expandable>\n"
-            text += f"🏆 <b>Total Alliance Score:</b> {total_marks} Marks\n\n"
-            medals = ["🥇", "🥈", "🥉", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️"]
-            for idx, r in enumerate(roster[:10]):
-                user_label = format_public_name(r)
-                role_icon = " 👑" if r.get("org_role") == "creator" else ""
-                text += f" {medals[idx]} <code>{user_label}</code> — <b>{r['total_marks']} Marks</b>{role_icon}\n"
-            text += f"</blockquote>\n"
-    else:
-        text += (
-            f"🏫 <b>SCHOOL TEAM ALLIANCE:</b>\n"
-            f"<i>You're not linked to a team yet. Tap 'Study Alliance Teams' below to create one or join with a "
-            f"Team Code — your future correct answers will start counting toward that team's score automatically.</i>\n"
-        )
+    return (
+        f"👤 <b>{name}</b>  ·  Grade {grade}\n"
+        f"{mastery}\n"
+        f"<hr/>\n"
+        f"<b>{marks} Marks</b>  ·  🔥 {streak}d streak  ·  🎯 {accuracy}%\n"
+        f"<i>{next_rank}</i>{subj_line}\n"
+        f"<hr/>\n"
+        f"{visibility}  ·  📍 {city}\n"
+        f"{team_line}"
+    )
 
-    text += "\n━━━━━━━━━━━━━━━━━━━━━━━"
-    return text
 
+def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
+    team_label = "🏫 MY TEAM" if has_team else "🏰 JOIN / CREATE TEAM"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎛️ SETTINGS", callback_data="settings_menu|0"),
+         InlineKeyboardButton(team_label, callback_data="alliance_portal|0")],
+        [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0"),
+         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
+    ])
+
+
+def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeyboardMarkup:
+    consent_label = "🔴 GO PRIVATE" if public_consent_granted else "🟢 GO PUBLIC"
+    consent_target = "0" if public_consent_granted else "1"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(consent_label, callback_data=f"toggle_consent|{consent_target}")],
+        [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
+         InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
+        [InlineKeyboardButton("📍 LOCATION", callback_data="set_location_fsm|0")],
+        [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
+    ])
 
 def build_alliance_info_text() -> str:
     """Single explainer card: how to reference/join a team, how scoring works, and roles."""
