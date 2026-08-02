@@ -54,7 +54,7 @@ def convert_to_legacy_html(rich_html: str) -> str:
     text = re.sub(r'<table>(.*?)</table>', table_sub, text, flags=re.DOTALL)
 
     # Safe allowed standard formatting elements supported by Telegram Bot API.
-    # Preserves <tg-math> and <tg-math-block> so they render on mobile apps.
+    # Preserves <tg-math> and <tg-math-block> so they render on mobile apps natively.
     supported_legacy_tags = [
         "b", "/b", "i", "/i", "u", "/u", "s", "/s", "tg-spoiler", "/tg-spoiler",
         "code", "/code", "pre", "/pre", "a", "/a", "blockquote", "/blockquote",

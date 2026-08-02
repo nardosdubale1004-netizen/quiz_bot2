@@ -7,7 +7,7 @@ MATH_MAP = {
     r"\pi": "π", r"\theta": "θ", r"\alpha": "α", r"\beta": "β",
     r"\gamma": "γ", r"\Delta": "Δ", r"\sigma": "σ", r"\Omega": "Ω",
     r"\sqrt": "√", r"\infty": "∞", r"\pm": "±", r"\times": "×",
-    r"\neq": "≠", r"\le": "≤", r"\ge": "≥", r"\rightarrow": "→",
+    r"\neq": "≠", r"\le": "≤", r"\ge": "≥", r"\rightward": "→",
     r"\approx": "≈", r"\cdot": "·", r"\in": "∈", r"\partial": "∂",
     r"\vec": "", r"\,": " ", r"\quad": "   ", r"\text": "",
     r"\bar": "", r"\hat": "", r"\nabla": "∇", r"\angle": "∠",
@@ -77,10 +77,6 @@ def convert_subscripts(text):
     return text
 
 def replace_fractions(text):
-    """
-    Recursively replaces LaTeX fractions with readable unicode equivalents,
-    accounting for nested braces and functions.
-    """
     iterations = 0
     while iterations < 100:
         iterations += 1
@@ -89,7 +85,6 @@ def replace_fractions(text):
             break
         start_idx = match.start()
 
-        # Balance check numerator
         num_start = start_idx + len("\\frac{") - 1
         brace_count = 0
         num_end = -1
@@ -106,7 +101,6 @@ def replace_fractions(text):
 
         num_content = text[num_start+1:num_end]
 
-        # Balance check denominator
         denom_search_start = num_end + 1
         denom_match = re.match(r'\s*\{', text[denom_search_start:])
         if not denom_match:
@@ -128,7 +122,6 @@ def replace_fractions(text):
 
         denom_content = text[denom_start+1:denom_end]
 
-        # Recursively parse internal fractions
         num_content = replace_fractions(num_content)
         denom_content = replace_fractions(denom_content)
 
@@ -143,9 +136,6 @@ def replace_fractions(text):
     return text
 
 def replace_sqrts(text):
-    """
-    Recursively replaces LaTeX square roots with unicode symbols.
-    """
     iterations = 0
     while iterations < 100:
         iterations += 1
@@ -177,29 +167,21 @@ def replace_sqrts(text):
     return text
 
 def clean_latex_to_unicode(text):
-    """
-    Cleans LaTeX commands and converts formulas into plain unicode representations
-    for clean display in UI buttons and alternative views.
-    """
     if not text:
         return ""
     text = str(text)
     text = re.sub(r'</?tg-math(?:-block)?>', '', text)
 
-    # 1. Convert matrix-like environments into highly readable nested lists [[...], [...]]
-    # before any double-backslashes (which denote rows) are removed.
     matrix_pattern = re.compile(r'\\begin\{(pmatrix|bmatrix|matrix|vmatrix|cases)\}(.*?)\\end\{\1\}', re.DOTALL)
     def repl_matrix(m):
         env_name = m.group(1)
         matrix_body = m.group(2).strip()
-        # Split rows by standard LaTeX line breaks: \\, \cr, or \tabularnewline
         raw_rows = re.split(r'\\\\|\\cr|\\tabularnewline', matrix_body)
         cleaned_rows = []
         for r in raw_rows:
             r = r.strip()
             if not r:
                 continue
-            # Split cells by &
             cells = [c.strip() for c in r.split('&')]
             cleaned_rows.append("[" + ", ".join(cells) + "]")
 
@@ -209,7 +191,6 @@ def clean_latex_to_unicode(text):
 
     text = matrix_pattern.sub(repl_matrix, text)
 
-    # Clean up non-matrix LaTeX environments to prevent text pollution in plain fallback views
     text = re.sub(r'\\begin\{[a-zA-Z0-9*]+\}', '', text)
     text = re.sub(r'\\end\{[a-zA-Z0-9*]+\}', '', text)
 
@@ -221,20 +202,17 @@ def clean_latex_to_unicode(text):
     text = re.sub(r'\\int_([a-zA-Z0-9+-])\^([a-zA-Z0-9+-])', r'∫(limits \1 to \2) ', text)
     text = text.replace(r"\int", "∫")
 
-    # Resolve complex square roots and fractions recursively
     text = replace_sqrts(text)
     text = replace_fractions(text)
 
-    # Convert simple inline exponents and subscripts
     text = convert_superscripts(text)
     text = convert_subscripts(text)
 
-    # Standard cleanups of remaining variables and commands
     for latex_sym, unicode_sym in MATH_MAP.items():
         text = text.replace(latex_sym, unicode_sym)
 
     text = text.replace("\\", "")
-    text = text.replace("{", "").replace("}", "")  # Remove leftover grouping brackets for fallback text view
+    text = text.replace("{", "").replace("}", "")
     return re.sub(r'[ \t]+', ' ', text).strip()
 
 def lite_math(text):
@@ -244,27 +222,32 @@ def lite_math(text):
 
 def sanitize_latex_for_telegram_math(expr: str) -> str:
     """
-    Standardizes LaTeX expressions to adhere strictly to Telegram's native
-    mathematical parser (KaTeX) without stripping standard formatting commands
-    like \vec, \text, \quad, etc., which are fully supported in Telegram Premium 10.x+.
+    Cleans and sanitizes LaTeX mathematical formulas to ensure they are 
+    fully compliant with the highly fragile Telegram mobile (iOS/Android) 
+    KaTeX renderers, preventing raw text fallback dumps.
     """
     if not expr:
         return ""
 
-    # Simply trim whitespace and normalize newlines to single spaces.
-    # We do NOT strip formatting commands as they are natively rendered by Telegram.
     expr = expr.strip().replace("\n", " ").replace("\r", "")
+    
+    # Standardize spaces to prevent compile failures on mobile
+    expr = expr.replace(r"\quad", "   ")
+    
+    # Extract raw text inside \text{} blocks to prevent mobile crashes
+    expr = re.sub(r'\\text\s*\{\s*times\s*\}', 'times', expr)
+    expr = re.sub(r'\\text\s*\{\s*([^}]+)\s*\}', r'\1', expr)
+    
+    # Convert mobile-unsupported \dots to simple dots
+    expr = expr.replace(r"\dots", "...")
+    expr = expr.replace(r"\\", " ")
+    
     return expr
 
 def auto_wrap_math_expressions(text: str) -> str:
-    """
-    Safely wraps plain-text math expressions in '$' delimiters.
-    Uses highly secure patterns to remain immune to catastrophic backtracking.
-    """
     if not text:
         return ""
 
-    # Tokenize input to protect existing math environments and HTML blocks
     pattern = re.compile(
         r'(<tg-math-block>.*?</tg-math-block>|'
         r'<tg-math>.*?</tg-math>|'
@@ -281,33 +264,29 @@ def auto_wrap_math_expressions(text: str) -> str:
     parts = pattern.split(text)
 
     for i in range(len(parts)):
-        if i % 2 == 0:  # segment is plain text
+        if i % 2 == 0:
             segment = parts[i]
             if not segment.strip():
                 continue
 
-            # Pattern 1: Contiguous LaTeX commands with backslashes (linear complexity)
             segment = re.sub(
                 r'(\\([a-zA-Z0-9]+|begin|end)(?:\{[^{}]*\}|\[[^\]]*\]|[a-zA-Z0-9()+\-*/^=_<>,.\\\s&])*)',
                 lambda m: f"${m.group(1).strip()}$" if m.group(1).strip() else m.group(0),
                 segment
             )
 
-            # Pattern 2: Mathematical equations and assignments containing equals/inequalities
             segment = re.sub(
                 r'((?:[a-zA-Z0-9_+*/^()\-]+(?:\s+[a-zA-Z0-9_+*/^()\-]+)*)\s*(?:=|<=|>=|<|>|\\neq|\\approx|\\le|\\ge)\s*(?:[a-zA-Z0-9_+*/^()\-]+(?:\s+[a-zA-Z0-9_+*/^()\-]+)*))',
                 lambda m: f"${m.group(1).strip()}$" if not m.group(1).strip().startswith('$') else m.group(0),
                 segment
             )
 
-            # Pattern 3: Standard variables with exponents or parentheses
             segment = re.sub(
                 r'\b([a-zA-Z]\^[0-9a-zA-Z+-]+|[a-zA-Z]_[0-9a-zA-Z+-]+|\b[a-zA-Z]\([a-zA-Z0-9+-]\))\b',
                 r'$\1$',
                 segment
             )
 
-            # Normalize potential double wraps
             segment = segment.replace('$$', '$')
             parts[i] = segment
 
@@ -318,15 +297,11 @@ def beautify_markdown_math(text):
         return ""
 
     text = str(text)
-
-    # Safely wraps unformatted math structures (including matrices)
     text = auto_wrap_math_expressions(text)
 
-    # Normalize LaTeX math delimiters to standard $ and $$ first
     text = text.replace(r'\[', '$$').replace(r'\]', '$$')
     text = text.replace(r'\(', '$').replace(r'\)', '$')
 
-    # Replace literal escaped newlines with actual newlines where safe
     text = re.sub(r'\\+n(?!eq|ode|earrow|abla|eg|um|otin|ew|orm|exists|subset|i\b|ormalsize|umber)', '\n', text)
     text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("\r", "")
 
@@ -348,7 +323,6 @@ def beautify_markdown_math(text):
 
     text = re.sub(r'(?i)\bStep\s*(\d+)[:.-]?\s*', step_repl, text)
 
-    # Tokenize by all forms of inline and block math tags to protect math syntax
     math_pattern = re.compile(
         r'(<tg-math-block>.*?</tg-math-block>|'
         r'<tg-math>.*?</tg-math>|'
@@ -360,7 +334,6 @@ def beautify_markdown_math(text):
     parts = math_pattern.split(text)
     for i in range(len(parts)):
         if i % 2 == 1:
-            # Math Segment (odd index) - Protect formatting macros
             segment = parts[i]
             if segment.startswith("<tg-math-block>"):
                 raw_formula = segment[len("<tg-math-block>") : -len("</tg-math-block>")]
@@ -384,7 +357,6 @@ def beautify_markdown_math(text):
             else:
                 parts[i] = f"<tg-math>{sanitized}</tg-math>"
         else:
-            # Plain Text Segment (even index) - Clean prose commands
             cleaned = clean_plain_text_latex_formatting(parts[i])
             parts[i] = escape_plain_text(cleaned)
 
