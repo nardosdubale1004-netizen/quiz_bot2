@@ -557,8 +557,9 @@ async def start_command(update: Update, context):
             return
 
     if args and args[0].startswith("ref_"):
-        referrer_id = args[0][4:].strip()
-        if referrer_id.isdigit():
+        referrer_token = args[0][4:].strip()
+        referrer_id = await asyncio.to_thread(db_get_user_id_by_referral_token, referrer_token)
+        if referrer_id:
             linked = await asyncio.to_thread(db_set_user_referrer, user_id, referrer_id)
             if linked:
                 print(f"[REFERRAL] User {user_id} linked to referrer {referrer_id}.", flush=True)
@@ -582,9 +583,8 @@ async def start_command(update: Update, context):
                         pass
 
     if args and args[0].startswith("join_"):
-        org_id_str = args[0][5:].strip()
-        if org_id_str.isdigit():
-            join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, int(org_id_str))
+        join_token = args[0][5:].strip()
+        join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
             if join_data:
                 if join_data["role_assigned"] == "pending":
                     msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
@@ -798,6 +798,7 @@ async def leaderboard_command(update: Update, context):
 
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
 
+
 async def invite_command(update: Update, context):
     """Generates the student's personal referral deep-link (small answering-based bonus, not a recruitment payout)."""
     user = update.effective_user
@@ -805,8 +806,8 @@ async def invite_command(update: Update, context):
 
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
-    bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
-    invite_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    referral_token = await asyncio.to_thread(db_get_or_create_referral_token, user_id)
+    invite_link = f"https://t.me/{bot_username}?start=ref_{referral_token}"
 
     await send_rich_message_safe(
         context.bot,
@@ -841,10 +842,24 @@ async def feedback_command(update: Update, context):
         html_content="<h2>💬 SHARE FEEDBACK</h2>\n<hr/>\nWhat's this about?",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
+async def claim_admin_command(update: Update, context):
+    """Hidden, unlisted command. Grants admin only if the caller supplies the exact bootstrap secret."""
+    from src.config import ADMIN_BOOTSTRAP_SECRET
+    from src.database import db_claim_admin
 
-async def admin_dashboard_command(update: Update, context):
     user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
+    await asyncio.to_thread(context.bot.delete_message, update.message.chat_id, update.message.message_id)  # scrub the secret from chat history immediately
+
+    if not ADMIN_BOOTSTRAP_SECRET or not context.args or context.args[0] != ADMIN_BOOTSTRAP_SECRET:
+        return  # silent failure — no hint given to anyone probing this command
+
+    await asyncio.to_thread(db_claim_admin, user_id)
+    await context.bot.send_message(chat_id=user_id, text="✅ Admin access granted.")
+
+async def feedback_admin_command(update: Update, context):
+    user_id = update.effective_user.id
+    from src.database import db_is_admin
+    if not await asyncio.to_thread(db_is_admin, user_id):
         return
     from src.database import db_get_admin_dashboard_stats
     from src.rendering.html_views import build_admin_dashboard_text
@@ -857,7 +872,9 @@ async def admin_dashboard_command(update: Update, context):
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
 
 async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
-    if not ADMIN_IDS:
+    from src.database import db_get_all_admin_ids
+    admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+    if not admin_ids:
         return
     text = build_feedback_item_text(fb)
     kb = InlineKeyboardMarkup([
@@ -867,16 +884,16 @@ async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
          InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb_id}|wontfix")],
         [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")]
     ])
-    for admin_id in ADMIN_IDS:
+    for admin_id in admin_ids:
         try:
             await send_rich_message_safe(context.bot, chat_id=admin_id, html_content=f"🆕 <b>NEW FEEDBACK</b>\n\n{text}", reply_markup=kb)
         except Exception:
             pass
 
-
 async def feedback_admin_command(update: Update, context):
     user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
+    from src.database import db_is_admin
+    if not await asyncio.to_thread(db_is_admin, user_id):
         return
     stats = await asyncio.to_thread(db_get_feedback_stats)
     from src.config import FEEDBACK_CATEGORIES
@@ -888,6 +905,20 @@ async def feedback_admin_command(update: Update, context):
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
+def db_get_all_admin_ids():
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM user_stats WHERE is_admin = TRUE;")
+            return [r["user_id"] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch admin ids: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 # --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
 
 async def _delete_silent(bot, chat_id, mid):
@@ -1184,6 +1215,16 @@ async def run_cloud_server(app, port):
         while True:
             await asyncio.sleep(3600)
 
+async def whoami_command(update: Update, context):
+    """Anyone can run this — it only echoes back their own ID, never anyone else's."""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"🆔 Your Telegram User ID: <code>{user.id}</code>\n\n"
+        f"Add this to ADMIN_IDS in your .env (comma-separated) or config.json's "
+        f"\"admin_ids\" list, then restart the bot to unlock /admin_dashboard.",
+        parse_mode="HTML"
+    )
+
 def main():
     if not os.path.exists("logs"):
         os.makedirs("logs")
@@ -1230,6 +1271,7 @@ def main():
     app.add_handler(CommandHandler("feedback", feedback_command))
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
     app.add_handler(CommandHandler("admin_dashboard", admin_dashboard_command))
+    app.add_handler(CommandHandler("claimadmin", claim_admin_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
     # Priority FSM handler filtering text messages during active state dialog sessions
@@ -1330,3 +1372,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

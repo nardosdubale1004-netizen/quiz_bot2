@@ -419,8 +419,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "team_invite":
         await query.answer()
         org_id = int(d_id)
+        conn = engine.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT join_token FROM organizations WHERE org_id = %s;", (org_id,))
+                row = cur.fetchone()
+        finally:
+            engine.release_connection(conn)
+        join_token = row["join_token"] if row else None
         bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
-        invite_link = f"https://t.me/{bot_username}?start=join_{org_id}"
+        invite_link = f"https://t.me/{bot_username}?start=join_{join_token}"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
         await query.edit_message_text(
             f"🔗 <b>TEAM INVITE LINK</b>\n\n"
@@ -451,7 +459,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "fb_status":
-        if user_id not in ADMIN_IDS:
+        from src.database import db_is_admin
+        if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         fb_id, new_status = d_id, data[2]
@@ -483,7 +492,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "fb_reply":
-        if user_id not in ADMIN_IDS:
+        from src.database import db_is_admin
+        if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         fb_id = int(d_id)
@@ -501,7 +511,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "fb_browse":
-        if user_id not in ADMIN_IDS:
+        from src.database import db_is_admin
+        if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()
@@ -527,7 +538,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "admin_dashboard":
-        if user_id not in ADMIN_IDS:
+        from src.database import db_is_admin
+        if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()
@@ -541,7 +553,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "admin_users":
-        if user_id not in ADMIN_IDS:
+        from src.database import db_is_admin
+        if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()

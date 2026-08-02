@@ -3,6 +3,7 @@ import os
 import json
 import time
 import re
+import secrets
 import psycopg2
 import psycopg2.extensions
 from psycopg2.extras import RealDictCursor, Json
@@ -299,6 +300,7 @@ class QuizEngine:
                 
                 # Add dynamic MLM referral invite tag column
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20) REFERENCES user_stats(user_id) ON DELETE SET NULL;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;")
 
                 # Setup Dynamic Many-to-Many Membership table
                 cur.execute("""
@@ -332,7 +334,18 @@ class QuizEngine:
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS city VARCHAR(50) DEFAULT 'Addis Ababa';")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country VARCHAR(50) DEFAULT 'Ethiopia';")
-                
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS join_token VARCHAR(32) UNIQUE;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referral_token VARCHAR(32) UNIQUE;")
+                cur.execute("""
+                    UPDATE organizations SET join_token = encode(gen_random_bytes(16), 'hex')
+                    WHERE join_token IS NULL;
+                """)
+                cur.execute("""
+                    UPDATE user_stats SET referral_token = encode(gen_random_bytes(16), 'hex')
+                    WHERE referral_token IS NULL;
+                """)
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS feedback (
@@ -346,6 +359,8 @@ class QuizEngine:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+                
+                
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -1599,10 +1614,10 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country)
-                VALUES (%s, UPPER(%s), %s, %s, %s, %s, %s)
+                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country, join_token)
+                VALUES (%s, UPPER(%s), %s, %s, %s, %s, %s, %s)
                 RETURNING org_id;
-            """, (org_name, org_tag, str(creator_id), org_type, is_public, city, country))
+            """, (org_name, org_tag, str(creator_id), org_type, is_public, city, country, secrets.token_hex(16)))
             row = cur.fetchone()
             org_id = row['org_id']
             
@@ -2239,6 +2254,113 @@ def db_get_recent_users(limit: int = 15, offset: int = 0):
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch recent users: {e}", flush=True)
         return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_or_create_referral_token(user_id) -> str:
+    """Returns the user's opaque referral token, generating one if missing."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT referral_token FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            if row and row.get("referral_token"):
+                return row["referral_token"]
+
+            token = secrets.token_hex(16)
+            cur.execute("""
+                INSERT INTO user_stats (user_id, referral_token, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET referral_token = EXCLUDED.referral_token
+                WHERE user_stats.referral_token IS NULL;
+            """, (str(user_id), token))
+            conn.commit()
+            return token
+    except Exception as e:
+        print(f"[DB ERROR] Failed to get/create referral token: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_id_by_referral_token(token: str):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM user_stats WHERE referral_token = %s;", (token,))
+            row = cur.fetchone()
+            return row["user_id"] if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to resolve referral token: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_join_organization_by_token(user_id, join_token: str) -> dict:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE join_token = %s;", (join_token,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            role = "pending" if row["is_public"] else "member"
+            cur.execute("""
+                INSERT INTO org_memberships (user_id, org_id, org_role)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, org_id) DO NOTHING;
+            """, (str(user_id), row["org_id"], role))
+            conn.commit()
+            return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Join by token failed: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_claim_admin(user_id) -> bool:
+    """Grants admin status. Only ever called after the secret has already been verified by the caller."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, is_admin, total, correct, total_marks)
+                VALUES (%s, TRUE, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE;
+            """, (str(user_id),))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to claim admin: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_is_admin(user_id) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_admin FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            return bool(row and row.get("is_admin"))
+    except Exception as e:
+        print(f"[DB ERROR] Failed to check admin status: {e}", flush=True)
+        return False
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

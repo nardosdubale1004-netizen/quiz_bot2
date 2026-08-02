@@ -31,6 +31,7 @@ CONFIG = {
     "database_url": os.getenv("DATABASE_URL") or local_config.get("database_url"),
     "kroki_url": os.getenv("KROKI_URL") or local_config.get("kroki_url") or "https://kroki.io"
 }
+ADMIN_BOOTSTRAP_SECRET = os.getenv("ADMIN_BOOTSTRAP_SECRET")
 
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.strip().isdigit()] \
     or [int(x) for x in local_config.get("admin_ids", [])]
