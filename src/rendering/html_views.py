@@ -96,7 +96,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     correct_letter = chr(65 + q['correct_option'])
     day_str = get_day_from_tags(q.get('tags', []))
 
-    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', []))
+    hashtag_list = [sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
     channel_name = CONFIG.get("channel", "@QuizOva")
     channel_username = channel_name.lstrip('@')
 
