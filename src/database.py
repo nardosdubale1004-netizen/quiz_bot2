@@ -2200,47 +2200,69 @@ def db_get_feedback_stats():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_admin_dashboard_stats():
-    """Aggregates admin-facing platform stats: user counts, country breakdown, question totals, feedback totals."""
+    """Aggregates admin-facing platform stats. Each section is isolated so a single
+    failing query (e.g. a missing column after a partial migration) doesn't blank
+    the whole dashboard — it just omits that section and logs the specific cause."""
     conn = None
+    result = {
+        "total_users": 0,
+        "by_country": [],
+        "total_questions": 0,
+        "by_subject": [],
+        "total_orgs": 0,
+        "total_responses": 0,
+    }
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
+
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS cnt FROM user_stats;")
-            total_users = cur.fetchone()['cnt']
+            try:
+                cur.execute("SELECT COUNT(*) AS cnt FROM user_stats;")
+                result["total_users"] = cur.fetchone()["cnt"]
+            except Exception as e:
+                print(f"[DB ERROR] admin_dashboard total_users: {e}", flush=True)
 
-            cur.execute("""
-                SELECT COALESCE(o.country, u.personal_country, 'Unknown') AS country, COUNT(DISTINCT u.user_id) AS cnt
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                GROUP BY country
-                ORDER BY cnt DESC
-                LIMIT 10;
-            """)
-            by_country = cur.fetchall()
+            try:
+                cur.execute("""
+                    SELECT COALESCE(o.country, u.personal_country, 'Unknown') AS country, COUNT(DISTINCT u.user_id) AS cnt
+                    FROM user_stats u
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                    LEFT JOIN organizations o ON m.org_id = o.org_id
+                    GROUP BY country
+                    ORDER BY cnt DESC
+                    LIMIT 10;
+                """)
+                result["by_country"] = cur.fetchall()
+            except Exception as e:
+                print(f"[DB ERROR] admin_dashboard by_country: {e}", flush=True)
 
-            cur.execute("SELECT COUNT(*) AS cnt FROM questions;")
-            total_questions = cur.fetchone()['cnt']
+            try:
+                cur.execute("SELECT COUNT(*) AS cnt FROM questions;")
+                result["total_questions"] = cur.fetchone()["cnt"]
+            except Exception as e:
+                print(f"[DB ERROR] admin_dashboard total_questions: {e}", flush=True)
 
-            cur.execute("SELECT subject, COUNT(*) AS cnt FROM questions GROUP BY subject ORDER BY cnt DESC;")
-            by_subject = cur.fetchall()
+            try:
+                cur.execute("SELECT subject, COUNT(*) AS cnt FROM questions GROUP BY subject ORDER BY cnt DESC;")
+                result["by_subject"] = cur.fetchall()
+            except Exception as e:
+                print(f"[DB ERROR] admin_dashboard by_subject: {e}", flush=True)
 
-            cur.execute("SELECT COUNT(*) AS cnt FROM organizations;")
-            total_orgs = cur.fetchone()['cnt']
+            try:
+                cur.execute("SELECT COUNT(*) AS cnt FROM organizations;")
+                result["total_orgs"] = cur.fetchone()["cnt"]
+            except Exception as e:
+                print(f"[DB ERROR] admin_dashboard total_orgs: {e}", flush=True)
 
-            cur.execute("SELECT COUNT(*) AS cnt FROM user_responses;")
-            total_responses = cur.fetchone()['cnt']
+            try:
+                cur.execute("SELECT COUNT(*) AS cnt FROM user_responses;")
+                result["total_responses"] = cur.fetchone()["cnt"]
+            except Exception as e:
+                print(f"[DB ERROR] admin_dashboard total_responses: {e}", flush=True)
 
-            return {
-                "total_users": total_users,
-                "by_country": by_country,
-                "total_questions": total_questions,
-                "by_subject": by_subject,
-                "total_orgs": total_orgs,
-                "total_responses": total_responses,
-            }
+        return result
     except Exception as e:
-        print(f"[DB ERROR] Failed to fetch admin dashboard stats: {e}", flush=True)
+        print(f"[DB ERROR] admin_dashboard connection failure: {e}", flush=True)
         return None
     finally:
         if conn:
