@@ -1285,7 +1285,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("feedback", feedback_command))
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
-    app.add_handler(CommandHandler("admin_dashboard", admin_dashboard_command))
+    app.add_handler(CommandHandler(["admin_dashboard", "admindashboard"], admin_dashboard_command))
     app.add_handler(CommandHandler("claimadmin", claim_admin_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
@@ -1314,7 +1314,19 @@ def main():
             print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
         except Exception as e:
             print(f"{Style.YELLOW}[WARNING] Failed to register bot commands: {e}{Style.RESET}", flush=True)
-
+        try:
+            from telegram import BotCommandScopeChat
+            from src.database import db_get_all_admin_ids
+            admin_ids = loop.run_until_complete(asyncio.to_thread(db_get_all_admin_ids))
+            admin_cmds = BOT_COMMANDS + [BotCommand("admin_dashboard", "View platform stats, users & feedback")]
+            for admin_id in admin_ids:
+                try:
+                    loop.run_until_complete(app.bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=int(admin_id))))
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"{Style.YELLOW}[WARNING] Failed to register admin-only commands: {e}{Style.RESET}", flush=True)
+            
         try:
             loop.run_until_complete(run_cloud_server(app, RENDER_PORT))
         except KeyboardInterrupt:
@@ -1347,6 +1359,18 @@ def main():
                 print(f"{Style.GREEN}Registered {len(BOT_COMMANDS)} bot commands for the '/' menu.{Style.RESET}", flush=True)
             except Exception as e:
                 print(f"{Style.YELLOW}[WARNING] Failed to register bot commands: {e}{Style.RESET}", flush=True)
+            try:
+                from telegram import BotCommandScopeChat
+                from src.database import db_get_all_admin_ids
+                admin_ids = loop.run_until_complete(asyncio.to_thread(db_get_all_admin_ids))
+                admin_cmds = BOT_COMMANDS + [BotCommand("admin_dashboard", "View platform stats, users & feedback")]
+                for admin_id in admin_ids:
+                    try:
+                        loop.run_until_complete(app.bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=int(admin_id))))
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"{Style.YELLOW}[WARNING] Failed to register admin-only commands: {e}{Style.RESET}", flush=True)
 
             try:
                 loop.run_until_complete(admin_panel(app, engine))
