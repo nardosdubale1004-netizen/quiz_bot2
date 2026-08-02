@@ -906,6 +906,20 @@ async def feedback_admin_command(update: Update, context):
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
+async def admin_dashboard_command(update: Update, context):
+    user_id = update.effective_user.id
+    from src.database import db_is_admin, db_get_admin_dashboard_stats
+    if not await asyncio.to_thread(db_is_admin, user_id):
+        return
+    from src.rendering.html_views import build_admin_dashboard_text
+    stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
+    text = build_admin_dashboard_text(stats)
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
+        InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open")
+    ]])
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
+
 def db_get_all_admin_ids():
     conn = None
     try:
@@ -1373,4 +1387,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

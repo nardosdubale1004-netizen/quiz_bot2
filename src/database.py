@@ -334,6 +334,7 @@ class QuizEngine:
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS city VARCHAR(50) DEFAULT 'Addis Ababa';")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country VARCHAR(50) DEFAULT 'Ethiopia';")
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS join_token VARCHAR(32) UNIQUE;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referral_token VARCHAR(32) UNIQUE;")
                 cur.execute("""
@@ -344,7 +345,6 @@ class QuizEngine:
                     UPDATE user_stats SET referral_token = encode(gen_random_bytes(16), 'hex')
                     WHERE referral_token IS NULL;
                 """)
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 cur.execute("""
