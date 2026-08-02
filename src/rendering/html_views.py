@@ -855,19 +855,11 @@ def build_full_documentation_text() -> str:
 
 def build_bot_roadmap_text() -> str:
     return (
-        "<h2>🗺️ YOUR JOURNEY THROUGH QUIZ MASTER PRO</h2>\n"
-        "<hr/>\n"
-        "<table>"
-        "<tr><td>1️⃣</td><td><b>/start</b> — pick your grade level (once)</td></tr>"
-        "<tr><td>2️⃣</td><td>Answer questions posted in the channel</td></tr>"
-        "<tr><td>3️⃣</td><td>Check your DM for the solution + updated score</td></tr>"
-        "<tr><td>4️⃣</td><td><b>/profile</b> — set a nickname, join/create a team</td></tr>"
-        "<tr><td>5️⃣</td><td>Jump into a ⚔️ live tournament round when one's announced</td></tr>"
-        "<tr><td>6️⃣</td><td><b>/invite</b> — share your link for bonus marks</td></tr>"
-        "<tr><td>7️⃣</td><td><b>/leaderboard</b> — track your rank weekly</td></tr>"
-        "</table>\n"
-        "<hr/>\n"
-        "<i>Every step loops back to answering — that's always where the real marks come from.</i>"
+        "<h2>🗺️ QUICK ROADMAP</h2>\n<hr/>\n"
+        "1️⃣ <b>/start</b> → pick your grade\n"
+        "2️⃣ Answer in the channel → get scored by DM\n"
+        "3️⃣ <b>/profile</b> → nickname, team, visibility\n"
+        "4️⃣ <b>/leaderboard</b> → track your rank\n"
     )
 
 def build_feedback_stats_text(stats: dict) -> str:

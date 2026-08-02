@@ -629,6 +629,14 @@ async def start_command(update: Update, context):
     if profile and profile.get("grade"):
         asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
         await profile_command(update, context)
+        from telegram import BotCommandScopeChat
+        try:
+            await context.bot.set_my_commands(
+                [c for c in BOT_COMMANDS if c.command != "start"],
+                scope=BotCommandScopeChat(chat_id=update.effective_chat.id)
+            )
+        except Exception:
+            pass
         return
 
     keyboard = [
@@ -674,7 +682,7 @@ async def profile_command(update: Update, context):
     from src.rendering.html_views import build_profile_main_keyboard
     kb = build_profile_main_keyboard(has_team=bool(org_id))
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
-    
+
     buttons.append([InlineKeyboardButton("🔙 CLOSE PANEL", callback_data="close_portal|0")])
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
 

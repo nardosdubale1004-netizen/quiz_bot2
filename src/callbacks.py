@@ -44,7 +44,9 @@ from src.rendering.html_views import (
     build_admin_dashboard_text, 
     build_user_directory_text,
     build_user_feedback_list_text,
-    build_feedback_menu_text
+    build_feedback_menu_text,
+    build_profile_main_keyboard,
+    build_profile_settings_keyboard
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -126,7 +128,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         kb = build_profile_settings_keyboard(profile.get("public_consent_granted", False))
         await query.edit_message_text(
-            "🎛️ <b>SETTINGS</b>\n<hr/>\nUpdate your visibility, nickname, grade, or location.",
+            "🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.",
             reply_markup=kb, parse_mode="HTML"
         )
         return
@@ -137,7 +139,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("Visibility updated!")
         kb = build_profile_settings_keyboard(consent_state)
         await query.edit_message_text(
-            "🎛️ <b>SETTINGS</b>\n<hr/>\nUpdate your visibility, nickname, grade, or location.",
+            "🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.",
             reply_markup=kb, parse_mode="HTML"
         )
         return
