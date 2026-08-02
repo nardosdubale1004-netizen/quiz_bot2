@@ -60,7 +60,7 @@ async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
     except Exception:
         pass
 
-        
+
 def check_message_has_lockout(user_id, message) -> bool:
     if not message:
         return False
@@ -69,6 +69,21 @@ def check_message_has_lockout(user_id, message) -> bool:
     current_text = message.caption or message.text or ""
     current_text_lower = current_text.lower()
     return any(kw in current_text_lower for kw in ["lockout active", "already answered", "securely locked"])
+
+def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKeyboardMarkup:
+    rs = return_state or "all:all:0"
+    rows = [
+        [InlineKeyboardButton("🔧 In Progress", callback_data=f"fb_status|{fb_id}|in_progress|{rs}"),
+         InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb_id}|planned|{rs}")],
+        [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb_id}|resolved|{rs}"),
+         InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb_id}|wontfix|{rs}")],
+        [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")],
+    ]
+    parts = rs.split(":")
+    if len(parts) == 3:
+        cat, stat, off = parts
+        rows.append([InlineKeyboardButton("🔙 BACK TO QUEUE", callback_data=f"fb_browse|{cat}|{stat}:{off}")])
+    return InlineKeyboardMarkup(rows)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
@@ -480,21 +495,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             await query.answer("Admins only.", show_alert=True)
             return
         fb_id, new_status = d_id, data[2]
+        return_state = data[3] if len(data) > 3 else None
         await asyncio.to_thread(db_update_feedback_status, int(fb_id), new_status)
         await query.answer(f"Marked {FEEDBACK_STATUS_LABELS.get(new_status, new_status)}")
 
         fb = await asyncio.to_thread(db_get_feedback_by_id, int(fb_id))
         if fb:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔧 In Progress", callback_data=f"fb_status|{fb_id}|in_progress"),
-                 InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb_id}|planned")],
-                [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb_id}|resolved"),
-                 InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb_id}|wontfix")],
-                [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")]
-            ])
+            kb = _build_feedback_detail_keyboard(fb_id, return_state)
             await query.edit_message_text(build_feedback_item_text(fb), reply_markup=kb, parse_mode="HTML")
 
-            # Only tell the user for meaningful outcomes — not every intermediate nudge.
             if new_status in ("planned", "resolved"):
                 try:
                     notice_text = (
@@ -529,30 +538,53 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "fb_browse":
-        from src.database import db_is_admin
+        from src.database import db_is_admin, db_count_feedback
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()
-        category, status = d_id, data[2]
+
+        category = d_id
+        rest = data[2] if len(data) > 2 else "open:0"
+        status, offset_str = rest.split(":", 1) if ":" in rest else (rest, "0")
+        offset = int(offset_str) if offset_str.isdigit() else 0
+
         cat_filter = None if category == "all" else category
-        items = await asyncio.to_thread(db_get_feedback_list, status, cat_filter, 5, 0)
+        status_filter = None if status == "all" else status
+
+        items = await asyncio.to_thread(db_get_feedback_list, status_filter, cat_filter, 6, offset)
+        total = await asyncio.to_thread(db_count_feedback, status_filter, cat_filter)
+
+        from src.rendering.html_views import build_feedback_browse_list_text
+        text = build_feedback_browse_list_text(items, category, status, offset, total)
 
         if not items:
-            await query.edit_message_text("📭 No items match this filter.", reply_markup=return_kb)
+            buttons = [[InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")]]
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
             return
 
-        # Send each as its own actionable card so status buttons work per item.
-        await query.delete_message()
-        for fb in items:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔧 In Progress", callback_data=f"fb_status|{fb['id']}|in_progress"),
-                 InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb['id']}|planned")],
-                [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb['id']}|resolved"),
-                 InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb['id']}|wontfix")],
-                [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb['id']}")]
-            ])
-            await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=build_feedback_item_text(fb), reply_markup=kb)
+        return_state = f"{category}:{status}:{offset}"
+        item_rows = [
+            [InlineKeyboardButton(f"#{fb['id']} · {fb['message'][:28]}", callback_data=f"fb_item|{fb['id']}|{return_state}")]
+            for fb in items
+        ]
+
+        nav_row = []
+        if offset > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"fb_browse|{category}|{status}:{max(0, offset-6)}"))
+        if offset + 6 < total:
+            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"fb_browse|{category}|{status}:{offset+6}"))
+        if nav_row:
+            item_rows.append(nav_row)
+
+        item_rows.append([
+            InlineKeyboardButton("🆕 Open", callback_data=f"fb_browse|{category}|open:0"),
+            InlineKeyboardButton("🔧 Active", callback_data=f"fb_browse|{category}|in_progress:0"),
+            InlineKeyboardButton("📋 All", callback_data=f"fb_browse|{category}|all:0"),
+        ])
+        item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
 
     elif action == "admin_dashboard":
@@ -565,7 +597,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         text = build_admin_dashboard_text(stats)
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
-            InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open")
+            InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")
         ]])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
@@ -602,7 +634,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         if offset + 5 < total:
             nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_feedback|{offset+5}"))
         buttons = [nav_row] if nav_row else []
-        buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_new|0")])
+        buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
         buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -614,6 +646,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
         buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    elif action == "fb_item":
+        from src.database import db_is_admin
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+        fb_id = int(d_id)
+        return_state = data[2] if len(data) > 2 else None
+        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+        if not fb:
+            await query.answer("Not found.", show_alert=True)
+            return
+        kb = _build_feedback_detail_keyboard(fb_id, return_state)
+        await query.edit_message_text(build_feedback_item_text(fb), reply_markup=kb, parse_mode="HTML")
         return
 
     elif action == "my_feedback":
@@ -633,6 +681,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         buttons.append([InlineKeyboardButton("🔙 BACK", callback_data="fb_menu|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
+
+
     # --- ORIGINAL CORE ENGINE FLOWS ---
 
     track, question_data = await asyncio.to_thread(db_get_track_and_question, int(d_id))

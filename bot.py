@@ -922,15 +922,15 @@ async def feedback_admin_command(update: Update, context):
     from src.database import db_is_admin
     if not await asyncio.to_thread(db_is_admin, user_id):
         return
-    from src.database import db_get_admin_dashboard_stats
-    from src.rendering.html_views import build_admin_dashboard_text
-    stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
-    text = build_admin_dashboard_text(stats)
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
-        InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open")
-    ]])
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
+    stats = await asyncio.to_thread(db_get_feedback_stats)
+    from src.config import FEEDBACK_CATEGORIES
+    buttons = [[InlineKeyboardButton(label, callback_data=f"fb_browse|{key}|open:0")] for key, label in FEEDBACK_CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton("📋 ALL OPEN ITEMS", callback_data="fb_browse|all|open:0")])
+    await send_rich_message_safe(
+        context.bot, chat_id=update.message.chat_id,
+        html_content=build_feedback_stats_text(stats),
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
 
 async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
     from src.database import db_get_all_admin_ids
@@ -976,7 +976,7 @@ async def admin_dashboard_command(update: Update, context):
     text = build_admin_dashboard_text(stats)
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
-        InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open")
+        InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")
     ]])
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
 

@@ -914,7 +914,7 @@ def build_feedback_item_text(fb: dict) -> str:
         f"<blockquote>{html.escape(fb['message'])}</blockquote>"
         f"{reply_block}"
     )
-    
+
 def build_tournament_leaderboard_text(rows: list, current_round: int = None, total_rounds: int = None) -> str:
     """Ranking scoped ONLY to the current tournament run — sums marks across every
     round in this series, not the user's all-time/weekly total."""
@@ -1071,3 +1071,25 @@ def build_feedback_item_text(fb: dict) -> str:
         f"<blockquote>{html.escape(fb['message'])}</blockquote>"
         f"{reply_block}"
     )
+
+def build_feedback_browse_list_text(items: list, category: str, status: str, offset: int, total: int) -> str:
+    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
+    cat_label = "All Categories" if category == "all" else FEEDBACK_CATEGORIES.get(category, category)
+    status_label = "All Statuses" if status == "all" else FEEDBACK_STATUS_LABELS.get(status, status.capitalize())
+
+    if not items:
+        return (
+            f"<h2>💬 FEEDBACK QUEUE</h2>\n"
+            f"<i>{cat_label} • {status_label}</i>\n<hr/>\n"
+            f"<i>Nothing here right now.</i>"
+        )
+
+    lines = [f"<h2>💬 FEEDBACK QUEUE</h2>\n<i>{cat_label} • {status_label} • {offset+1}-{offset+len(items)} of {total}</i>\n<hr/>\n"]
+    for fb in items:
+        name = format_public_name(fb)
+        cat_short = FEEDBACK_CATEGORIES.get(fb['category'], fb['category']).split(" ", 1)[0]
+        status_icon = _STATUS_PIPELINE_ICONS.get(fb['status'], "🚫")
+        snippet = html.escape(fb['message'][:70] + ("…" if len(fb['message']) > 70 else ""))
+        lines.append(f"{status_icon} <b>#{fb['id']}</b> {cat_short} — {snippet}\n   <i>by {name}</i>")
+
+    return "\n\n".join(lines)

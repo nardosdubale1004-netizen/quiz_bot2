@@ -2470,7 +2470,7 @@ async def db_call_guarded(fn, *args, **kwargs):
     except TimeoutError:
         print(f"[DB-OVERLOAD] Call to {fn.__name__} timed out waiting for DB capacity.", flush=True)
         raise
-        
+
 def db_get_all_admin_ids():
     """Returns a list of user_ids flagged as admin. Used to notify admins of new feedback."""
     conn = None
@@ -2512,6 +2512,29 @@ def db_get_tournament_leaderboard(run_id: str, limit: int = 10):
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch tournament leaderboard: {e}", flush=True)
         return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_count_feedback(status: str = None, category: str = None) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            clauses, params = [], []
+            if status:
+                clauses.append("status = %s")
+                params.append(status)
+            if category:
+                clauses.append("category = %s")
+                params.append(category)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM feedback {where};", tuple(params))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count feedback: {e}", flush=True)
+        return 0
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
