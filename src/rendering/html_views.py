@@ -907,7 +907,21 @@ def build_admin_dashboard_text(stats: dict) -> str:
         f"<table><tr><td><b>Subject</b></td><td><b>Count</b></td></tr>{subject_rows}</table>"
     )
 
-
+def build_feedback_item_text(fb: dict) -> str:
+    from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
+    name = format_public_name(fb)
+    cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
+    status_label = FEEDBACK_STATUS_LABELS.get(fb['status'], fb['status'])
+    reply_block = ""
+    if fb.get('admin_reply'):
+        reply_block = f"\n\n<b>💬 Your reply:</b>\n<blockquote>{html.escape(fb['admin_reply'])}</blockquote>"
+    return (
+        f"<b>#{fb['id']} • {cat_label}</b>\n"
+        f"👤 {name} (<code>{fb['user_id']}</code>)\n"
+        f"📌 Status: <b>{status_label}</b>\n\n"
+        f"<blockquote>{html.escape(fb['message'])}</blockquote>"
+        f"{reply_block}"
+    )
 
 
 
