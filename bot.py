@@ -54,6 +54,7 @@ from src.database import (
     db_update_feedback_status,
     db_save_feedback_reply,
     db_get_feedback_stats,
+    db_join_organization_by_token,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text
@@ -585,14 +586,14 @@ async def start_command(update: Update, context):
     if args and args[0].startswith("join_"):
         join_token = args[0][5:].strip()
         join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
-            if join_data:
-                if join_data["role_assigned"] == "pending":
-                    msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
-                else:
-                    msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+        if join_data:
+            if join_data["role_assigned"] == "pending":
+                msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
             else:
-                msg = "⚠️ This team invite link is invalid or the team no longer exists."
-            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=msg)
+                msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+        else:
+            msg = "⚠️ This team invite link is invalid or the team no longer exists."
+        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=msg)
 
     # Check and render fallback grade profile if mapped
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
@@ -918,7 +919,7 @@ def db_get_all_admin_ids():
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 # --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
 
 async def _delete_silent(bot, chat_id, mid):
