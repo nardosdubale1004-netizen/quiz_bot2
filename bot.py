@@ -906,7 +906,24 @@ async def myfeedback_command(update: Update, context):
         html_content=text,
         reply_markup=InlineKeyboardMarkup(buttons)
     )
+def build_user_directory_text(users: list) -> str:
+    """Rich-text paginated user list for the admin dashboard."""
+    if not users:
+        return "<h2>👥 USER DIRECTORY</h2>\n<hr/>\n<i>No users found.</i>"
 
+    rows = []
+    for u in users:
+        name = format_public_name(u)
+        rows.append(
+            f"<tr><td>{html.escape(name)}</td><td>Gr.{u.get('grade') or '-'}</td>"
+            f"<td>{u.get('total_marks', 0)}</td><td>{html.escape(str(u.get('country', '-')))}</td></tr>"
+        )
+
+    return (
+        "<h2>👥 USER DIRECTORY (Most Recently Active)</h2>\n<hr/>\n"
+        "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
+        + "".join(rows) + "</table>"
+    )
 async def claim_admin_command(update: Update, context):
     """Hidden, unlisted command. Grants admin only if the caller supplies the exact bootstrap secret."""
     from src.config import ADMIN_BOOTSTRAP_SECRET

@@ -122,16 +122,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
     elif action == "settings_menu":
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         kb = build_profile_settings_keyboard(profile.get("public_consent_granted", False))
-        await query.edit_message_text(
-            "🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.",
-            reply_markup=kb, parse_mode="HTML"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.",
+            reply_markup=kb
         )
         return
 
@@ -140,9 +141,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
         await query.answer("Visibility updated!")
         kb = build_profile_settings_keyboard(consent_state)
-        await query.edit_message_text(
-            "🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.",
-            reply_markup=kb, parse_mode="HTML"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.",
+            reply_markup=kb
         )
         return
 
@@ -155,12 +157,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
              InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
             [InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")]
         ])
-        await query.edit_message_text(
-            "🎒 <b>SELECT ACADEMIC GRADE LEVEL</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Choose your active academic level using the options below:",
-            reply_markup=grade_keyboard,
-            parse_mode="HTML"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🎒 <b>SELECT ACADEMIC GRADE LEVEL</b>\n<hr/>\nChoose your active academic level below:",
+            reply_markup=grade_keyboard
         )
         return
 
