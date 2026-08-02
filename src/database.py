@@ -270,13 +270,28 @@ class QuizEngine:
     def _ensure_tournament_schema(self):
         if QuizEngine._tournament_schema_ensured:
             return
+
+        # Isolated: pgcrypto may be restricted on some managed Postgres tiers (e.g. Neon
+        # free/shared). A failure here must NEVER block the rest of schema setup below,
+        # since token generation is optional but the feedback/org tables are not.
+        conn = None
+        try:
+            conn = self.get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+            print(f"{Style.GREEN}[DATABASE] pgcrypto extension ensured.{Style.RESET}")
+        except Exception as e:
+            print(f"{Style.YELLOW}[DATABASE WARNING] pgcrypto extension unavailable (tokens will fall back to Python-generated hex): {e}{Style.RESET}")
+        finally:
+            if conn:
+                self.release_connection(conn)
+
         conn = None
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
 
                 # Setup Organizations Tables with geographic properties
                 cur.execute("""
@@ -297,14 +312,14 @@ class QuizEngine:
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS first_name text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS nickname text;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS public_consent_granted BOOLEAN DEFAULT FALSE;")
-                
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;")
+
                 # Add geographic fallbacks to student stats
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS personal_city VARCHAR(50) DEFAULT 'Addis Ababa';")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS personal_country VARCHAR(50) DEFAULT 'Ethiopia';")
-                
+
                 # Add dynamic MLM referral invite tag column
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20) REFERENCES user_stats(user_id) ON DELETE SET NULL;")
-                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;")
 
                 # Setup Dynamic Many-to-Many Membership table
                 cur.execute("""
@@ -333,22 +348,24 @@ class QuizEngine:
                     """)
                     cur.execute("ALTER TABLE user_stats DROP COLUMN IF EXISTS org_id CASCADE;")
                     cur.execute("ALTER TABLE user_stats DROP COLUMN IF EXISTS org_role CASCADE;")
-                
+
                 # Check for is_public column inside organizations
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS city VARCHAR(50) DEFAULT 'Addis Ababa';")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country VARCHAR(50) DEFAULT 'Ethiopia';")
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+
+                # Secure, unguessable invite/join tokens — generated in Python, not via
+                # gen_random_bytes(), so this never depends on the pgcrypto extension.
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS join_token VARCHAR(32) UNIQUE;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referral_token VARCHAR(32) UNIQUE;")
-                cur.execute("""
-                    UPDATE organizations SET join_token = encode(gen_random_bytes(16), 'hex')
-                    WHERE join_token IS NULL;
-                """)
-                cur.execute("""
-                    UPDATE user_stats SET referral_token = encode(gen_random_bytes(16), 'hex')
-                    WHERE referral_token IS NULL;
-                """)
+
+                cur.execute("SELECT org_id FROM organizations WHERE join_token IS NULL;")
+                for row in cur.fetchall():
+                    cur.execute("UPDATE organizations SET join_token = %s WHERE org_id = %s;", (secrets.token_hex(16), row["org_id"]))
+
+                cur.execute("SELECT user_id FROM user_stats WHERE referral_token IS NULL;")
+                for row in cur.fetchall():
+                    cur.execute("UPDATE user_stats SET referral_token = %s WHERE user_id = %s;", (secrets.token_hex(16), row["user_id"]))
 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
                 cur.execute("""
@@ -363,19 +380,19 @@ class QuizEngine:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
-                
-                
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
             print(f"{Style.GREEN}[DATABASE] Many-to-many organizations and roster schemas verified.{Style.RESET}")
             print(f"{Style.GREEN}[DEBUG-SCHEMA-FIX] Dropped restrictive FK constraints.{Style.RESET}", flush=True)
         except Exception as e:
+            if conn:
+                conn.rollback()
             print(f"{Style.YELLOW}[DATABASE WARNING] Schema checks encountered: {e}. Ensure migrations have run.{Style.RESET}")
         finally:
             if conn:
                 self.release_connection(conn)
-
+                
     def get_db_connection(self):
         if not self.db_url:
             raise ConnectionError("DATABASE_URL environment variable is missing.")
