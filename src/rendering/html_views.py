@@ -314,14 +314,19 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
     if show_perf and perf_card:
         is_repeat = not perf_card.get('first_try', True)
         orig_marks = perf_card.get('marks_awarded', 0)
-        is_bonus = perf_card.get('is_bonus_winner', False) or (orig_marks == 10)
+        speed_tier = perf_card.get('speed_tier')
 
         status_prefix = "⚠️ <b>Score Locked (Previously Answered):</b><br/>" if is_repeat else ""
 
-        if is_bonus:
-            marks_notice = f"{status_prefix}⚡ <b>EARLY BIRD BONUS!</b> You solved this first! <b>(+10 Marks)</b>"
-        elif orig_marks > 0:
-            marks_notice = f"{status_prefix}🟩 <b>CORRECT!</b> Standard score awarded. <b>(+2 Marks)</b>"
+        tier_labels = {
+            "lightning": "⚡ <b>LIGHTNING FAST!</b> (×1.5 speed bonus)",
+            "fast": "🏃 <b>QUICK ANSWER!</b> (×1.2 speed bonus)",
+            "standard": "🟩 <b>CORRECT!</b>",
+        }
+
+        if orig_marks > 0:
+            tier_line = tier_labels.get(speed_tier, "🟩 <b>CORRECT!</b>")
+            marks_notice = f"{status_prefix}{tier_line} <b>(+{orig_marks} Marks)</b>"
         else:
             marks_notice = f"{status_prefix}🟥 <b>INCORRECT.</b> No marks awarded. <b>(+0 Marks)</b>"
 
@@ -535,7 +540,7 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
     return text
 
 
-def build_profile_card_text(profile: dict, roster: list = None) -> str:
+def build_profile_card_text(profile: dict, roster: list = None, subject_marks: list = None) -> str:
     real_name = format_public_name(profile)
     grade = profile.get("grade") or "Not selected"
     marks = profile.get("total_marks", 0)
@@ -587,6 +592,13 @@ def build_profile_card_text(profile: dict, roster: list = None) -> str:
         f"<i>💡 Rank Progress: {next_rank}</i>"
         f"</blockquote>\n\n"
     )
+
+    if subject_marks:
+        text += "📚 <b>SUBJECT MASTERY:</b>\n<blockquote expandable>\n"
+        for sm in subject_marks:
+            sm_title = get_grade_mastery_title(sm['marks'])
+            text += f"• <b>{html.escape(str(sm['subject']).title())}:</b> {sm_title} ({sm['marks']} marks)\n"
+        text += "</blockquote>\n\n"
 
     if org_tag:
         text += (

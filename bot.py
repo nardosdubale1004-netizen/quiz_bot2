@@ -651,22 +651,23 @@ async def profile_command(update: Update, context):
     """Bypasses start and opens student dynamic Privacy & Consent dashboard."""
     user = update.effective_user
     user_id = user.id
-    
+
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    
+
     if not profile or not profile.get("grade"):
         await update.message.reply_text("🎒 Please type /start first to configure your basic grade profile details.")
         return
-        
+
     org_id = profile.get("org_id")
     roster = await asyncio.to_thread(db_get_organization_roster, org_id) if org_id else []
-    text = build_profile_card_text(profile, roster)
-    
-    # dynamic contextual buttons mapped directly under /profile layout
+    from src.database import db_get_user_subject_marks
+    subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
+    text = build_profile_card_text(profile, roster, subject_marks)
+
     consent_btn_text = "🔴 OPT-OUT PUBLIC LEADERBOARDS" if profile.get("public_consent_granted") else "🟢 OPT-IN PUBLIC LEADERBOARDS"
     consent_target = "0" if profile.get("public_consent_granted") else "1"
-    
+
     buttons = [
         [InlineKeyboardButton(consent_btn_text, callback_data=f"toggle_consent|{consent_target}")],
         [InlineKeyboardButton("📝 UPDATE PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],

@@ -25,56 +25,52 @@ CREATE OR REPLACE FUNCTION fn_process_user_score(
     p_q_id text,
     p_is_correct boolean,
     p_selected_option int,
-    p_private_message_id bigint, -- Aligned to match the bigint schema column
+    p_private_message_id bigint,
     p_show_derivation boolean,
-    p_show_perf boolean,
-    p_bonus_limit int
+    p_show_perf boolean
 ) RETURNS TABLE (
     o_total int,
     o_correct int,
     o_total_marks int,
     o_marks_awarded int,
     o_first_try boolean,
-    o_is_bonus_winner boolean,
+    o_speed_tier text,
     o_grade int,
     o_current_streak int
 ) AS $$
 DECLARE
-    v_existing_correct boolean;
     v_existing_marks int;
-    v_found boolean := false;
     v_marks int := 0;
     v_first_try boolean := true;
-    v_is_bonus boolean := false;
     v_streak int := 0;
     v_streak_mult numeric := 1.0;
     v_last_active timestamptz;
     v_last_active_date date;
     v_today date := (NOW() AT TIME ZONE 'utc')::date;
     v_days_diff int;
-    v_correct_count int;
-    v_base_marks int;
-    
-    -- Dynamic check variables for asymmetric grade scoring
     v_user_grade int;
     v_question_grade int;
     v_q_grade_raw text;
-    
-    -- Referral tracking variables
+    v_difficulty text;
+    v_subject text;
+    v_base_marks numeric;
+    v_speed_mult numeric;
+    v_speed_tier text;
+    v_grade_mult numeric;
+    v_sent_at timestamptz;
+    v_seconds_since_sent numeric;
     v_referrer_t1 text;
     v_referrer_t2 text;
-    v_t1_score int := 0;
-    v_t2_score int := 0;
+    v_t1_bonus int;
+    v_t2_bonus int;
 BEGIN
-    SELECT ur.is_correct, ur.marks_awarded
-      INTO v_existing_correct, v_existing_marks
+    SELECT ur.marks_awarded INTO v_existing_marks
       FROM user_responses ur
      WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
 
     IF FOUND THEN
         v_first_try := false;
         v_marks := v_existing_marks;
-        v_is_bonus := (v_marks >= 10);
     ELSE
         SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by
           INTO v_last_active, v_streak, v_user_grade, v_referrer_t1
@@ -86,7 +82,7 @@ BEGIN
         ELSE
             v_last_active_date := v_last_active::date;
             v_days_diff := v_today - v_last_active_date;
-            if v_days_diff = 1 THEN
+            IF v_days_diff = 1 THEN
                 v_streak := v_streak + 1;
             ELSIF v_days_diff > 1 THEN
                 v_streak := 1;
@@ -97,12 +93,33 @@ BEGIN
             v_streak_mult := 1.5;
         ELSIF v_streak >= 3 THEN
             v_streak_mult := 1.2;
+        ELSE
+            v_streak_mult := 1.0;
         END IF;
 
         IF p_is_correct THEN
-            -- Extract target question grade level safely from tags
-            SELECT q.tags::text INTO v_q_grade_raw FROM questions q WHERE q.id = p_q_id;
-            
+            SELECT q.difficulty, q.subject, q.tags::text
+              INTO v_difficulty, v_subject, v_q_grade_raw
+              FROM questions q WHERE q.id = p_q_id;
+
+            v_base_marks := CASE lower(COALESCE(v_difficulty, 'medium'))
+                WHEN 'easy' THEN 3
+                WHEN 'weak' THEN 3
+                WHEN 'hard' THEN 12
+                ELSE 6
+            END;
+
+            SELECT st.sent_at INTO v_sent_at FROM sent_tracks st WHERE st.message_id = p_message_id;
+            v_seconds_since_sent := EXTRACT(EPOCH FROM (NOW() - COALESCE(v_sent_at, NOW())));
+
+            IF v_seconds_since_sent <= 60 THEN
+                v_speed_mult := 1.5; v_speed_tier := 'lightning';
+            ELSIF v_seconds_since_sent <= 300 THEN
+                v_speed_mult := 1.2; v_speed_tier := 'fast';
+            ELSE
+                v_speed_mult := 1.0; v_speed_tier := 'standard';
+            END IF;
+
             IF v_q_grade_raw LIKE '%grade6%' THEN v_question_grade := 6;
             ELSIF v_q_grade_raw LIKE '%grade8%' THEN v_question_grade := 8;
             ELSIF v_q_grade_raw LIKE '%grade10%' THEN v_question_grade := 10;
@@ -110,31 +127,20 @@ BEGIN
             ELSE v_question_grade := COALESCE(v_user_grade, 12);
             END IF;
 
-            SELECT COUNT(*) INTO v_correct_count
-              FROM user_responses
-             WHERE message_id = p_message_id AND is_correct = TRUE;
-
-            IF v_correct_count < p_bonus_limit THEN
-                v_base_marks := 10;
-                v_is_bonus := true;
-            ELSE
-                v_base_marks := 2;
-            END IF;
-
-            -- Asymmetrical Scoring Calibration Logic
-            IF v_user_grade < v_question_grade THEN
-                -- Punching Up: Give standard marks + a +3 Bravery Bonus
-                v_marks := FLOOR((v_base_marks + 3) * v_streak_mult)::int;
+            IF v_user_grade IS NULL THEN
+                v_grade_mult := 1.0;
+            ELSIF v_user_grade < v_question_grade THEN
+                v_grade_mult := 1.5;
             ELSIF v_user_grade > v_question_grade THEN
-                -- Punching Down: Award exactly 1 Recall Mark for memory revision
-                v_marks := 1;
-                v_is_bonus := false;
+                v_grade_mult := 0.3;
             ELSE
-                -- Normal peer play
-                v_marks := FLOOR(v_base_marks * v_streak_mult)::int;
+                v_grade_mult := 1.0;
             END IF;
+
+            v_marks := GREATEST(1, FLOOR(v_base_marks * v_speed_mult * v_grade_mult * v_streak_mult)::int);
         ELSE
             v_marks := 0;
+            v_speed_tier := NULL;
         END IF;
 
         BEGIN
@@ -160,41 +166,37 @@ BEGIN
                 p_selected_option, p_private_message_id, p_show_derivation, p_show_perf
             );
 
-            -- Process Multi-Level Study Referral Points allocation upon correct answer
+            IF p_is_correct AND v_marks > 0 AND v_subject IS NOT NULL THEN
+                INSERT INTO user_subject_marks (user_id, subject, marks)
+                VALUES (p_user_id, lower(v_subject), v_marks)
+                ON CONFLICT (user_id, subject) DO UPDATE SET
+                    marks = user_subject_marks.marks + v_marks;
+            END IF;
+
             IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
-                -- Tier 1 direct Study Coach bonus (+1 Mark)
-                UPDATE user_stats 
-                SET total_marks = COALESCE(total_marks, 0) + 1 
+                v_t1_bonus := GREATEST(1, FLOOR(v_marks * 0.05)::int);
+                UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t1_bonus
                 WHERE user_id = v_referrer_t1;
 
-                -- Trace Tier 2 inviter
                 SELECT referred_by INTO v_referrer_t2 FROM user_stats WHERE user_id = v_referrer_t1;
                 IF v_referrer_t2 IS NOT NULL THEN
-                    -- Tier 2 indirect Academic Scout bonus (+1 Mark)
-                    UPDATE user_stats 
-                    SET total_marks = COALESCE(total_marks, 0) + 1 
+                    v_t2_bonus := GREATEST(1, FLOOR(v_marks * 0.025)::int);
+                    UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t2_bonus
                     WHERE user_id = v_referrer_t2;
                 END IF;
             END IF;
 
         EXCEPTION WHEN unique_violation THEN
             v_first_try := false;
-            SELECT ur.is_correct, ur.marks_awarded
-              INTO v_existing_correct, v_existing_marks
+            SELECT ur.marks_awarded INTO v_existing_marks
               FROM user_responses ur
              WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
-            IF FOUND THEN
-                v_marks := v_existing_marks;
-                v_is_bonus := (v_marks >= 10);
-            ELSE
-                v_marks := 0;
-                v_is_bonus := false;
-            END If;
+            v_marks := COALESCE(v_existing_marks, 0);
         END;
     END IF;
 
     RETURN QUERY
-    SELECT us.total, us.correct, us.total_marks, v_marks, v_first_try, v_is_bonus, us.grade, us.current_streak
+    SELECT us.total, us.correct, us.total_marks, v_marks, v_first_try, v_speed_tier, us.grade, us.current_streak
       FROM user_stats us
      WHERE us.user_id = p_user_id;
 END;
@@ -248,13 +250,12 @@ class QuizEngine:
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
-                # Purge obsolete conflicting database functions before building the current signature
                 print("[DATABASE] Dropping obsolete conflicting definitions of fn_process_user_score...", flush=True)
                 cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, integer, boolean, boolean, integer);")
                 cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, bigint, boolean, boolean, integer);")
                 cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, bigint, boolean, boolean);")
                 cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, integer, boolean, boolean);")
-                
+
                 cur.execute(_FN_PROCESS_USER_SCORE_SQL)
                 conn.commit()
             QuizEngine._fn_ensured = True
@@ -382,6 +383,15 @@ class QuizEngine:
                         admin_reply TEXT,
                         created_at TIMESTAMPTZ DEFAULT NOW(),
                         updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+                cur.execute("ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT NOW();")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_subject_marks (
+                        user_id VARCHAR(20) NOT NULL,
+                        subject VARCHAR(50) NOT NULL,
+                        marks INT DEFAULT 0,
+                        PRIMARY KEY (user_id, subject)
                     );
                 """)
                 conn.commit()
@@ -1228,6 +1238,23 @@ def db_get_user_profile(user_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_user_subject_marks(user_id):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT subject, marks FROM user_subject_marks
+                WHERE user_id = %s ORDER BY marks DESC;
+            """, (str(user_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch subject marks: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
 def db_get_user_response(user_id, message_id):
     conn = None
     try:
@@ -1345,7 +1372,7 @@ def db_mark_question_as_sent(q_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False, bonus_limit=3):
+def process_user_score(user_id, message_id, q_id, is_correct, selected_option, private_message_id=None, show_derivation=False, show_perf=False):
     from src.debug_log import dlog, dlog_exception
     max_attempts = 2
     last_exc = None
@@ -1359,30 +1386,16 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
             conn = GLOBAL_ENGINE.get_db_connection()
             with conn.cursor() as cur:
                 pm_id = int(private_message_id) if private_message_id is not None else None
-                
-                # Highly detailed console tracing to isolate parameter states
-                print(f"\n{Style.CYAN}[DATABASE-CAST-DEBUG] Executing fn_process_user_score with explicit type casts to avoid AmbiguousFunction.{Style.RESET}", flush=True)
-                print(f" ├─ Params: p_user_id={user_id}::text, p_message_id={message_id}::text, p_q_id={q_id}::text", flush=True)
-                print(f" ├─ Params: p_is_correct={is_correct}::boolean, p_selected_option={selected_option}::integer, p_private_message_id={pm_id}::bigint", flush=True)
-                print(f" └─ Params: p_show_derivation={show_derivation}::boolean, p_show_perf={show_perf}::boolean, p_bonus_limit={bonus_limit}::integer\n", flush=True)
-
                 cur.execute(
                     """
                     SELECT * FROM fn_process_user_score(
-                        %s::text,
-                        %s::text,
-                        %s::text,
-                        %s::boolean,
-                        %s::integer,
-                        %s::bigint,
-                        %s::boolean,
-                        %s::boolean,
-                        %s::integer
+                        %s::text, %s::text, %s::text, %s::boolean, %s::integer,
+                        %s::bigint, %s::boolean, %s::boolean
                     );
                     """,
                     (
                         str(user_id), str(message_id), q_id, bool(is_correct), int(selected_option),
-                        pm_id, bool(show_derivation), bool(show_perf), int(bonus_limit)
+                        pm_id, bool(show_derivation), bool(show_perf)
                     )
                 )
                 row = cur.fetchone()
@@ -1405,7 +1418,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 "total_marks": row['o_total_marks'],
                 "marks_awarded": row['o_marks_awarded'],
                 "first_try": row['o_first_try'],
-                "is_bonus_winner": row['o_is_bonus_winner'],
+                "speed_tier": row['o_speed_tier'],
                 "grade": row['o_grade'],
                 "current_streak": row['o_current_streak'],
             }
@@ -1416,24 +1429,11 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                     conn.rollback()
                 except Exception:
                     pass
-
-            print(f"\n{Style.RED}[DATABASE EXCEPTION IN process_user_score]{Style.RESET}", flush=True)
-            print(f" ├─ Attempt:          {attempt}/{max_attempts}", flush=True)
-            print(f" ├─ Error Type:       {type(e).__name__}", flush=True)
-            print(f" ├─ Error Message:    {e}", flush=True)
-            if isinstance(e, psycopg2.Error):
-                print(f" ├─ PgSQL State Code: {e.pgcode}", flush=True)
-                print(f" ├─ PgSQL Error Msg:  {e.pgerror}", flush=True)
-            print(f" └─ Parameters:       user_id={user_id}, message_id={message_id}, q_id={q_id}, is_correct={is_correct}, selected_option={selected_option}", flush=True)
-
             dlog_exception(
                 f"process_user_score (attempt {attempt}/{max_attempts}, "
-                f"user={user_id}, message_id={message_id}, q_id={q_id})",
-                e
+                f"user={user_id}, message_id={message_id}, q_id={q_id})", e
             )
             if attempt < max_attempts:
-                dlog(f"[DEBUG-DB-SCORE] Retrying process_user_score for user={user_id}, "
-                     f"message_id={message_id} after transient failure...")
                 time.sleep(0.5)
                 continue
         finally:
