@@ -2168,3 +2168,77 @@ def db_get_feedback_stats():
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_admin_dashboard_stats():
+    """Aggregates admin-facing platform stats: user counts, country breakdown, question totals, feedback totals."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM user_stats;")
+            total_users = cur.fetchone()['cnt']
+
+            cur.execute("""
+                SELECT COALESCE(o.country, u.personal_country, 'Unknown') AS country, COUNT(DISTINCT u.user_id) AS cnt
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                GROUP BY country
+                ORDER BY cnt DESC
+                LIMIT 10;
+            """)
+            by_country = cur.fetchall()
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM questions;")
+            total_questions = cur.fetchone()['cnt']
+
+            cur.execute("SELECT subject, COUNT(*) AS cnt FROM questions GROUP BY subject ORDER BY cnt DESC;")
+            by_subject = cur.fetchall()
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM organizations;")
+            total_orgs = cur.fetchone()['cnt']
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM user_responses;")
+            total_responses = cur.fetchone()['cnt']
+
+            return {
+                "total_users": total_users,
+                "by_country": by_country,
+                "total_questions": total_questions,
+                "by_subject": by_subject,
+                "total_orgs": total_orgs,
+                "total_responses": total_responses,
+            }
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch admin dashboard stats: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_recent_users(limit: int = 15, offset: int = 0):
+    """Retrieves the most recently active users with key profile details for the admin dashboard."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.username, u.first_name, u.nickname, u.grade, u.total_marks,
+                       u.public_consent_granted,
+                       COALESCE(o.country, u.personal_country, 'Unknown') AS country,
+                       COALESCE(o.city, u.personal_city, 'Unknown') AS city,
+                       u.last_active_at
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                ORDER BY u.last_active_at DESC NULLS LAST
+                LIMIT %s OFFSET %s;
+            """, (limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch recent users: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

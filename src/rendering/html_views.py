@@ -850,7 +850,54 @@ def build_feedback_stats_text(stats: dict) -> str:
         f"<b>By Status</b>\n" + "\n".join(status_lines)
     )
 
+def build_admin_dashboard_text(stats: dict) -> str:
+    """Rich-text admin dashboard overview — sent via send_rich_message_safe so <table> renders
+    as Telegram's native rich table, not the legacy bullet-list fallback."""
+    if not stats:
+        return "<h2>⚠️ ADMIN DASHBOARD</h2>\n<hr/>\nFailed to load stats — check the database connection."
 
+    country_rows = "".join(
+        f"<tr><td>{html.escape(str(r['country']))}</td><td>{r['cnt']}</td></tr>"
+        for r in stats["by_country"]
+    ) or "<tr><td colspan='2'><i>No location data yet.</i></td></tr>"
+
+    subject_rows = "".join(
+        f"<tr><td>{html.escape(str(r['subject']))}</td><td>{r['cnt']}</td></tr>"
+        for r in stats["by_subject"]
+    ) or "<tr><td colspan='2'><i>No questions imported yet.</i></td></tr>"
+
+    return (
+        "<h2>📊 ADMIN DASHBOARD</h2>\n<hr/>\n"
+        f"<b>👥 Total Registered Students:</b> {stats['total_users']}\n"
+        f"<b>🏫 Total School Teams:</b> {stats['total_orgs']}\n"
+        f"<b>📝 Total Question Bank Size:</b> {stats['total_questions']}\n"
+        f"<b>✅ Total Answers Submitted:</b> {stats['total_responses']}\n\n"
+        "<h3>🌍 Students by Country</h3>\n"
+        f"<table><tr><td><b>Country</b></td><td><b>Students</b></td></tr>{country_rows}</table>\n\n"
+        "<h3>📚 Questions by Subject</h3>\n"
+        f"<table><tr><td><b>Subject</b></td><td><b>Count</b></td></tr>{subject_rows}</table>"
+    )
+
+
+def build_user_directory_text(users: list) -> str:
+    """Rich-text paginated user list for the admin dashboard."""
+    if not users:
+        return "<h2>👥 USER DIRECTORY</h2>\n<hr/>\n<i>No users found.</i>"
+
+    rows = []
+    for u in users:
+        name = format_public_name(u)
+        rows.append(
+            f"<tr><td>{html.escape(name)}</td><td>Gr.{u.get('grade') or '-'}</td>"
+            f"<td>{u.get('total_marks', 0)}</td><td>{html.escape(str(u.get('country','-')))}</td></tr>"
+        )
+
+    return (
+        "<h2>👥 USER DIRECTORY (Most Recently Active)</h2>\n<hr/>\n"
+        "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
+        + "".join(rows) + "</table>"
+    )
+    
 def build_feedback_item_text(fb: dict) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
     name = format_public_name(fb)

@@ -842,6 +842,20 @@ async def feedback_command(update: Update, context):
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
+async def admin_dashboard_command(update: Update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    from src.database import db_get_admin_dashboard_stats
+    from src.rendering.html_views import build_admin_dashboard_text
+    stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
+    text = build_admin_dashboard_text(stats)
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
+        InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open")
+    ]])
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
+
 async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
     if not ADMIN_IDS:
         return
@@ -1215,6 +1229,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("feedback", feedback_command))
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
+    app.add_handler(CommandHandler("admin_dashboard", admin_dashboard_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     
     # Priority FSM handler filtering text messages during active state dialog sessions

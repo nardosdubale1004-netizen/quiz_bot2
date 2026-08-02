@@ -28,6 +28,8 @@ from src.database import (
     db_get_feedback_by_id,
     db_update_feedback_status,
     db_get_feedback_list,
+    db_get_admin_dashboard_stats,
+    db_get_recent_users
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -36,6 +38,8 @@ from src.rendering.html_views import (
     build_full_documentation_text,
     build_bot_roadmap_text,
     build_feedback_item_text,
+    build_admin_dashboard_text, 
+    build_user_directory_text
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -522,6 +526,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=build_feedback_item_text(fb), reply_markup=kb)
         return
 
+    elif action == "admin_dashboard":
+        if user_id not in ADMIN_IDS:
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+        stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
+        text = build_admin_dashboard_text(stats)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
+            InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open")
+        ]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "admin_users":
+        if user_id not in ADMIN_IDS:
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+        offset = int(d_id)
+        users = await asyncio.to_thread(db_get_recent_users, 15, offset)
+        text = build_user_directory_text(users)
+        nav_row = []
+        if offset > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{max(0, offset-15)}"))
+        if len(users) == 15:
+            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{offset+15}"))
+        buttons = [nav_row] if nav_row else []
+        buttons.append([InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+        return
     # --- ORIGINAL CORE ENGINE FLOWS ---
 
     track, question_data = await asyncio.to_thread(db_get_track_and_question, int(d_id))
