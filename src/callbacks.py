@@ -119,7 +119,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         else:
             msg = f"✅ <b>Academic Level Registered: Grade {grade}</b>\n\nYour profile is complete."
 
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=msg, reply_markup=return_kb)
+        confirm_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 CHANGE GRADE AGAIN", callback_data="reselect_grade_panel|0")],
+            [InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=msg, reply_markup=confirm_kb)
         return
 
     # --- SIMPLIFIED UNIFIED PROFILE PORTAL CALLBACK FLOWS ---
@@ -171,7 +175,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
              InlineKeyboardButton(_lbl(8), callback_data="set_grade|8")],
             [InlineKeyboardButton(_lbl(10), callback_data="set_grade|10"),
              InlineKeyboardButton(_lbl(12), callback_data="set_grade|12")],
-            [InlineKeyboardButton("🔙 RETURN TO PROFILE", callback_data="privacy_menu|0")]
+            [InlineKeyboardButton("🔙 BACK TO SETTINGS", callback_data="settings_menu|0")],
+            [InlineKeyboardButton("👤 RETURN TO PROFILE", callback_data="privacy_menu|0")]
         ])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
@@ -211,7 +216,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                 [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")]
             ]
 
-        buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="help_topic|teams")])
+        buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="help_menu|0")])
         buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
@@ -229,9 +234,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_STATES[user_id] = "AWAITING_LOCATION_CITY"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
 
-        fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")
-        ]])
+        fsm_cancel_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 BACK TO SETTINGS", callback_data="settings_menu|0")],
+            [InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")]
+        ])
         await query.edit_message_text(
             "📍 <b>PROMPT: YOUR CITY</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -308,10 +314,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer()
         USER_STATES[user_id] = "AWAITING_NICKNAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
-        
-        fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")
-        ]])
+
+        fsm_cancel_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 BACK TO SETTINGS", callback_data="settings_menu|0")],
+            [InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")]
+        ])
         await query.edit_message_text(
             "✍️ <b>PROMPT: SCOREBOARD PSEUDONYM</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"

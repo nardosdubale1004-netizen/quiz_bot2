@@ -62,6 +62,8 @@ from src.database import (
     db_get_user_subject_marks,
     db_get_or_create_referral_token,
     db_get_user_id_by_referral_token,
+    db_add_feedback_message,
+    db_get_feedback_thread,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
