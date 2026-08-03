@@ -31,6 +31,8 @@ from src.database import (
     db_get_country_leaderboard,
     db_get_alliance_leaderboard,
     db_get_tournament_leaderboard,
+    db_get_bot_state,
+    db_set_bot_state,
 )
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe

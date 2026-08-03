@@ -66,7 +66,7 @@ from src.database import (
     db_get_feedback_thread,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
-from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
+from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text, send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.callbacks import handle_callback
 from src.cli import admin_panel
@@ -332,15 +332,31 @@ async def start_command(update: Update, context):
             try:
                 print(f"[TRACE-STEP 3] Active tournament round detected. Reading student history...", flush=True)
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
-                if existing_response:
-                    print(f" └─ Already Answered: User {user_id} is locked out of further responses.", flush=True)
-                    await send_rich_message_safe(
-                        context.bot,
-                        chat_id=update.message.chat_id,
-                        html_content="⚠️ <b>Lockout active!</b>\n\nYou have already submitted your response for this live tournament question. Your selection is locked.",
-                        reply_markup=channel_kb
-                    )
-                    return
+                    if existing_response:
+                        print(f" └─ Already Answered: User {user_id} is locked out of further responses.", flush=True)
+                        lockout_html = (
+                            f"⚠️ <b>Lockout active!</b>\n\n"
+                            f"You've already submitted your response for REF <code>{display_id}</code>. "
+                            f"Your selection is locked — the explanation card will be delivered right here automatically once the round ends."
+                        )
+                        existing_pmid = existing_response.get('private_message_id')
+                        if existing_pmid:
+                            try:
+                                await edit_rich_message_safe(
+                                    context.bot,
+                                    chat_id=update.message.chat_id,
+                                    message_id=existing_pmid,
+                                    html_content=lockout_html,
+                                    reply_markup=channel_kb
+                                )
+                            except Exception as edit_err:
+                                print(f" └─ [LOCKOUT-EDIT-FALLBACK] Could not edit existing placeholder {existing_pmid}: {edit_err}", flush=True)
+                                m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=channel_kb)
+                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                        else:
+                            m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=channel_kb)
+                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                            return
 
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
                 is_correct = (user_selection == question_data['correct_option'])
@@ -640,7 +656,7 @@ async def start_command(update: Update, context):
         m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=kb)
         await asyncio.to_thread(db_update_private_message_id, user_id, track['message_id'], m.message_id)
         return
-        
+
     if args and args[0].startswith("ref_"):
         referrer_token = args[0][4:].strip()
         referrer_id = await asyncio.to_thread(db_get_user_id_by_referral_token, referrer_token)
