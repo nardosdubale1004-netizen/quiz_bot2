@@ -988,42 +988,23 @@ def _status_progress_line(status: str) -> str:
 
 
 def build_user_feedback_list_text(items: list, total_count: int) -> str:
-    """Customer-facing tracker: what this user submitted + which stage each is at."""
     if not items:
         return (
-            "<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n<hr/>\n"
-            "<i>You haven't submitted anything yet. Tap ✍️ SUBMIT NEW FEEDBACK below to "
-            "report a bug, request a feature, or share thoughts — you'll be able to "
-            "track its status right here.</i>"
+            "<b>📋 MY FEEDBACK &amp; REQUESTS</b>\n<hr/>\n"
+            "<i>Nothing submitted yet. Tap ✍️ SUBMIT NEW FEEDBACK to report a bug, "
+            "request a feature, or share your thoughts.</i>"
         )
 
     from src.config import FEEDBACK_CATEGORIES
-
-    blocks = []
+    lines = [f"<b>📋 MY FEEDBACK &amp; REQUESTS</b>  <i>({total_count} total)</i>", "<hr/>"]
     for fb in items:
-        cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
-        created = fb['created_at'].strftime('%b %d, %Y') if fb.get('created_at') else ""
-        snippet = html.escape(fb['message'][:160] + ("…" if len(fb['message']) > 160 else ""))
-        reply_block = ""
-        if fb.get('admin_reply'):
-            reply_block = (
-                f"\n💬 <b>Reply from the team:</b>\n"
-                f"<i>{html.escape(fb['admin_reply'][:200])}</i>\n"
-            )
-        blocks.append(
-            f"<blockquote>"
-            f"<b>#{fb['id']} • {cat_label}</b>  <i>({created})</i>\n"
-            f"{snippet}\n\n"
-            f"{_status_progress_line(fb['status'])}"
-            f"{reply_block}"
-            f"</blockquote>"
-        )
-
-    body = "\n\n".join(blocks)
-    return (
-        f"<h2>📋 MY FEEDBACK &amp; FEATURE REQUESTS</h2>\n"
-        f"<i>Showing {len(items)} of {total_count} submissions</i>\n<hr/>\n\n{body}"
-    )
+        icon = FEEDBACK_CATEGORIES.get(fb['category'], "💬").split(" ", 1)[0]
+        status_icon = _STATUS_PIPELINE_ICONS.get(fb['status'], "🚫")
+        reply_flag = " 💬" if fb.get('admin_reply') else ""
+        snippet = html.escape(fb['message'][:60] + ("…" if len(fb['message']) > 60 else ""))
+        lines.append(f"{icon} <b>#{fb['id']}</b>  {status_icon}{reply_flag}\n<i>{snippet}</i>")
+    lines.append("<hr/>\n<i>Tap a card below to view full details.</i>")
+    return "\n\n".join(lines)
 
 
 def build_feedback_menu_text() -> str:

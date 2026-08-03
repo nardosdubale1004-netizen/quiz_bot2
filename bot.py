@@ -59,7 +59,9 @@ from src.database import (
     db_get_user_feedback_list,
     db_count_user_feedback,
     db_mark_question_shown,
-    db_get_user_subject_marks
+    db_get_user_subject_marks,
+    db_get_or_create_referral_token,
+    db_get_user_id_by_referral_token,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
@@ -690,6 +692,7 @@ async def school_command(update: Update, context):
     user_id = user.id
 
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
 
     if not context.args:
         await update.message.reply_text(
@@ -729,7 +732,7 @@ async def name_command(update: Update, context):
     user_id = user.id
 
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
-
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     if not context.args:
         await update.message.reply_text(
             "📝 <b>How to set your Public Scoreboard Name:</b>\n\n"
@@ -762,35 +765,30 @@ async def name_command(update: Update, context):
 async def leaderboard_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
-
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     args = context.args
+    channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
+    nav_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
+         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
+    ])
 
     if args and args[0].lower() == "school":
         alliance_top = await asyncio.to_thread(db_get_alliance_leaderboard)
-        leaderboard_text = [
-            "🏆 <b>GLOBAL STUDY ALLIANCE STANDINGS</b> 🏆\n",
-            "🔥 <b>TOP 10 SCHOOLS & CLANS:</b>\n"
-        ]
-
+        leaderboard_text = ["🏆 <b>GLOBAL STUDY ALLIANCE STANDINGS</b> 🏆\n", "🔥 <b>TOP 10 SCHOOLS & CLANS:</b>\n"]
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
         if not alliance_top:
-            leaderboard_text.append("<i>No schools have registered points yet. Be the first by typing /school school_name!</i>")
+            leaderboard_text.append("<i>No schools have registered points yet. Be the first with /school school_name!</i>")
         else:
             for i, row in enumerate(alliance_top):
-                leaderboard_text.append(
-                    f" {medals[i]} <b>#{row['alliance_tag']}</b> — <b>{row['total_score']} Marks</b> "
-                    f"({row['active_members']} members)"
-                )
-
-        leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
-        leaderboard_text.append("💡 <i>Encourage your classmates to join and represent your school!</i>")
-        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text))
+                leaderboard_text.append(f" {medals[i]} <b>#{row['alliance_tag']}</b> — <b>{row['total_score']} Marks</b> ({row['active_members']} members)")
+        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=nav_kb)
         return
 
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
-
     if not profile:
         await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Please register your grade first by typing /start.")
         return
@@ -798,13 +796,7 @@ async def leaderboard_command(update: Update, context):
     grade = profile['grade']
     user_marks = profile['total_marks']
     mastery = get_grade_mastery_title(user_marks)
-
     weekly_top = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
-
-    channel_username = CONFIG.get("channel", "grade12EntranceExam").lstrip('@')
-    channel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")
-    ]])
 
     leaderboard_text = [
         f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
@@ -817,52 +809,47 @@ async def leaderboard_command(update: Update, context):
         "━━━━━━━━━━━━━━━━━━━━━━━━",
         "🔥 <b>TOP 10 THIS WEEK:</b>"
     ]
-
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, row in enumerate(weekly_top):
-        user_label = format_public_name(row)
-        leaderboard_text.append(f" {medals[i]} {user_label} — <b>{row['total_score']} Marks</b>")
+        leaderboard_text.append(f" {medals[i]} {format_public_name(row)} — <b>{row['total_score']} Marks</b>")
 
-    leaderboard_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━")
-    leaderboard_text.append(
-        "💡 <i>Tip: Slower students can easily reach Gold level by completing exercises daily! "
-        "Habitual study builds Mastery.</i>"
-    )
-
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=channel_kb)
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=nav_kb)
 
 
 async def invite_command(update: Update, context):
-    """Generates the student's personal referral deep-link (small answering-based bonus, not a recruitment payout)."""
+    """Generates the student's personal referral deep-link."""
     user = update.effective_user
     user_id = user.id
 
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     referral_token = await asyncio.to_thread(db_get_or_create_referral_token, user_id)
+    bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
     invite_link = f"https://t.me/{bot_username}?start=ref_{referral_token}"
 
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
+        InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
+    ]])
+
     await send_rich_message_safe(
-        context.bot,
-        chat_id=update.message.chat_id,
+        context.bot, chat_id=update.message.chat_id,
         html_content=(
             "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
-            "Share your personal link below. When a friend joins through it and answers "
-            "correctly, you get <b>+1 Mark</b> per correct answer they submit — and if they "
-            "later invite someone too, you still get <b>+1 Mark</b> from that second-level "
-            "friend's correct answers.\n\n"
-            "There's no bonus just for recruiting — the marks only come from real answering, "
-            "so most of your score always comes from your own practice.\n\n"
+            "Share your link. When a friend joins and answers correctly, you get "
+            "<b>+1 Mark</b> per correct answer — and a smaller share two levels deep too.\n\n"
             f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>"
-        )
+        ),
+        reply_markup=kb
     )
 
 async def help_command(update: Update, context):
     from src.rendering.html_views import build_help_menu_text, build_help_menu_keyboard
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await send_rich_message_safe(
         context.bot, chat_id=update.message.chat_id,
-        html_content=build_help_menu_text(),
-        reply_markup=build_help_menu_keyboard()
+        html_content=build_help_menu_text(), reply_markup=build_help_menu_keyboard()
     )
 
 async def feedback_command(update: Update, context):
@@ -883,31 +870,26 @@ async def feedback_command(update: Update, context):
     )
 
 async def myfeedback_command(update: Update, context):
-    """Standalone /myfeedback command — kept working for anyone who types it,
-    but intentionally left out of BOT_COMMANDS so it doesn't clutter the '/'
-    menu. The button inside /feedback is the main entry point."""
     user = update.effective_user
     user_id = user.id
-
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, 0)
     total = await asyncio.to_thread(db_count_user_feedback, user_id)
     text = build_user_feedback_list_text(items, total)
 
-    nav_row = []
+    item_rows = [
+        [InlineKeyboardButton(f"#{fb['id']} · {fb['message'][:24]}", callback_data=f"fb_view|{fb['id']}|0")]
+        for fb in items
+    ]
     if total > 5:
-        nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5"))
-    buttons = [nav_row] if nav_row else []
-    buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
+        item_rows.append([InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5")])
+    item_rows.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
+    item_rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-
-    await send_rich_message_safe(
-        context.bot, chat_id=update.message.chat_id,
-        html_content=text,
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+    
 def build_user_directory_text(users: list) -> str:
     """Rich-text paginated user list for the admin dashboard."""
     if not users:
