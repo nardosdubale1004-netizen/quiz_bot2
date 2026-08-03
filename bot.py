@@ -674,6 +674,8 @@ async def profile_command(update: Update, context):
         await update.message.reply_text("🎒 Please type /start first to configure your basic grade profile details.")
         return
 
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+
     org_id = profile.get("org_id")
     from src.database import db_get_user_subject_marks
     subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
@@ -1069,7 +1071,7 @@ async def handle_fsm_message(update: Update, context):
         InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")
     ]])
     cancel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+        InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")
     ]])
 
     if text_input.lower() == "/cancel":

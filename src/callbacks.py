@@ -212,7 +212,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
 
         fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")
         ]])
         await query.edit_message_text(
             "📍 <b>PROMPT: YOUR CITY</b>\n"
@@ -256,8 +256,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         if user_role == "creator":
             buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
         buttons.append([InlineKeyboardButton("🔗 GET TEAM INVITE LINK", callback_data=f"team_invite|{org_id}")])
-        buttons.append([InlineKeyboardButton("🔙 BACK TO TEAM LIST", callback_data="alliance_portal|0")])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        buttons.append([
+            InlineKeyboardButton("🔙 TEAM LIST", callback_data="alliance_portal|0"),
+            InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
     elif action == "leave_org_warn":
@@ -304,7 +307,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         
         fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="privacy_menu|0")
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")
         ]])
         await query.edit_message_text(
             "✍️ <b>PROMPT: SCOREBOARD PSEUDONYM</b>\n"
@@ -324,7 +327,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         
         fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="alliance_portal|0")
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")
         ]])
         await query.edit_message_text(
             "✍️ <b>PROMPT: CREATE SCHOOL TEAM</b>\n"
@@ -342,7 +345,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
         
         fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="alliance_portal|0")
+            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")
         ]])
         await query.edit_message_text(
             "✍️ <b>PROMPT: JOIN SCHOOL TEAM</b>\n"
@@ -669,6 +672,45 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         buttons.append([InlineKeyboardButton("🔙 BACK", callback_data="fb_menu|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
+
+    elif action == "fsm_cancel":
+        await query.answer("Cancelled.")
+        USER_STATES[user_id] = "IDLE"
+        USER_PAYLOADS.pop(user_id, None)
+        destination = d_id or "privacy_menu"
+
+        if destination == "alliance_portal":
+            orgs = await asyncio.to_thread(db_get_user_organizations, user_id)
+            if orgs:
+                text = (
+                    "🏰 <b>YOUR REGISTERED TEAMS</b>\n<hr/>\n"
+                    "Select a team below to view details, rosters, or manage settings:\n"
+                )
+                buttons = [[InlineKeyboardButton(f"🏫 {org['org_name']} (#{org['org_tag']})", callback_data=f"view_org|{org['org_id']}")] for org in orgs]
+                buttons.append([
+                    InlineKeyboardButton("✨ ESTABLISH TEAM", callback_data="fsm_create_org|0"),
+                    InlineKeyboardButton("🔑 JOIN TEAM", callback_data="fsm_join_org|0")
+                ])
+            else:
+                text = (
+                    "🏰 <b>ALLIANCE CLAN PORTAL</b>\n<hr/>\n"
+                    "You are not registered in any Study Alliance yet.\n\nChoose an action below:"
+                )
+                buttons = [
+                    [InlineKeyboardButton("✨ ESTABLISH NEW ALLIANCE", callback_data="fsm_create_org|0")],
+                    [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")]
+                ]
+            buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="alliance_info|0")])
+            buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+    profile = await asyncio.to_thread(db_get_user_profile, user_id)
+    subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
+    text = build_profile_card_text(profile, None, subject_marks)
+    kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+    await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+    return
 
 
     # --- ORIGINAL CORE ENGINE FLOWS ---
