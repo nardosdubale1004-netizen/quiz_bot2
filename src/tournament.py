@@ -353,6 +353,11 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 except (asyncio.CancelledError, Exception) as cancel_err:
                     print(f" └─ [DEBUG-FIX-SUCCESS] Countdown task safely terminated. Trapped error: {type(cancel_err).__name__}", flush=True)
 
+        # Admin-configurable lifetime for the round-complete / interrupted card —
+        # unpinned immediately below either way, then fully deleted after this
+        # many seconds so the channel doesn't accumulate stale tournament chatter.
+        round_complete_ttl = await asyncio.to_thread(db_get_bot_state, "round_complete_ttl_seconds", 300)
+
         if src.config.SHUTTING_DOWN or interrupted:
             print(f"{Style.YELLOW}[TOURNAMENT] Forcing round REF: {last_seq} as interrupted...{Style.RESET}", flush=True)
             if ann_mid:
@@ -367,6 +372,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                         f"We will resume shortly!</i> 🎓"
                     )
                     await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(ann_mid), text=shutdown_text, parse_mode="HTML")
+                    asyncio.create_task(_schedule_message_deletion(app.bot, engine.config['channel'], int(ann_mid), round_complete_ttl))
                 except Exception:
                     pass
         else:
@@ -377,7 +383,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             correct_count = len(correct_responses)
             accuracy_pct = int((correct_count / total_users) * 100) if total_users > 0 else 0
 
-            # Dynamic Alliance/School Score Aggregator for Guild Wars Standings
             alliance_scores = {}
             for r in correct_responses:
                 tag = r.get('alliance_tag')
@@ -410,6 +415,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                 try:
                     dlog(f"[DEBUG-FINALIZE] Step 3a: Editing announcement header card (ann_mid={ann_mid})...")
                     await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(ann_mid), text=normal_close_text, parse_mode="HTML")
+                    asyncio.create_task(_schedule_message_deletion(app.bot, engine.config['channel'], int(ann_mid), round_complete_ttl))
                 except Exception as ann_err:
                     dlog_exception(f"finalize_tournament_round Step 3a (edit announcement, ann_mid={ann_mid})", ann_err)
 
@@ -508,7 +514,20 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     full_tourney_board = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 10)
                     final_completed_text += "\n\n" + build_tournament_leaderboard_text(full_tourney_board, total_rounds, total_rounds)
 
-                    await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
+                    # Retire the previous series' pinned champions card (if any)
+                    # before posting/pinning this one — only ever one champions
+                    # card pinned in the channel at a time.
+                    old_champions_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
+                    if old_champions_mid:
+                        await _unpin_safe(app.bot, engine.config['channel'], old_champions_mid)
+                        try:
+                            await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(old_champions_mid))
+                        except Exception:
+                            pass
+
+                    champ_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
+                    await _pin_safe(app.bot, engine.config['channel'], champ_msg.message_id)
+                    await asyncio.to_thread(db_set_bot_state, "champions_podium_mid", champ_msg.message_id)
                 except Exception as score_err:
                     dlog_exception("finalize_tournament_round Step 6 (final scoreboard)", score_err)
         except Exception as queue_err:
@@ -541,7 +560,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     finally:
         _FINALIZING_ROUNDS.discard(mid)
         dlog(f"[DEBUG-FINALIZE-EXIT] finalize_tournament_round finished for mid={mid}.")
-
+        
 async def emergency_shutdown_cleanup(app, engine: QuizEngine):
     """Emergency finalization hook triggered immediately on SIGTERM/System Shutdown."""
     import src.config
@@ -846,3 +865,13 @@ async def _unpin_safe(bot, chat_id, mid):
         await bot.unpin_chat_message(chat_id=chat_id, message_id=int(mid))
     except Exception as e:
         print(f"[TOURNAMENT] Unpin failed for mid={mid}: {e}", flush=True)
+
+async def _schedule_message_deletion(bot, chat_id, message_id, delay_seconds: int):
+    """Deletes a channel message after a delay — keeps the channel reading as
+    'questions only', not a scroll of round-complete cards and interrupted
+    notices that stay forever."""
+    try:
+        await asyncio.sleep(max(0, delay_seconds))
+        await bot.delete_message(chat_id=chat_id, message_id=int(message_id))
+    except Exception:
+        pass

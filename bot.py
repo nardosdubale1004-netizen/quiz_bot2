@@ -607,12 +607,26 @@ async def start_command(update: Update, context):
             return
 
         existing_response = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
+
+        # Clear out any earlier "no answer yet" nudge for this exact (user, question)
+        # before doing anything else — stops the DM from accumulating a repeat
+        # nudge every single time the user taps the link again from the channel.
+        from src.config import NO_ANSWER_NUDGE_MIDS
+        nudge_key = (user_id, display_id)
+        prev_nudge_mid = NO_ANSWER_NUDGE_MIDS.pop(nudge_key, None)
+        if prev_nudge_mid:
+            asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, prev_nudge_mid))
+
         if not existing_response:
-            await send_rich_message_safe(
+            nudge_msg = await send_rich_message_safe(
                 context.bot, chat_id=update.message.chat_id,
                 html_content=f"📭 <b>No answer on file yet for REF {display_id}.</b>\n\nTap one of the options under the question in the channel first!",
                 reply_markup=channel_kb
             )
+            NO_ANSWER_NUDGE_MIDS[nudge_key] = nudge_msg.message_id
+            nudge_ttl = await asyncio.to_thread(db_get_bot_state, "no_answer_nudge_ttl_seconds", 45)
+            # Ephemeral by design — this is just a nudge, not a record worth keeping.
+            asyncio.create_task(_delayed_delete(context.bot, update.message.chat_id, nudge_msg.message_id, delay_seconds=nudge_ttl))
             return
 
         perf_card = await asyncio.to_thread(process_user_score, user_id, track['message_id'], question_data['id'], existing_response['is_correct'], existing_response['selected_option'])

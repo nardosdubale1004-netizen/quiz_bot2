@@ -415,6 +415,12 @@ class QuizEngine:
                     ) sub
                     WHERE q.id = sub.q_id AND q.last_shown_at IS NULL;
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_state (
+                        key TEXT PRIMARY KEY,
+                        value JSONB
+                    );
+                """)
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -2626,7 +2632,7 @@ def db_get_cooldown_stats(subject: str = None):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 async def db_call_guarded(fn, *args, **kwargs):
     """Runs a sync DB function in a thread, but bounded by DB_SEMAPHORE so a traffic
     spike queues politely instead of exhausting the connection pool and hanging every
@@ -2703,6 +2709,53 @@ def db_count_feedback(status: str = None, category: str = None) -> int:
     except Exception as e:
         print(f"[DB ERROR] Failed to count feedback: {e}", flush=True)
         return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_bot_state(key: str, default=None):
+    """Reads a small persisted admin setting (e.g. cleanup timers, the currently
+    pinned champions-podium message id). Backed by a tiny key/value table so
+    these survive restarts and tournament-queue clears."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM bot_state WHERE key = %s;", (key,))
+            row = cur.fetchone()
+            if not row:
+                return default
+            val = row["value"]
+            if isinstance(val, str):
+                try:
+                    val = json.loads(val)
+                except Exception:
+                    pass
+            return val
+    except Exception as e:
+        print(f"[DB ERROR] Failed to get bot_state[{key}]: {e}", flush=True)
+        return default
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_bot_state(key: str, value) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO bot_state (key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+            """, (key, Json(value)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set bot_state[{key}]: {e}", flush=True)
+        return False
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

@@ -231,6 +231,7 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [6] 📅 Control Center (Scheduled Quizzes & Tournaments)")
         print(f" [7] 🛑 Emergency Stop / Pause Live Tournament")
         print(f" [8] 🎯 Smart Scheduler (Suggest Next Batch)")
+        print(f" [9] ⚙️  Bot Settings (Cleanup Timers)")
         print(f" [0] 🚪 Shutdown System")
 
         choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
@@ -848,6 +849,8 @@ async def admin_panel(app, engine: QuizEngine):
 
         elif choice == "8":
             await render_smart_scheduler(app, engine, cli)
+        elif choice == "9":
+            await render_bot_settings_panel(engine, cli)
 
 
 async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
@@ -1089,24 +1092,53 @@ async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
 async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
     """Admin sets policy once (subject weights, difficulty target); the algorithm
     proposes a diversified, cooldown-safe batch. Admin reviews a summary — not a
-    raw list — and confirms, regenerates, or swaps individual slots."""
+    raw list — and confirms, regenerates, or swaps individual slots.
+
+    Every prompt accepts 'cancel', 'q', or 'exit' (or bare Ctrl+C/EOF) to abort
+    immediately with zero side effects — nothing touches the database until the
+    final [c]onfirm step on the proposed batch itself.
+    """
     from src.database import (
         db_get_scheduling_pool, db_get_recent_post_history, db_mark_question_shown,
-        db_get_question_by_id
+        db_get_question_by_id, db_get_cooldown_stats
     )
     from src.scheduler import select_batch
 
+    def _is_abort(raw: str) -> bool:
+        return raw is None or raw.strip().lower() in ('cancel', 'q', 'exit')
+
     clear_screen()
     print(f"{Style.MAGENTA}{Style.BOLD}--- 🎯 SMART SCHEDULER ---{Style.RESET}\n")
-    print("Set your posting policy (press Enter to use sensible defaults).\n")
+    print(
+        "This auto-picks a diversified batch instead of you hand-selecting.\n"
+        "Two safeguards run underneath every suggestion:\n\n"
+        f"{Style.CYAN}📅 COOLDOWN{Style.RESET} — a question sent to the channel within the last N\n"
+        "   days is completely EXCLUDED from selection (a hard filter, not a soft\n"
+        "   preference). This is what stops students seeing a repeat within three\n"
+        "   weeks. Set N=0 to disable it for this run only.\n\n"
+        f"{Style.CYAN}⚖️  DIVERSITY & BALANCE{Style.RESET} — among what passes cooldown, the scorer\n"
+        "   favors questions unseen the longest, and nudges subject/difficulty mix\n"
+        "   back toward your target ratio.\n\n"
+        "Type 'cancel' at any prompt to abort — nothing is sent until you confirm\n"
+        "the final proposed batch.\n"
+    )
 
-    cooldown_in = await cli.ask("<b>Cooldown days before a question can repeat (default 21): </b>")
+    cooldown_in = await cli.ask("<b>Cooldown days before a question can repeat (default 21, 'cancel' to abort): </b>")
+    if _is_abort(cooldown_in):
+        print(f"{Style.YELLOW}Cancelled.{Style.RESET}")
+        return
     cooldown_days = int(cooldown_in) if cooldown_in and cooldown_in.isdigit() else 21
 
-    batch_in = await cli.ask("<b>How many questions to schedule? (default 5): </b>")
+    batch_in = await cli.ask("<b>How many questions to schedule? (default 5, 'cancel' to abort): </b>")
+    if _is_abort(batch_in):
+        print(f"{Style.YELLOW}Cancelled.{Style.RESET}")
+        return
     batch_n = int(batch_in) if batch_in and batch_in.isdigit() else 5
 
-    diff_in = await cli.ask("<b>Difficulty target easy/medium/hard % (default 40/40/20, e.g. '30 50 20'): </b>")
+    diff_in = await cli.ask("<b>Difficulty target easy/medium/hard % (default 40/40/20, e.g. '30 50 20', 'cancel' to abort): </b>")
+    if _is_abort(diff_in):
+        print(f"{Style.YELLOW}Cancelled.{Style.RESET}")
+        return
     if diff_in:
         try:
             e, m, h = [int(x) / 100.0 for x in diff_in.split()]
@@ -1116,12 +1148,14 @@ async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
     else:
         difficulty_target = {"easy": 0.4, "medium": 0.4, "hard": 0.2}
 
-    boost_in = await cli.ask("<b>Curriculum boost — topic name to prioritize this run (or Enter to skip): </b>")
+    boost_in = await cli.ask("<b>Curriculum boost — topic name to prioritize this run (or Enter to skip, 'cancel' to abort): </b>")
+    if _is_abort(boost_in):
+        print(f"{Style.YELLOW}Cancelled.{Style.RESET}")
+        return
     topic_boosts = {boost_in.strip(): 2.0} if boost_in and boost_in.strip() else {}
 
     pool = await asyncio.to_thread(db_get_scheduling_pool, cooldown_days)
     if not pool:
-        from src.database import db_get_cooldown_stats
         stats = await asyncio.to_thread(db_get_cooldown_stats)
 
         print(f"{Style.RED}⚠️  No eligible questions at a {cooldown_days}-day cooldown.{Style.RESET}\n")
@@ -1138,9 +1172,13 @@ async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
         print("[2] Bypass cooldown entirely for this run (ignores repeat protection)")
         print("[b] Back to Main Cockpit")
         fallback = await cli.ask("<b>Action > </b>")
+        if _is_abort(fallback) or not fallback or fallback == 'b':
+            return
 
         if fallback == "1":
-            new_cd_in = await cli.ask("<b>New cooldown in days: </b>")
+            new_cd_in = await cli.ask("<b>New cooldown in days ('cancel' to abort): </b>")
+            if _is_abort(new_cd_in):
+                return
             if new_cd_in and new_cd_in.isdigit():
                 cooldown_days = int(new_cd_in)
                 pool = await asyncio.to_thread(db_get_scheduling_pool, cooldown_days)
@@ -1179,9 +1217,12 @@ async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
         print(f"\n{Style.CYAN}Mix: {' | '.join(f'{k}: {v}' for k,v in subj_tally.items())}")
         print(f"Difficulty: {' | '.join(f'{k}: {v}' for k,v in diff_tally.items())}{Style.RESET}\n")
 
-        print("[c] Confirm & Send Now  [r] Regenerate  [s] Swap one slot  [b] Back")
+        print("[c] Confirm & Send Now  [r] Regenerate  [s] Swap one slot  [x] Cancel & Abort")
         action = await cli.ask("<b>Action > </b>")
 
+        if action is None or action == 'x':
+            print(f"{Style.YELLOW}Cancelled — nothing was sent.{Style.RESET}")
+            return
         if not action or action == 'b':
             return
 
@@ -1189,8 +1230,8 @@ async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
             continue
 
         if action == 's':
-            idx_in = await cli.ask(f"<b>Slot to swap (1-{len(selected)}): </b>")
-            if idx_in and idx_in.isdigit() and 1 <= int(idx_in) <= len(selected):
+            idx_in = await cli.ask(f"<b>Slot to swap (1-{len(selected)}, 'cancel' to abort swap): </b>")
+            if idx_in and idx_in.strip().lower() not in ('cancel', 'q', 'exit') and idx_in.isdigit() and 1 <= int(idx_in) <= len(selected):
                 idx = int(idx_in) - 1
                 remaining_pool = [q for q in pool if q["id"] not in [s["id"] for s in selected]]
                 if remaining_pool:
@@ -1298,3 +1339,40 @@ async def render_emergency_stop_panel(app, engine: QuizEngine, cli: CLI):
             await halt_active_tournament(app, engine, clear_queue=True, halt_reason=reason)
             print(f"{Style.RED}✅ Live tournament deleted and wiped.{Style.RESET}")
             await asyncio.sleep(2.0)
+
+
+async def render_bot_settings_panel(engine: QuizEngine, cli: CLI):
+    """CRUD panel for bot-wide runtime settings stored in the `bot_state` table —
+    the two auto-cleanup timers that keep the channel and DMs uncluttered."""
+    from src.database import db_get_bot_state, db_set_bot_state
+
+    while True:
+        clear_screen()
+        round_ttl = await asyncio.to_thread(db_get_bot_state, "round_complete_ttl_seconds", 300)
+        nudge_ttl = await asyncio.to_thread(db_get_bot_state, "no_answer_nudge_ttl_seconds", 45)
+
+        print(f"{Style.MAGENTA}{Style.BOLD}--- ⚙️  BOT SETTINGS ---{Style.RESET}\n")
+        print("Controls how long transient messages stay visible before auto-deleting.\n")
+        print(f"  [1] Round-complete card lifetime:  {Style.CYAN}{round_ttl}s{Style.RESET}")
+        print(f"      (how long the 🏁 ROUND COMPLETE / interrupted-round card stays")
+        print(f"       visible in the channel before auto-deleting)\n")
+        print(f"  [2] DM 'no answer yet' nudge lifetime: {Style.CYAN}{nudge_ttl}s{Style.RESET}")
+        print(f"      (how long the 📭 nudge stays before auto-deleting itself)\n")
+        print("  [b] Back to Main Cockpit")
+
+        choice = await cli.ask("<b>Setting to edit > </b>")
+        if not choice or choice == 'b':
+            return
+
+        if choice == "1":
+            val = await cli.ask(f"<b>New round-complete lifetime in seconds (current {round_ttl}, 'cancel' to abort): </b>")
+            if val and val.strip().lower() not in ('cancel', 'q', 'exit') and val.isdigit():
+                await asyncio.to_thread(db_set_bot_state, "round_complete_ttl_seconds", int(val))
+                print(f"{Style.GREEN}✅ Updated.{Style.RESET}")
+                await asyncio.sleep(1.0)
+        elif choice == "2":
+            val = await cli.ask(f"<b>New nudge lifetime in seconds (current {nudge_ttl}, 'cancel' to abort): </b>")
+            if val and val.strip().lower() not in ('cancel', 'q', 'exit') and val.isdigit():
+                await asyncio.to_thread(db_set_bot_state, "no_answer_nudge_ttl_seconds", int(val))
+                print(f"{Style.GREEN}✅ Updated.{Style.RESET}")
+                await asyncio.sleep(1.0)
