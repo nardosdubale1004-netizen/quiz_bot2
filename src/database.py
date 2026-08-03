@@ -385,6 +385,16 @@ class QuizEngine:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS feedback_messages (
+                        id SERIAL PRIMARY KEY,
+                        feedback_id INTEGER REFERENCES feedback(id) ON DELETE CASCADE,
+                        sender_role VARCHAR(10) NOT NULL,
+                        sender_user_id VARCHAR(20),
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
                 cur.execute("ALTER TABLE sent_tracks ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT NOW();")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS user_subject_marks (
@@ -2280,7 +2290,45 @@ def db_save_feedback_reply(feedback_id: int, reply_text: str) -> bool:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_add_feedback_message(feedback_id: int, sender_role: str, sender_user_id, message: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO feedback_messages (feedback_id, sender_role, sender_user_id, message)
+                VALUES (%s, %s, %s, %s);
+            """, (int(feedback_id), sender_role, str(sender_user_id) if sender_user_id else None, message))
 
+            if sender_role == "admin":
+                cur.execute("UPDATE feedback SET admin_reply = %s, status = 'in_progress', updated_at = NOW() WHERE id = %s;", (message, int(feedback_id)))
+            else:
+                cur.execute("UPDATE feedback SET status = 'open', updated_at = NOW() WHERE id = %s;", (int(feedback_id),))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to add feedback message: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_feedback_thread(feedback_id: int):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM feedback_messages WHERE feedback_id = %s ORDER BY created_at ASC;", (int(feedback_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch feedback thread: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 def db_get_feedback_stats():
     """Returns counts grouped by category and by status — powers the admin progress dashboard."""
     conn = None

@@ -889,7 +889,7 @@ async def myfeedback_command(update: Update, context):
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
-    
+
 def build_user_directory_text(users: list) -> str:
     """Rich-text paginated user list for the admin dashboard."""
     if not users:
@@ -1265,23 +1265,62 @@ async def handle_fsm_message(update: Update, context):
         elif state == "AWAITING_ADMIN_REPLY":
             target_fb_id = session.get("fb_id")
             target_user_id = session.get("target_user_id")
+            return_state = session.get("return_state")
             reply_text = text_input[:1000].strip()
             if not reply_text:
                 return
 
-            await asyncio.to_thread(db_save_feedback_reply, target_fb_id, reply_text)
+            await asyncio.to_thread(db_add_feedback_message, target_fb_id, "admin", user_id, reply_text)
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
 
             try:
+                notify_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 VIEW & REPLY", callback_data=f"fb_view|{target_fb_id}|0")]])
                 await send_rich_message_safe(
                     context.bot, chat_id=int(target_user_id),
-                    html_content=f"💬 <b>Reply to your feedback #{target_fb_id}</b>\n\n<blockquote>{html.escape(reply_text)}</blockquote>"
+                    html_content=f"💬 <b>Reply to your feedback #{target_fb_id}</b>\n\n<blockquote>{html.escape(reply_text)}</blockquote>",
+                    reply_markup=notify_kb
                 )
             except Exception:
                 pass
 
-            await _fsm_advance(context, update.message.chat_id, edit_mid, f"✅ Reply sent to user for feedback #{target_fb_id}.", None)
+            from src.rendering.html_views import build_feedback_thread_text
+            from src.callbacks import _build_feedback_detail_keyboard
+            fb = await asyncio.to_thread(db_get_feedback_by_id, target_fb_id)
+            thread = await asyncio.to_thread(db_get_feedback_thread, target_fb_id)
+            kb = _build_feedback_detail_keyboard(target_fb_id, return_state)
+            await _fsm_advance(context, update.message.chat_id, edit_mid, build_feedback_thread_text(fb, thread), kb)
+        elif state == "AWAITING_USER_FEEDBACK_REPLY":
+            fb_id = session.get("fb_id")
+            return_offset = session.get("return_offset", "0")
+            reply_text = text_input[:1000].strip()
+            if not reply_text:
+                return
+
+            await asyncio.to_thread(db_add_feedback_message, fb_id, "user", user_id, reply_text)
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
+
+            from src.rendering.html_views import build_feedback_thread_text
+            fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+            thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
+                [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
+            ])
+            await _fsm_advance(context, update.message.chat_id, edit_mid, build_feedback_thread_text(fb, thread), kb)
+
+            try:
+                from src.database import db_get_all_admin_ids
+                admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+                for admin_id in admin_ids:
+                    try:
+                        notice_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 VIEW & REPLY", callback_data=f"fb_item|{fb_id}|all:all:0")]])
+                        await send_rich_message_safe(context.bot, chat_id=admin_id, html_content=f"🆕 <b>New reply on feedback #{fb_id}</b>\n\n<blockquote>{html.escape(reply_text)}</blockquote>", reply_markup=notice_kb)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     except Exception:
         traceback.print_exc()
         await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Connection Error: Failed to commit your input.", profile_nav_kb)

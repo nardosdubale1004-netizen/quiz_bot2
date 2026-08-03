@@ -1039,3 +1039,17 @@ def build_feedback_browse_list_text(items: list, category: str, status: str, off
         lines.append(f"{status_icon} <b>#{fb['id']}</b> {cat_short} — {snippet}\n   <i>by {name}</i>")
 
     return "\n\n".join(lines)
+
+def build_feedback_thread_text(fb: dict, thread: list) -> str:
+    from src.config import FEEDBACK_CATEGORIES
+    cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
+    lines = [
+        f"<b>#{fb['id']} • {cat_label}</b>",
+        _status_progress_line(fb['status']),
+        "<hr/>",
+        f"<blockquote><b>🧑 You:</b>\n{html.escape(fb['message'])}</blockquote>"
+    ]
+    for m in thread:
+        who = "🛠️ Support" if m['sender_role'] == "admin" else "🧑 You"
+        lines.append(f"<blockquote><b>{who}:</b>\n{html.escape(m['message'])}</blockquote>")
+    return "\n\n".join(lines)
