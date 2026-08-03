@@ -855,19 +855,23 @@ def build_help_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(HELP_TOPICS[k][0], callback_data=f"help_topic|{k}")
             for k in keys[i:i+2]
         ])
-    rows.append([InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
+    rows.append([
+        InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0"),
+        InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
+    ])
     return InlineKeyboardMarkup(rows)
 
+
+def build_help_topic_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 BACK TO HELP", callback_data="help_menu|0")],
+        [InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")]
+    ])
 
 def build_help_topic_text(key: str) -> str:
     topic = HELP_TOPICS.get(key)
     return topic[1] if topic else "⚠️ Topic not found."
 
-
-def build_help_topic_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 BACK TO HELP", callback_data="help_menu|0")
-    ]])
 
 
 def build_feedback_stats_text(stats: dict) -> str:

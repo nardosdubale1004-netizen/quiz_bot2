@@ -1375,20 +1375,60 @@ async def whoami_command(update: Update, context):
         f"\"admin_ids\" list, then restart the bot to unlock /admin_dashboard.",
         parse_mode="HTML", reply_markup=nav_kb
     )
-    
-async def unknown_command_handler(update: Update, context):
-    """Catches any /command not matched by a registered handler above it."""
+
+
+async def cancel_command(update, context):
+    user_id = update.effective_user.id
+    state = USER_STATES.get(user_id)
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+
+    if not state or state == "IDLE":
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+        notice = await context.bot.send_message(chat_id=update.message.chat_id, text="Nothing to cancel right now.", reply_markup=nav_kb)
+        asyncio.create_task(_delayed_delete(context.bot, update.message.chat_id, notice.message_id, delay_seconds=6))
+        return
+
+    session = USER_PAYLOADS.get(user_id, {})
+    edit_mid = session.get("edit_mid")
+    prior_state = state
+    USER_STATES[user_id] = "IDLE"
+    USER_PAYLOADS.pop(user_id, None)
+
+    profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]])
+
+    if prior_state in ("AWAITING_FEEDBACK_TEXT", "AWAITING_ADMIN_REPLY", "AWAITING_USER_FEEDBACK_REPLY"):
+        cancel_return_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
+            [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+        ])
+        await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b>", cancel_return_kb)
+    else:
+        await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
+
+
+BOT_COMMAND_LIST_TEXT = (
+    "❓ <b>Unknown command.</b>\n\n"
+    "Here's everything I understand:\n"
+    "• /start — register or reopen your profile\n"
+    "• /profile — score, streak, team, settings\n"
+    "• /leaderboard — weekly grade rankings\n"
+    "• /leaderboard school — school team rankings\n"
+    "• /invite — get your referral link\n"
+    "• /feedback — report a bug or share thoughts\n"
+    "• /myfeedback — track your submitted feedback\n"
+    "• /name YOUR_NICKNAME — set scoreboard name\n"
+    "• /school CODE — join a team by code\n"
+    "• /cancel — cancel whatever you're doing\n"
+    "• /help — full help menu"
+)
+
+async def unknown_command_handler(update, context):
     chat_id = update.message.chat_id
     cmd_mid = update.message.message_id
-
     asyncio.create_task(_delete_silent(context.bot, chat_id, cmd_mid))
-
-    notice = await context.bot.send_message(
-        chat_id=chat_id,
-        text="❓ <b>Unknown command.</b> Type /help to see everything I understand.",
-        parse_mode="HTML"
-    )
-    asyncio.create_task(_delayed_delete(context.bot, chat_id, notice.message_id, delay_seconds=8))
+    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+    notice = await context.bot.send_message(chat_id=chat_id, text=BOT_COMMAND_LIST_TEXT, parse_mode="HTML", reply_markup=nav_kb)
+    asyncio.create_task(_delayed_delete(context.bot, chat_id, notice.message_id, delay_seconds=15))
 
 
 def main():
@@ -1442,14 +1482,14 @@ def main():
     app.add_handler(CommandHandler("school", school_command))
     app.add_handler(CommandHandler("name", name_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
-    # Priority FSM handler filtering text messages during active state dialog sessions
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_fsm_message), group=-1)
 
-    # Catch-all: any /command not matched above. Must be added LAST among command handlers.
+    # Must stay LAST — catches every /command not matched above
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
-
+    
     RENDER_PORT = os.getenv("PORT")
 
     if RENDER_PORT:
