@@ -421,6 +421,19 @@ class QuizEngine:
                         value JSONB
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS channel_campaigns (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT UNIQUE NOT NULL,
+                        html_content TEXT NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        pin_it BOOLEAN DEFAULT TRUE,
+                        schedule JSONB DEFAULT '{"enabled": false}'::jsonb,
+                        posted_mid BIGINT,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -2755,6 +2768,153 @@ def db_set_bot_state(key: str, value) -> bool:
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to set bot_state[{key}]: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_create_campaign(name: str, html_content: str, pin_it: bool = True) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO channel_campaigns (name, html_content, pin_it)
+                VALUES (%s, %s, %s);
+            """, (name.strip(), html_content, pin_it))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to create campaign: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_all_campaigns(active_only: bool = False):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            clause = "WHERE is_active = TRUE" if active_only else ""
+            cur.execute(f"SELECT * FROM channel_campaigns {clause} ORDER BY id ASC;")
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to list campaigns: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_campaign_by_name(name: str):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM channel_campaigns WHERE name = %s;", (name.strip(),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch campaign: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_update_campaign_content(name: str, html_content: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE channel_campaigns SET html_content = %s, updated_at = NOW()
+                WHERE name = %s;
+            """, (html_content, name.strip()))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to update campaign content: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_campaign_active(name: str, is_active: bool) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE channel_campaigns SET is_active = %s, updated_at = NOW()
+                WHERE name = %s;
+            """, (is_active, name.strip()))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to toggle campaign: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_campaign_schedule(name: str, schedule: dict) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE channel_campaigns SET schedule = %s, updated_at = NOW()
+                WHERE name = %s;
+            """, (Json(schedule), name.strip()))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set campaign schedule: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_campaign_posted_mid(name: str, mid) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE channel_campaigns SET posted_mid = %s WHERE name = %s;
+            """, (int(mid) if mid else None, name.strip()))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set campaign posted_mid: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_delete_campaign(name: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM channel_campaigns WHERE name = %s;", (name.strip(),))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to delete campaign: {e}", flush=True)
         return False
     finally:
         if conn:

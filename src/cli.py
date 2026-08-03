@@ -232,7 +232,8 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [7] 🛑 Emergency Stop / Pause Live Tournament")
         print(f" [8] 🎯 Smart Scheduler (Suggest Next Batch)")
         print(f" [9] ⚙️  Bot Settings (Cleanup Timers)")
-        print(f" [W] 👋 Post & Pin Welcome/Intro Message")
+        print(f" [C] 📢 Manage Channel Campaigns (Welcome/Ads/Announcements)")
+        print(f" [U] 📌 Unpin All Channel Pins (Welcome + Tournament)")
         print(f" [0] 🚪 Shutdown System")
 
         choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
@@ -852,15 +853,17 @@ async def admin_panel(app, engine: QuizEngine):
             await render_smart_scheduler(app, engine, cli)
         elif choice == "9":
             await render_bot_settings_panel(engine, cli)
-            
-        elif choice.upper() == "W":
-            from src.tournament import post_welcome_message
-            confirm = await cli.ask("<b>Post/repost the pinned welcome message now? (y/n): </b>")
-            if confirm and confirm.lower() == 'y':
-                await post_welcome_message(app, engine)
-                print(f"{Style.GREEN}✅ Welcome message posted and pinned.{Style.RESET}")
-                await asyncio.sleep(1.5)
 
+        elif choice.upper() == "C":
+            await render_campaign_manager(app, engine, cli)
+
+        elif choice.upper() == "U":
+            from src.tournament import unpin_all_channel_messages
+            confirm = await cli.ask("<b>Unpin welcome card AND any tournament pin? (y/n): </b>")
+            if confirm and confirm.lower() == 'y':
+                await unpin_all_channel_messages(app, engine)
+                print(f"{Style.GREEN}✅ All channel pins cleared.{Style.RESET}")
+                await asyncio.sleep(1.5)
 
 async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):
     """Control panel that lists and modifies scheduled single questions and pending tournaments."""
@@ -1385,3 +1388,110 @@ async def render_bot_settings_panel(engine: QuizEngine, cli: CLI):
                 await asyncio.to_thread(db_set_bot_state, "no_answer_nudge_ttl_seconds", int(val))
                 print(f"{Style.GREEN}✅ Updated.{Style.RESET}")
                 await asyncio.sleep(1.0)
+
+async def render_campaign_manager(app, engine, cli: CLI):
+    from src.database import (
+        db_get_all_campaigns, db_get_campaign_by_name, db_create_campaign,
+        db_update_campaign_content, db_set_campaign_active, db_set_campaign_schedule,
+        db_delete_campaign
+    )
+    from src.tournament import post_campaign_now
+
+    while True:
+        clear_screen()
+        campaigns = await asyncio.to_thread(db_get_all_campaigns)
+        print(f"{Style.MAGENTA}{Style.BOLD}--- 📢 CHANNEL CAMPAIGNS (Welcome / Ads / Announcements) ---{Style.RESET}\n")
+        if not campaigns:
+            print("  (No campaigns yet — create one below)")
+        for i, c in enumerate(campaigns):
+            status = f"{Style.GREEN}ON{Style.RESET}" if c['is_active'] else f"{Style.RED}OFF{Style.RESET}"
+            pin_lbl = "📌 pinned" if c['pin_it'] else "unpinned"
+            sched = c.get('schedule') or {}
+            sched_lbl = "always-on" if not sched.get("enabled") else f"{sched.get('start_hour_utc')}h-{sched.get('end_hour_utc')}h UTC"
+            print(f"  {i+1}. [{status}] {c['name']}  ({pin_lbl}, {sched_lbl})")
+
+        print(f"\n{Style.CYAN}[n] New campaign  [e] Edit content  [t] Toggle on/off  [s] Set schedule  [p] Post now  [d] Delete  [b] Back{Style.RESET}")
+        action = await cli.ask("<b>Action > </b>")
+        if not action or action == 'b':
+            return
+
+        if action == 'n':
+            name = await cli.ask("<b>Campaign name (unique, e.g. 'welcome' or 'summer_promo'): </b>")
+            if not name:
+                continue
+            print(f"{Style.YELLOW}Paste your rich HTML content. Type END on its own line when done:{Style.RESET}")
+            lines = []
+            while True:
+                line = await cli.ask("")
+                if line is None or line.strip() == "END":
+                    break
+                lines.append(line)
+            html_content = "\n".join(lines)
+            pin_in = await cli.ask("<b>Pin this campaign when active? (y/n, default y): </b>")
+            pin_it = (pin_in or "y").lower() != 'n'
+            ok = await asyncio.to_thread(db_create_campaign, name, html_content, pin_it)
+            print(f"{Style.GREEN if ok else Style.RED}{'✅ Created.' if ok else '❌ Failed (name may already exist).'}{Style.RESET}")
+            await asyncio.sleep(1.2)
+
+        elif action == 'e':
+            name = await cli.ask("<b>Campaign name to edit: </b>")
+            if not name:
+                continue
+            print(f"{Style.YELLOW}Paste replacement HTML content. Type END on its own line when done:{Style.RESET}")
+            lines = []
+            while True:
+                line = await cli.ask("")
+                if line is None or line.strip() == "END":
+                    break
+                lines.append(line)
+            ok = await asyncio.to_thread(db_update_campaign_content, name, "\n".join(lines))
+            print(f"{Style.GREEN if ok else Style.RED}{'✅ Updated.' if ok else '❌ Not found.'}{Style.RESET}")
+            await asyncio.sleep(1.2)
+
+        elif action == 't':
+            name = await cli.ask("<b>Campaign name to toggle: </b>")
+            c = await asyncio.to_thread(db_get_campaign_by_name, name) if name else None
+            if c:
+                await asyncio.to_thread(db_set_campaign_active, name, not c['is_active'])
+                print(f"{Style.GREEN}✅ Now {'OFF' if c['is_active'] else 'ON'}.{Style.RESET}")
+            await asyncio.sleep(1.0)
+
+        elif action == 's':
+            name = await cli.ask("<b>Campaign name to schedule: </b>")
+            if not name:
+                continue
+            mode = await cli.ask("<b>[1] Set daily/weekly window  [2] Always-on (disable schedule): </b>")
+            if mode == "1":
+                days_in = await cli.ask("<b>Days (0=Mon..6=Sun, comma-separated, blank=every day): </b>")
+                days = [int(d.strip()) for d in days_in.split(",") if d.strip().isdigit()] if days_in else list(range(7))
+                start_in = await cli.ask("<b>Start hour UTC (0-23): </b>")
+                end_in = await cli.ask("<b>End hour UTC (0-23): </b>")
+                schedule = {
+                    "enabled": True, "days": days,
+                    "start_hour_utc": int(start_in) if start_in and start_in.isdigit() else 8,
+                    "end_hour_utc": int(end_in) if end_in and end_in.isdigit() else 20,
+                }
+            else:
+                schedule = {"enabled": False}
+            await asyncio.to_thread(db_set_campaign_schedule, name, schedule)
+            print(f"{Style.GREEN}✅ Schedule saved. Takes effect within 60s.{Style.RESET}")
+            await asyncio.sleep(1.2)
+
+        elif action == 'p':
+            name = await cli.ask("<b>Campaign name to post right now: </b>")
+            c = await asyncio.to_thread(db_get_campaign_by_name, name) if name else None
+            if c:
+                await post_campaign_now(app, engine, c)
+                print(f"{Style.GREEN}✅ Posted{' and pinned' if c['pin_it'] else ''}.{Style.RESET}")
+            else:
+                print(f"{Style.RED}Not found.{Style.RESET}")
+            await asyncio.sleep(1.2)
+
+        elif action == 'd':
+            name = await cli.ask("<b>Campaign name to delete (content only — does not delete the posted channel message): </b>")
+            if name:
+                confirm = await cli.ask(f"<b>Confirm delete '{name}'? (y/n): </b>")
+                if confirm and confirm.lower() == 'y':
+                    await asyncio.to_thread(db_delete_campaign, name)
+                    print(f"{Style.GREEN}✅ Deleted.{Style.RESET}")
+                    await asyncio.sleep(1.0)

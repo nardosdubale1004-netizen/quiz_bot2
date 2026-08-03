@@ -87,13 +87,27 @@ async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_mar
     # For channel sends (chat_id is the channel's string/negative id) this is a harmless
     # no-op lookup miss.
     try:
-        from src.config import LAST_UTILITY_MID
+        from src.config import LAST_UTILITY_MID, NO_ANSWER_NUDGE_MIDS
         stale_utility_mid = LAST_UTILITY_MID.pop(chat_id, None)
         if stale_utility_mid:
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=stale_utility_mid)
             except Exception:
                 pass
+
+        # "No answer on file yet" nudges only ever cleaned themselves up via TTL or a
+        # re-tap on the SAME question's link. If a DIFFERENT question's answer card lands
+        # in this DM first, the nudge stays stranded between two unrelated cards. Since
+        # NO_ANSWER_NUDGE_MIDS is keyed by (user_id, display_id), sweep every entry for
+        # this chat (== user_id in a private DM) before sending anything new here.
+        stale_nudge_keys = [k for k in NO_ANSWER_NUDGE_MIDS if isinstance(k, tuple) and k[0] == chat_id]
+        for k in stale_nudge_keys:
+            nudge_mid = NO_ANSWER_NUDGE_MIDS.pop(k, None)
+            if nudge_mid:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=nudge_mid)
+                except Exception:
+                    pass
     except Exception:
         pass
 

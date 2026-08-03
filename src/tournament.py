@@ -41,6 +41,7 @@ from src.rendering.html_views import format_public_name, build_champions_podium_
 _ACTIVE_COUNTDOWNS = {}
 _FINALIZING_ROUNDS = set()
 _LAST_COUNTDOWN_TEXT = {}
+_LAST_WELCOME_RECONCILE = 0.0
 _LAUNCH_LOCK = asyncio.Lock()
 _SENT_ERROR_ALERTS = set()  # Rate-limiting safety memory register to prevent channel spamming
 
@@ -309,6 +310,13 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     final_msg_id = mid
 
     db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
+    global _LAST_WELCOME_RECONCILE
+        if time.time() - _LAST_WELCOME_RECONCILE > 60:
+            _LAST_WELCOME_RECONCILE = time.time()
+            try:
+                await reconcile_channel_campaigns(app, engine)
+            except Exception as pin_err:
+                dlog_exception("tournament_watcher_loop reconcile_channel_campaigns", pin_err)
     await asyncio.to_thread(db_update_tournament_meta_field, "last_closed_at", db_epoch)
     dlog(f"[CONSOLIDATED-FIX] Synchronized round close time to DB tournament_meta: {db_epoch}")
 
@@ -879,26 +887,109 @@ async def _schedule_message_deletion(bot, chat_id, message_id, delay_seconds: in
     except Exception:
         pass
 
-async def post_welcome_message(app, engine: QuizEngine):
-    """Posts (or reposts) the pinned welcome/intro card to the channel. If a previous
-    welcome card is already pinned, it's unpinned and deleted first — exactly one welcome
-    card is ever pinned at a time, same pattern as the tournament champions podium."""
-    from src.rendering.html_views import build_welcome_message_text
+async def post_campaign_now(app, engine: QuizEngine, campaign: dict):
+    """Posts (or reposts) a single campaign to the channel. If it was already posted,
+    the old copy is unpinned/deleted first — never leaves duplicates behind."""
     from src.rendering.rich_helpers import send_rich_message_safe
 
-    old_mid = await asyncio.to_thread(db_get_bot_state, "welcome_mid", None)
+    old_mid = campaign.get('posted_mid')
     if old_mid:
-        await _unpin_safe(app.bot, engine.config['channel'], old_mid)
+        if campaign.get('pin_it'):
+            await _unpin_safe(app.bot, engine.config['channel'], old_mid)
         try:
             await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(old_mid))
         except Exception:
             pass
 
-    msg = await send_rich_message_safe(
-        app.bot,
-        chat_id=engine.config['channel'],
-        html_content=build_welcome_message_text()
-    )
-    await _pin_safe(app.bot, engine.config['channel'], msg.message_id)
-    await asyncio.to_thread(db_set_bot_state, "welcome_mid", msg.message_id)
+    msg = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=campaign['html_content'])
+    if campaign.get('pin_it'):
+        await _pin_safe(app.bot, engine.config['channel'], msg.message_id)
+    await asyncio.to_thread(db_set_campaign_posted_mid, campaign['name'], msg.message_id)
     return msg
+
+
+def _campaign_in_schedule_window(schedule: dict) -> bool:
+    """No schedule (or disabled) = always-on whenever the campaign is active."""
+    if not schedule or not schedule.get("enabled"):
+        return True
+    now_utc = datetime.now(timezone.utc)
+    return (
+        now_utc.weekday() in schedule.get("days", list(range(7)))
+        and schedule.get("start_hour_utc", 0) <= now_utc.hour < schedule.get("end_hour_utc", 24)
+    )
+
+
+async def reconcile_channel_campaigns(app, engine: QuizEngine):
+    """
+    Runs every ~60s from the watcher loop. For every active campaign:
+    - Tournament rounds/queue ALWAYS take pin priority — a pinning campaign is unpinned
+      (content untouched, just unpinned) the moment a round is live or queued, and
+      re-pins automatically once tournament activity clears.
+    - Outside tournament activity, honors each campaign's own schedule window: posts +
+      pins when the window opens, unpins when it closes. Non-pinning campaigns (pin_it
+      = False, e.g. a plain announcement) just get posted once and left alone — no
+      schedule-driven pin/unpin churn for those.
+    """
+    from src.database import db_get_all_campaigns, db_set_campaign_posted_mid
+
+    active_rounds = await asyncio.to_thread(db_get_active_tournament_rounds)
+    queue = await asyncio.to_thread(db_get_tournament_queue)
+    tournament_busy = bool(active_rounds) or bool(queue and queue.get('remaining_ids'))
+
+    campaigns = await asyncio.to_thread(db_get_all_campaigns, True)
+    for c in campaigns:
+        if not c.get('pin_it'):
+            if not c.get('posted_mid'):
+                await post_campaign_now(app, engine, c)
+            continue
+
+        if tournament_busy:
+            if c.get('posted_mid'):
+                await _unpin_safe(app.bot, engine.config['channel'], c['posted_mid'])
+            continue
+
+        in_window = _campaign_in_schedule_window(c.get('schedule') or {})
+        if in_window and not c.get('posted_mid'):
+            await post_campaign_now(app, engine, c)
+        elif in_window and c.get('posted_mid'):
+            await _pin_safe(app.bot, engine.config['channel'], c['posted_mid'])
+        elif not in_window and c.get('posted_mid'):
+            await _unpin_safe(app.bot, engine.config['channel'], c['posted_mid'])
+
+
+async def unpin_all_channel_messages(app, engine: QuizEngine):
+    """Admin safety-valve: unpins every campaign pin AND any active tournament
+    announcement/champions-podium pin — content stays intact, only unpinned."""
+    from src.database import db_get_all_campaigns
+
+    for c in await asyncio.to_thread(db_get_all_campaigns):
+        if c.get('posted_mid'):
+            await _unpin_safe(app.bot, engine.config['channel'], c['posted_mid'])
+
+    champ_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
+    if champ_mid:
+        await _unpin_safe(app.bot, engine.config['channel'], champ_mid)
+
+    queue = await asyncio.to_thread(db_get_tournament_queue)
+    if queue and queue.get('announcement_mid'):
+        await _unpin_safe(app.bot, engine.config['channel'], queue['announcement_mid'])
+
+    for track in await asyncio.to_thread(db_get_active_tournament_rounds):
+        if track.get('followup_mid'):
+            await _unpin_safe(app.bot, engine.config['channel'], track['followup_mid'])
+
+async def unpin_all_channel_messages(app, engine: QuizEngine):
+    """Admin safety-valve: unpins the welcome card AND any active tournament
+    announcement/champions-podium pin — content is left intact, only unpinned."""
+    for key in ("welcome_mid", "champions_podium_mid"):
+        mid = await asyncio.to_thread(db_get_bot_state, key, None)
+        if mid:
+            await _unpin_safe(app.bot, engine.config['channel'], mid)
+
+    queue = await asyncio.to_thread(db_get_tournament_queue)
+    if queue and queue.get('announcement_mid'):
+        await _unpin_safe(app.bot, engine.config['channel'], queue['announcement_mid'])
+
+    for track in await asyncio.to_thread(db_get_active_tournament_rounds):
+        if track.get('followup_mid'):
+            await _unpin_safe(app.bot, engine.config['channel'], track['followup_mid'])
