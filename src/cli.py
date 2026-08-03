@@ -3,6 +3,7 @@ import math
 import os
 import re
 import json
+import uuid
 import asyncio
 import traceback
 from pathlib import Path
@@ -1120,9 +1121,37 @@ async def render_smart_scheduler(app, engine: QuizEngine, cli: CLI):
 
     pool = await asyncio.to_thread(db_get_scheduling_pool, cooldown_days)
     if not pool:
-        print(f"{Style.RED}No eligible questions — everything is inside the {cooldown_days}-day cooldown window.{Style.RESET}")
-        await cli.ask("\nPress Enter to return...")
-        return
+        from src.database import db_get_cooldown_stats
+        stats = await asyncio.to_thread(db_get_cooldown_stats)
+
+        print(f"{Style.RED}⚠️  No eligible questions at a {cooldown_days}-day cooldown.{Style.RESET}\n")
+        print(f"  Total questions in bank: {stats['total']}")
+        print(f"  Never shown before:      {stats['never_shown']}")
+        if stats['min_days_since_shown'] is not None:
+            usable_cooldown = max(0, int(stats['min_days_since_shown']))
+            print(f"  Most recently overdue question was last shown {stats['min_days_since_shown']:.1f} day(s) ago.")
+            print(f"  → A cooldown of {usable_cooldown} day(s) or lower would return at least one question.\n")
+        else:
+            print(f"  → No send history found; this is likely a fresh question bank.\n")
+
+        print("[1] Retry with a smaller cooldown")
+        print("[2] Bypass cooldown entirely for this run (ignores repeat protection)")
+        print("[b] Back to Main Cockpit")
+        fallback = await cli.ask("<b>Action > </b>")
+
+        if fallback == "1":
+            new_cd_in = await cli.ask("<b>New cooldown in days: </b>")
+            if new_cd_in and new_cd_in.isdigit():
+                cooldown_days = int(new_cd_in)
+                pool = await asyncio.to_thread(db_get_scheduling_pool, cooldown_days)
+        elif fallback == "2":
+            cooldown_days = 0
+            pool = await asyncio.to_thread(db_get_scheduling_pool, 0)
+
+        if not pool:
+            print(f"{Style.RED}Still no eligible questions — the question bank itself may be empty. Import questions first (option 4 on the main menu).{Style.RESET}")
+            await cli.ask("\nPress Enter to return...")
+            return
 
     history = await asyncio.to_thread(db_get_recent_post_history, 7)
 

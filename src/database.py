@@ -2328,7 +2328,7 @@ def db_get_feedback_thread(feedback_id: int):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 def db_get_feedback_stats():
     """Returns counts grouped by category and by status — powers the admin progress dashboard."""
     conn = None
@@ -2587,7 +2587,46 @@ def db_is_admin(user_id) -> bool:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_cooldown_stats(subject: str = None):
+    """
+    Explains *why* the scheduling pool came back empty instead of leaving the
+    admin guessing: total question count in scope, how many have never been
+    shown at all, and how many days ago the least-recently-shown question was
+    last sent (i.e. the largest cooldown value that would currently return
+    zero rows). Powers the Smart Scheduler's fallback diagnostic.
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            params = []
+            clause = ""
+            if subject:
+                clause = "WHERE lower(subject) = lower(%s)"
+                params.append(subject)
 
+            cur.execute(f"SELECT COUNT(*) AS total FROM questions {clause};", tuple(params))
+            total = cur.fetchone()["total"]
+
+            cur.execute(f"""
+                SELECT MIN(EXTRACT(EPOCH FROM (NOW() - last_shown_at)) / 86400.0) AS min_days_since_shown,
+                       COUNT(*) FILTER (WHERE last_shown_at IS NULL) AS never_shown
+                FROM questions {clause};
+            """, tuple(params))
+            row = cur.fetchone()
+
+            return {
+                "total": total,
+                "never_shown": row["never_shown"] or 0,
+                "min_days_since_shown": float(row["min_days_since_shown"]) if row["min_days_since_shown"] is not None else None,
+            }
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch cooldown stats: {e}", flush=True)
+        return {"total": 0, "never_shown": 0, "min_days_since_shown": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 async def db_call_guarded(fn, *args, **kwargs):
     """Runs a sync DB function in a thread, but bounded by DB_SEMAPHORE so a traffic
     spike queues politely instead of exhausting the connection pool and hanging every
