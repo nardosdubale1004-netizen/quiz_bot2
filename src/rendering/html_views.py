@@ -101,9 +101,11 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
     channel_name = CONFIG.get("channel", "@QuizOva")
     channel_username = channel_name.lstrip('@')
 
+    bot_username = CONFIG.get("bot_username")
+    dm_link = f" · <a href='https://t.me/{bot_username}?start=view_{display_id}'>💬 My Answer</a>" if bot_username else ""
     footer = (
         f"\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>REF <code>{display_id}</code></b>{round_tag} │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+        f"<b>REF <code>{display_id}</code></b>{round_tag} │ <a href='https://t.me/{channel_username}'>{channel_name}</a>{dm_link}\n"
         f"{' '.join(hashtag_list)}"
     )
 
@@ -581,6 +583,7 @@ def build_profile_card_text(profile: dict, roster: list = None, subject_marks: l
 
 def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
     team_label = "🏫 MY TEAM" if has_team else "🏰 JOIN / CREATE TEAM"
+    channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎛️ SETTINGS", callback_data="settings_menu|0"),
          InlineKeyboardButton(team_label, callback_data="alliance_portal|0")],
@@ -588,6 +591,7 @@ def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
          InlineKeyboardButton("🤝 INVITE & EARN", callback_data="menu_invite|0")],
         [InlineKeyboardButton("💬 FEEDBACK", callback_data="fb_menu|0"),
          InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0")],
+        [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")],
         [InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
     ])
 

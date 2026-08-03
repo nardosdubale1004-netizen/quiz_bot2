@@ -268,6 +268,7 @@ async def start_command(update: Update, context):
 
     if args and args[0].startswith("ans_"):
         payload = args[0]
+        asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))  # <-- ADD THIS LINE
         print(f"\n{Style.YELLOW}[TRACE-STEP 1] Detected deep-linked answering argument payload: '{payload}'{Style.RESET}", flush=True)
 
         try:
@@ -590,6 +591,42 @@ async def start_command(update: Update, context):
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=diagnostic_html, reply_markup=channel_kb)
             return
 
+    if args and args[0].startswith("view_"):
+        asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+        channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
+        channel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")]])
+        try:
+            display_id = int(args[0][5:])
+        except ValueError:
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Invalid reference link.", reply_markup=channel_kb)
+            return
+
+        track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
+        if not track or not question_data:
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz reference could not be found.", reply_markup=channel_kb)
+            return
+
+        existing_response = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
+        if not existing_response:
+            await send_rich_message_safe(
+                context.bot, chat_id=update.message.chat_id,
+                html_content=f"📭 <b>No answer on file yet for REF {display_id}.</b>\n\nTap one of the options under the question in the channel first!",
+                reply_markup=channel_kb
+            )
+            return
+
+        perf_card = await asyncio.to_thread(process_user_score, user_id, track['message_id'], question_data['id'], existing_response['is_correct'], existing_response['selected_option'])
+        explanation_html = UIFactory.build_answered_view(
+            question_data, str(display_id), existing_response['selected_option'],
+            show_derivation=existing_response.get('show_derivation', False),
+            show_perf=existing_response.get('show_perf', False),
+            perf_card=perf_card
+        )
+        kb = UIFactory.build_answered_keyboard(display_id, existing_response['selected_option'], existing_response.get('show_derivation', False), existing_response.get('show_perf', False), is_photo=False, message_id=track['message_id'])
+        m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=explanation_html, reply_markup=kb)
+        await asyncio.to_thread(db_update_private_message_id, user_id, track['message_id'], m.message_id)
+        return
+        
     if args and args[0].startswith("ref_"):
         referrer_token = args[0][4:].strip()
         referrer_id = await asyncio.to_thread(db_get_user_id_by_referral_token, referrer_token)
@@ -897,7 +934,7 @@ async def myfeedback_command(update: Update, context):
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
 
-def build_user_directory_text(users: list) -> str:
+async def build_user_directory_text(users: list) -> str:
     """Rich-text paginated user list for the admin dashboard."""
     if not users:
         return "<h2>👥 USER DIRECTORY</h2>\n<hr/>\n<i>No users found.</i>"
@@ -915,6 +952,7 @@ def build_user_directory_text(users: list) -> str:
         "<table><tr><td><b>Name</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Country</b></td></tr>"
         + "".join(rows) + "</table>"
     )
+
 async def claim_admin_command(update: Update, context):
     """Hidden, unlisted command. Grants admin only if the caller supplies the exact bootstrap secret."""
     from src.config import ADMIN_BOOTSTRAP_SECRET
@@ -1264,11 +1302,14 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
 
+            post_submit_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
+                [InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]
+            ])
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                f"✅ <b>Thanks! Feedback #{fid} submitted.</b>\n\n"
-                f"You'll get a message here if there's a reply or update on it.",
-                profile_nav_kb
+                f"✅ <b>Thanks! Feedback #{fid} submitted.</b>\n\nYou'll get a message here if there's a reply or update on it.",
+                post_submit_kb
             )
             if fid:
                 try:
@@ -1425,11 +1466,19 @@ BOT_COMMAND_LIST_TEXT = (
 async def unknown_command_handler(update, context):
     chat_id = update.message.chat_id
     cmd_mid = update.message.message_id
-    asyncio.create_task(_delete_silent(context.bot, chat_id, cmd_mid))
-    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
-    notice = await context.bot.send_message(chat_id=chat_id, text=BOT_COMMAND_LIST_TEXT, parse_mode="HTML", reply_markup=nav_kb)
-    asyncio.create_task(_delayed_delete(context.bot, chat_id, notice.message_id, delay_seconds=15))
 
+    # Awaited (not fire-and-forget) so the unknown command is guaranteed gone.
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=cmd_mid)
+    except Exception:
+        pass
+
+    nav_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
+         InlineKeyboardButton("📖 HELP MENU", callback_data="help_menu|0")]
+    ])
+    # No longer auto-deletes — the full command list now stays visible.
+    await context.bot.send_message(chat_id=chat_id, text=BOT_COMMAND_LIST_TEXT, parse_mode="HTML", reply_markup=nav_kb)
 
 def main():
     if not os.path.exists("logs"):
@@ -1489,7 +1538,7 @@ def main():
 
     # Must stay LAST — catches every /command not matched above
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
-    
+
     RENDER_PORT = os.getenv("PORT")
 
     if RENDER_PORT:

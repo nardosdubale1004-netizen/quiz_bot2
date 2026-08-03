@@ -58,24 +58,20 @@ class UIFactory(metaclass=UIFactoryMeta):
     def create_question_assets(cls, q, display_id):
         has_tikz = cls.has_real_diagram(q)
         figure_block = cls.build_figure_block(q, add_strut=False) if has_tikz else None
-
         if has_tikz and not figure_block:
             has_tikz = False
-
         if has_tikz:
             img_url = cls.get_latex_url(cls.assemble_diagram_only_layout(cls.WATERMARK, display_id, figure_block))
         else:
             img_url = None
 
         from src.typography import beautify_markdown_math
-
         caption_q = (
             f"<blockquote>"
             f"<b>PROBLEM PROPOSITION</b>\n"
             f"{beautify_markdown_math(q['question'])}"
             f"</blockquote>"
         )
-
         if has_tikz:
             caption_q += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
@@ -83,12 +79,14 @@ class UIFactory(metaclass=UIFactoryMeta):
         channel_name = cls.WATERMARK
         channel_username = channel_name.lstrip('@')
 
-        # Minimalist footer combining REF and Channel Link
+        # Unobtrusive per-user deep link back to this question's answer in the bot DM.
+        bot_username = CONFIG.get("bot_username")
+        dm_link = f" · <a href='https://t.me/{bot_username}?start=view_{display_id}'>💬</a>" if bot_username else ""
+
         footer = (
             f"\n<hr/>\n"
-            f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>\n"
+            f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>{dm_link}\n"
             f"{' '.join(hashtag_list)}"
         )
         final_caption = f"{caption_q}{footer}"
-
         return img_url, final_caption

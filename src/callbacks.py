@@ -289,27 +289,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
     elif action == "leave_org_warn":
         await query.answer()
         org_id = int(d_id)
-        
-        # Warn before committing the leave action
+        warn_text = "⚠️ <b>Leave this Study Alliance?</b>\n\nYour personal score is never affected, but you'll stop counting toward this team's total."
         warn_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_confirm|{org_id}")],
             [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
         ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=warn_text, reply_markup=warn_kb)
         return
 
     elif action == "dissolve_org_warn":
         await query.answer()
         org_id = int(d_id)
-        
-        # Warn with high impact before dissolving
+        warn_text = "💥 <b>Dissolve this Study Alliance?</b>\n\nThis permanently deletes the team and unlinks every member. This cannot be undone."
         warn_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("💥 CONFIRM DISSOLUTION", callback_data=f"dissolve_org_confirm|{org_id}")],
             [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
         ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=warn_text, reply_markup=warn_kb)
         return
-
+        
     elif action == "set_nick_fsm":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_NICKNAME"
@@ -484,34 +482,41 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
-    elif action == "force_create_org":
-        await query.answer()
-        session = USER_PAYLOADS.get(user_id, {})
-        org_name = session.get("org_name")
-        if not org_name:
-            await query.edit_message_text("⚠️ Session expired. Please start again from 🏰 STUDY ALLIANCE TEAMS.", reply_markup=return_kb)
-            return
-
-        USER_STATES[user_id] = "AWAITING_ORG_TAG"
-        USER_PAYLOADS[user_id] = {"org_name": org_name, "edit_mid": query.message.message_id}
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
-
     elif action == "team_invite":
         await query.answer()
         org_id = int(d_id)
         conn = engine.get_db_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT join_token FROM organizations WHERE org_id = %s;", (org_id,))
+                cur.execute("SELECT join_token, org_name FROM organizations WHERE org_id = %s;", (org_id,))
                 row = cur.fetchone()
         finally:
             engine.release_connection(conn)
-        join_token = row["join_token"] if row else None
+        if not row:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Team not found.", reply_markup=return_kb)
+            return
         bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
-        invite_link = f"https://t.me/{bot_username}?start=join_{join_token}"
+        invite_link = f"https://t.me/{bot_username}?start=join_{row['join_token']}"
+        invite_text = f"🔗 <b>INVITE LINK FOR {row['org_name']}</b>\n\nShare this link — anyone who opens it joins (or requests to join) your team automatically:\n\n<code>{invite_link}</code>"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=invite_text, reply_markup=kb)
+        return
+
+    elif action == "force_create_org":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        org_name = session.get("org_name")
+        if not org_name:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Session expired. Please start again from 🏰 STUDY ALLIANCE TEAMS.", reply_markup=return_kb)
+            return
+        USER_STATES[user_id] = "AWAITING_ORG_TAG"
+        USER_PAYLOADS[user_id] = {"org_name": org_name, "edit_mid": query.message.message_id}
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"🏫 Name Accepted: <b>{org_name}</b>\n\n✍ Enter a short, uppercase Code Tag identifier (2-15 characters, no spaces):\n<i>(Example: ABYSSINIA)</i>",
+            reply_markup=cancel_kb
+        )
         return
 
     elif action == "fb_cat":
@@ -540,14 +545,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0"),
             InlineKeyboardButton("❌ CANCEL", callback_data="close_portal|0")
         ])
-        try:
-            await edit_rich_message_safe(
-                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons)
-            )
-        except Exception:
-            pass
         await query.answer("Cancelled.")
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons)
+        )
         return
 
     elif action == "fb_status":
@@ -826,13 +828,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
+    if action not in ("ans", "toggle", "toggle_photo"):
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
     subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
     text = build_profile_card_text(profile, None, subject_marks)
     kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
     return
-
 
     # --- ORIGINAL CORE ENGINE FLOWS ---
 
