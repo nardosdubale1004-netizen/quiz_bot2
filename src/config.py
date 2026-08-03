@@ -55,6 +55,7 @@ FEEDBACK_STATUS_LABELS = {
 LOCKOUT_MESSAGES = set()
 FEEDBACK_NOTICE_MIDS = {}
 NO_ANSWER_NUDGE_MIDS = {}
+LAST_UTILITY_MID = {} 
 SHUTTING_DOWN = False
 
 # --- Central Application State Hooks for Graceful Shutdowns ---

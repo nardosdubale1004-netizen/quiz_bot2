@@ -22,7 +22,7 @@ for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.e
 from telegram import Update, BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, LAST_UTILITY_MID
 from src.database import (
     QuizEngine,
     db_get_user_profile,
@@ -358,7 +358,7 @@ async def start_command(update: Update, context):
                         m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=channel_kb)
                         await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                     return
-                    
+
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
                 is_correct = (user_selection == question_data['correct_option'])
 
@@ -755,8 +755,8 @@ async def profile_command(update: Update, context):
     text = build_profile_card_text(profile, None, subject_marks)
     from src.rendering.html_views import build_profile_main_keyboard
     kb = build_profile_main_keyboard(has_team=bool(org_id))
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
-    
+    await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
+
 async def school_command(update: Update, context):
     """Shortcut: /school <TAG> joins (or requests to join) an existing school team by its Team Code."""
     user = update.effective_user
@@ -861,12 +861,12 @@ async def leaderboard_command(update: Update, context):
         else:
             for i, row in enumerate(alliance_top):
                 leaderboard_text.append(f" {medals[i]} <b>#{row['alliance_tag']}</b> — <b>{row['total_score']} Marks</b> ({row['active_members']} members)")
-        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=nav_kb)
+        await _open_utility_view(context, user_id, update.message.chat_id, "\n".join(leaderboard_text), nav_kb)
         return
 
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
     if not profile:
-        await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ Please register your grade first by typing /start.")
+        await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Please register your grade first by typing /start.")
         return
 
     grade = profile['grade']
@@ -889,8 +889,7 @@ async def leaderboard_command(update: Update, context):
     for i, row in enumerate(weekly_top):
         leaderboard_text.append(f" {medals[i]} {format_public_name(row)} — <b>{row['total_score']} Marks</b>")
 
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="\n".join(leaderboard_text), reply_markup=nav_kb)
-
+    await _open_utility_view(context, user_id, update.message.chat_id, "\n".join(leaderboard_text), nav_kb)
 
 async def invite_command(update: Update, context):
     """Generates the student's personal referral deep-link."""
@@ -909,27 +908,26 @@ async def invite_command(update: Update, context):
         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
     ]])
 
-    await send_rich_message_safe(
-        context.bot, chat_id=update.message.chat_id,
-        html_content=(
+    await _open_utility_view(
+        context, user_id, update.message.chat_id,
+        (
             "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
             "Share your link. When a friend joins and answers correctly, you get "
             "<b>+1 Mark</b> per correct answer — and a smaller share two levels deep too.\n\n"
             f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>"
         ),
-        reply_markup=kb
+        kb
     )
 
 async def help_command(update: Update, context):
     from src.rendering.html_views import build_help_menu_text, build_help_menu_keyboard
+    user_id = update.effective_user.id
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-    await send_rich_message_safe(
-        context.bot, chat_id=update.message.chat_id,
-        html_content=build_help_menu_text(), reply_markup=build_help_menu_keyboard()
-    )
+    await _open_utility_view(context, user_id, update.message.chat_id, build_help_menu_text(), build_help_menu_keyboard())
 
 async def feedback_command(update: Update, context):
     from src.rendering.html_views import build_feedback_menu_text
+    user_id = update.effective_user.id
     buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
     buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
     buttons.append([
@@ -938,11 +936,8 @@ async def feedback_command(update: Update, context):
     ])
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-    await send_rich_message_safe(
-        context.bot, chat_id=update.message.chat_id,
-        html_content=build_feedback_menu_text(),
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    await _open_utility_view(context, user_id, update.message.chat_id, build_feedback_menu_text(), InlineKeyboardMarkup(buttons))
+
 
 async def myfeedback_command(update: Update, context):
     user = update.effective_user
@@ -963,7 +958,7 @@ async def myfeedback_command(update: Update, context):
     item_rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+    await _open_utility_view(context, user_id, update.message.chat_id, text, InlineKeyboardMarkup(item_rows))
 
 async def build_user_directory_text(users: list) -> str:
     """Rich-text paginated user list for the admin dashboard."""
@@ -1083,6 +1078,37 @@ async def _delete_silent(bot, chat_id, mid):
     except Exception:
         pass
 
+async def _open_utility_view(context, user_id, chat_id, html_content, reply_markup=None):
+    """Ensures only one 'utility' message (profile/leaderboard/invite/help/feedback/alliance)
+    is ever visible in a user's DM at a time. Deletes the previously tracked utility message
+    (if any) and sends a fresh one, then remembers its ID. Question/answer explanation cards
+    are tracked completely separately (per-REF via db_update_private_message_id) and are
+    never touched by this function."""
+    prev_mid = LAST_UTILITY_MID.get(user_id)
+    if prev_mid:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=prev_mid)
+        except Exception:
+            pass
+    m = await send_rich_message_safe(context.bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
+    if m:
+        LAST_UTILITY_MID[user_id] = m.message_id
+    return m
+
+async def handle_pin_service_message(update: Update, context):
+    """Telegram auto-inserts a 'X pinned a message' service notification every time
+    pin_chat_message succeeds. If the pinned message is later deleted (round-complete
+    cleanup, cooldown card, etc.) without touching this service message, it turns into
+    a permanent 'pinned Deleted message' artifact in the chat history. Deleting it
+    immediately after it's posted removes the artifact at the source."""
+    msg = update.channel_post or update.message
+    if not msg:
+        return
+    try:
+        await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+    except Exception:
+        pass
+
 async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
     """Deletes a message after a delay — used for ephemeral notifications
     (e.g. 'your feedback was resolved') that should stay visible for a while but
@@ -1109,12 +1135,22 @@ async def _fsm_advance(context, chat_id, edit_mid, html_content, reply_markup=No
     return m.message_id if m else None
 
 async def handle_fsm_message(update: Update, context):
-    """Global message filter intercepting user response messages for active state configurations."""
+    """Global message filter intercepting user response messages for active state configurations.
+    Also silently deletes any stray text/attachment the user sends outside of an active input
+    flow — a user's DM should only ever contain quiz questions, answer explanation cards, and
+    utility panels, never loose typed clutter or accidental attachments."""
     user = update.effective_user
     user_id = user.id
     state = USER_STATES.get(user_id)
 
     if not state or state == "IDLE":
+        await _delete_silent(context.bot, update.message.chat_id, update.message.message_id)
+        return
+
+    if not update.message.text:
+        # Every active FSM state here only ever expects a plain text reply — anything
+        # else (photo, document, sticker, etc.) sent mid-flow is stray, not a valid answer.
+        await _delete_silent(context.bot, update.message.chat_id, update.message.message_id)
         return
 
     text_input = update.message.text.strip()
@@ -1564,8 +1600,9 @@ def main():
     app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
+    app.add_handler(MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, handle_pin_service_message))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_fsm_message), group=-1)
+    app.add_handler(MessageHandler(~filters.COMMAND, handle_fsm_message), group=-1)
 
     # Must stay LAST — catches every /command not matched above
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))

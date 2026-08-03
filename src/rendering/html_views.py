@@ -451,7 +451,13 @@ def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: boo
     else:
         return_url = f"https://t.me/{channel_username}"
 
-    buttons.append([InlineKeyboardButton("📣 RETURN TO CHANNEL", url=return_url)])
+    # Both buttons share one row. "MY PROFILE" opens a SEPARATE tracked utility message
+    # (via the profile_popup callback) instead of editing this card in place — the question/
+    # answer content must survive forever for future reference, never get overwritten.
+    buttons.append([
+        InlineKeyboardButton("👤 MY PROFILE", callback_data="profile_popup|0"),
+        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=return_url)
+    ])
     return InlineKeyboardMarkup(buttons)
 
 def build_keyboard(q, display_id: str) -> InlineKeyboardMarkup:

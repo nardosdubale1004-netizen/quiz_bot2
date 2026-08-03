@@ -132,11 +132,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer()
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
+        from src.config import LAST_UTILITY_MID
+        LAST_UTILITY_MID[user_id] = query.message.message_id
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+        
+    elif action == "profile_popup":
+        await query.answer()
+        from src.config import LAST_UTILITY_MID
+        prev_mid = LAST_UTILITY_MID.get(user_id)
+        if prev_mid and prev_mid != query.message.message_id:
+            try:
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=prev_mid)
+            except Exception:
+                pass
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
+        text = build_profile_card_text(profile, None, subject_marks)
+        kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+        m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
+        if m:
+            LAST_UTILITY_MID[user_id] = m.message_id
         return
 
     elif action == "settings_menu":
@@ -307,7 +327,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=warn_text, reply_markup=warn_kb)
         return
-        
+
     elif action == "set_nick_fsm":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_NICKNAME"
