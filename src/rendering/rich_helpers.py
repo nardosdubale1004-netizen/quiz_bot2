@@ -343,3 +343,23 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
         except Exception as cap_err:
             print(f"[DEBUG-FIX-ERROR] Both TIER 2 legacy edit methods failed: {cap_err}", flush=True)
             raise text_err
+
+async def open_utility_view(bot, last_utility_mid: dict, locks: dict, user_id, chat_id, html_content, reply_markup=None):
+    """Ensures only ONE management/utility message (profile, settings, leaderboard,
+    invite, help, feedback, admin panels, etc.) is ever visible in a chat at a time.
+    Deletes whatever utility message preceded it, sends the new one, and tracks it.
+    A per-user asyncio.Lock prevents two near-simultaneous taps from both reading the
+    same stale tracked id and leaving an orphaned message behind."""
+    import asyncio
+    lock = locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        prev_mid = last_utility_mid.get(user_id)
+        if prev_mid:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=prev_mid)
+            except Exception:
+                pass
+        m = await send_rich_message_safe(bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
+        if m:
+            last_utility_mid[user_id] = m.message_id
+        return m

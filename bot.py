@@ -769,10 +769,11 @@ async def school_command(update: Update, context):
     nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
 
     if not context.args:
-        await update.message.reply_text(
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
             "⚠️ Please specify a team's Code. Example: <code>/school ABYSSINIA</code>\n\n"
             "No code yet, or want to create your own team? Type /profile → 🏰 STUDY ALLIANCE TEAMS.",
-            parse_mode="HTML", reply_markup=nav_kb
+            nav_kb
         )
         return
 
@@ -780,26 +781,29 @@ async def school_command(update: Update, context):
     join_data = await asyncio.to_thread(db_join_organization, user_id, tag)
 
     if not join_data:
-        await update.message.reply_text(
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
             f"⚠️ No team found with the code <code>#{tag.upper()}</code>. Double-check with your school admin, "
             f"or type /profile → 🏰 STUDY ALLIANCE TEAMS to create your own.",
-            parse_mode="HTML", reply_markup=nav_kb
+            nav_kb
         )
         return
 
     if join_data["role_assigned"] == "pending":
-        await update.message.reply_text(
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
             f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> (<code>#{tag.upper()}</code>) requires admin "
             f"approval — you'll be added to the roster once the team creator confirms.",
-            parse_mode="HTML", reply_markup=nav_kb
+            nav_kb
         )
     else:
-        await update.message.reply_text(
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
             f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b> "
             f"(<code>#{tag.upper()}</code>). Every correct answer you submit now also scores for your team!",
-            parse_mode="HTML", reply_markup=nav_kb
+            nav_kb
         )
-
+        
 async def name_command(update: Update, context):
     """Sets a custom scoreboard nickname for the player."""
     user = update.effective_user
@@ -811,32 +815,38 @@ async def name_command(update: Update, context):
     nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
 
     if not context.args:
-        await update.message.reply_text(
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
             "📝 <b>How to set your Public Scoreboard Name:</b>\n\n"
             "Type <code>/name YOUR_NICKNAME</code> to set a custom scoreboard nickname!\n"
             "<i>Example:</i> <code>/name Einstein_12</code>\n\n"
             "If you want to clear your custom nickname and use your Telegram username or first name instead, type <code>/name clear</code>.",
-            parse_mode="HTML", reply_markup=nav_kb
+            nav_kb
         )
         return
 
     nickname = " ".join(context.args).strip()
     if nickname.lower() == "clear":
         await asyncio.to_thread(db_set_user_nickname, user_id, None)
-        await update.message.reply_text("✅ Your custom nickname has been cleared. The system will fall back to your Telegram username or first name on public standings.", parse_mode="HTML", reply_markup=nav_kb)
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
+            "✅ Your custom nickname has been cleared. The system will fall back to your Telegram username or first name on public standings.",
+            nav_kb
+        )
         return
 
     clean_name = re.sub(r'[^\w\s\-@]', '', nickname)[:20].strip()
     if not clean_name:
-        await update.message.reply_text("⚠️ Invalid nickname format. Please use alphanumeric characters, underscores, or dashes (max 20 characters).", reply_markup=nav_kb)
+        await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Invalid nickname format. Please use alphanumeric characters, underscores, or dashes (max 20 characters).", nav_kb)
         return
 
     success = await asyncio.to_thread(db_set_user_nickname, user_id, clean_name)
     if success:
-        await update.message.reply_text(
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
             f"✅ <b>Success!</b> Your public display handle has been updated to: <b>{clean_name}</b>.\n"
             f"This name will now be used on round podiums and weekly grade leaderboards! 🏆",
-            parse_mode="HTML", reply_markup=nav_kb
+            nav_kb
         )
 
 async def leaderboard_command(update: Update, context):
@@ -1020,11 +1030,13 @@ async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
          InlineKeyboardButton("🗓️ Planned", callback_data=f"fb_status|{fb_id}|planned")],
         [InlineKeyboardButton("✅ Resolved", callback_data=f"fb_status|{fb_id}|resolved"),
          InlineKeyboardButton("🚫 Not Planned", callback_data=f"fb_status|{fb_id}|wontfix")],
-        [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")]
+        [InlineKeyboardButton("💬 Reply to User", callback_data=f"fb_reply|{fb_id}")],
+        [InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")]
     ])
     for admin_id in admin_ids:
         try:
-            await send_rich_message_safe(context.bot, chat_id=admin_id, html_content=f"🆕 <b>NEW FEEDBACK</b>\n\n{text}", reply_markup=kb)
+            from src.rendering.rich_helpers import open_utility_view
+            await open_utility_view(context.bot, LAST_UTILITY_MID, _UTILITY_LOCKS, admin_id, admin_id, f"🆕 <b>NEW FEEDBACK</b>\n\n{text}", kb)
         except Exception:
             pass
 
@@ -1033,31 +1045,30 @@ async def feedback_admin_command(update: Update, context):
     from src.database import db_is_admin
     if not await asyncio.to_thread(db_is_admin, user_id):
         return
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     stats = await asyncio.to_thread(db_get_feedback_stats)
     from src.config import FEEDBACK_CATEGORIES
-    buttons = [[InlineKeyboardButton(label, callback_data=f"fb_browse|{key}|open")] for key, label in FEEDBACK_CATEGORIES.items()]
-    buttons.append([InlineKeyboardButton("📋 ALL OPEN ITEMS", callback_data="fb_browse|all|open")])
-    await send_rich_message_safe(
-        context.bot, chat_id=update.message.chat_id,
-        html_content=build_feedback_stats_text(stats),
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    buttons = [[InlineKeyboardButton(label, callback_data=f"fb_browse|{key}|open:0")] for key, label in FEEDBACK_CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton("📋 ALL OPEN ITEMS", callback_data="fb_browse|all|open:0")])
+    buttons.append([InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")])
+    await _open_utility_view(context, user_id, update.message.chat_id, build_feedback_stats_text(stats), InlineKeyboardMarkup(buttons))
 
 async def admin_dashboard_command(update: Update, context):
     user_id = update.effective_user.id
     from src.database import db_is_admin, db_get_admin_dashboard_stats
     if not await asyncio.to_thread(db_is_admin, user_id):
         return
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     from src.rendering.html_views import build_admin_dashboard_text
     stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
     text = build_admin_dashboard_text(stats)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
          InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
-        [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")]
+        [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")],
+        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
     ])
-    await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
-
+    await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 def db_get_all_admin_ids():
     conn = None
     try:
@@ -1081,25 +1092,11 @@ async def _delete_silent(bot, chat_id, mid):
         pass
 
 async def _open_utility_view(context, user_id, chat_id, html_content, reply_markup=None):
-    """Ensures only one 'utility' message (profile/leaderboard/invite/help/feedback/alliance)
-    is ever visible in a user's DM at a time. Guarded by a per-user lock: two utility
-    requests fired close together (e.g. double-tapping /profile, or a callback + a command
-    landing in the same tick) previously both read the same stale LAST_UTILITY_MID before
-    either finished deleting it — so both would send a fresh card, and only the LAST one to
-    write LAST_UTILITY_MID stayed tracked, leaving the other orphaned on screen forever.
-    The lock serializes delete-then-send-then-track into one atomic unit per user."""
-    lock = _UTILITY_LOCKS.setdefault(user_id, asyncio.Lock())
-    async with lock:
-        prev_mid = LAST_UTILITY_MID.get(user_id)
-        if prev_mid:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=prev_mid)
-            except Exception:
-                pass
-        m = await send_rich_message_safe(context.bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
-        if m:
-            LAST_UTILITY_MID[user_id] = m.message_id
-        return m
+    """Ensures only one 'utility' message (profile/leaderboard/invite/help/feedback/alliance/
+    admin panel) is ever visible in a user's DM at a time."""
+    from src.rendering.rich_helpers import open_utility_view
+    return await open_utility_view(context.bot, LAST_UTILITY_MID, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
+
 
 async def handle_pin_service_message(update: Update, context):
     """Telegram auto-inserts a 'X pinned a message' service notification every time
