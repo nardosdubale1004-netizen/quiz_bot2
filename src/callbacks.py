@@ -140,7 +140,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
-        
+
     elif action == "profile_popup":
         await query.answer()
         from src.config import LAST_UTILITY_MID
@@ -295,6 +295,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         user_role = user_membership.get("org_role") if user_membership else "member"
         
         buttons = [
+            [InlineKeyboardButton("📋 MEMBERS & REQUESTS", callback_data=f"org_history|{org_id}")],
             [InlineKeyboardButton("🚪 LEAVE School TEAM", callback_data=f"leave_org_warn|{org_id}")]
         ]
         if user_role == "creator":
@@ -692,10 +693,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer()
         stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
         text = build_admin_dashboard_text(stats)
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
-            InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")
-        ]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
+             InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
+            [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")]
+        ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -751,7 +753,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0"),
             InlineKeyboardButton("❌ CANCEL", callback_data="close_portal|0")
         ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons))
+        text = build_feedback_menu_text()
+        kb = InlineKeyboardMarkup(buttons)
+        # The target message may have been deleted by an unrelated concurrent DM
+        # (e.g. an answer explanation card arriving mid-tap) — if editing it fails,
+        # send a fresh feedback menu instead of silently doing nothing, and re-track
+        # it as the utility message so future taps stay in sync.
+        try:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            from src.config import LAST_UTILITY_MID
+            LAST_UTILITY_MID[user_id] = query.message.message_id
+        except Exception as edit_err:
+            print(f"[FB-MENU-FALLBACK] Edit failed ({edit_err}), sending fresh feedback menu.", flush=True)
+            m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
+            if m:
+                from src.config import LAST_UTILITY_MID
+                LAST_UTILITY_MID[user_id] = m.message_id
         return
 
     elif action == "fb_item":
@@ -847,6 +864,115 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
+
+
+    elif action == "org_history":
+        await query.answer()
+        org_id = int(d_id)
+        conn = engine.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM organizations WHERE org_id = %s;", (org_id,))
+                org_details = cur.fetchone()
+        finally:
+            engine.release_connection(conn)
+        if not org_details:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Team not found.", reply_markup=return_kb)
+            return
+        from src.database import db_get_org_membership_log
+        from src.rendering.html_views import build_org_history_text
+        log_rows = await asyncio.to_thread(db_get_org_membership_log, org_id)
+        text = build_org_history_text(org_details, log_rows)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "my_answers_menu":
+        await query.answer()
+        from src.database import db_get_user_subjects_summary
+        from src.rendering.html_views import build_my_answers_subject_menu_text, build_my_answers_subject_keyboard
+        summary = await asyncio.to_thread(db_get_user_subjects_summary, user_id)
+        text = build_my_answers_subject_menu_text(summary)
+        kb = build_my_answers_subject_keyboard(summary)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "my_ans_subj":
+        await query.answer()
+        subject, filter_mode, offset_str = data[1], data[2], data[3]
+        offset = int(offset_str)
+        from src.database import db_get_user_question_matrix, db_count_user_question_matrix
+        from src.rendering.html_views import build_my_answers_list_text, build_my_answers_keyboard
+        rows = await asyncio.to_thread(db_get_user_question_matrix, user_id, subject, filter_mode, 8, offset)
+        total = await asyncio.to_thread(db_count_user_question_matrix, user_id, subject, filter_mode)
+        text = build_my_answers_list_text(rows, subject, filter_mode, offset, total)
+        kb = build_my_answers_keyboard(rows, subject, filter_mode, offset, total)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "my_ans_open":
+        await query.answer()
+        q_id, subject, filter_mode, offset = data[1], data[2], data[3], data[4]
+        from src.database import db_get_question_by_id, db_get_latest_track_for_question
+        q = await asyncio.to_thread(db_get_question_by_id, q_id)
+        if not q:
+            await query.answer("Question not found.", show_alert=True)
+            return
+        track = await asyncio.to_thread(db_get_latest_track_for_question, q_id)
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset}")]])
+
+        if not track:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"📅 <b>{q['topic']}</b>\n\nThis question hasn't been published yet.", reply_markup=back_kb)
+            return
+
+        existing = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
+        if existing:
+            perf_card = await asyncio.to_thread(process_user_score, user_id, track['message_id'], q_id, existing['is_correct'], existing['selected_option'])
+            explanation_html = UIFactory.build_answered_view(q, str(track['display_id']), existing['selected_option'], show_derivation=True, show_perf=False, perf_card=perf_card)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explanation_html, reply_markup=back_kb)
+            return
+
+        if track['status'] == 'deleted':
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.", reply_markup=back_kb)
+            return
+
+        from src.tournament import verify_track_message
+        import src.config as cfg
+        still_there = await verify_track_message(cfg.ACTIVE_APP, engine, track['message_id'])
+        if not still_there:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.", reply_markup=back_kb)
+            return
+
+        channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
+        open_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📣 OPEN IN CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")],
+            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset}")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⬜ <b>{q['topic']}</b>\n\nYou haven't answered this one yet — tap below to open it in the channel.", reply_markup=open_kb)
+        return
+
+    elif action == "admin_questions":
+        from src.database import db_is_admin, db_get_admin_question_overview, db_count_admin_questions
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+        subj_raw, status_filter, offset_str = d_id.split(":")
+        subject = None if subj_raw == "all" else subj_raw
+        offset = int(offset_str)
+        rows = await asyncio.to_thread(db_get_admin_question_overview, subject, status_filter, 10, offset)
+        total = await asyncio.to_thread(db_count_admin_questions, subject, status_filter)
+        from src.rendering.html_views import build_admin_questions_text, build_admin_questions_keyboard
+        channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
+        text = build_admin_questions_text(rows, subj_raw, status_filter, offset, total, channel_username)
+        kb = build_admin_questions_keyboard(subject, status_filter, offset, total)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+
+
+
+
 
     if action not in ("ans", "toggle", "toggle_photo"):
         profile = await asyncio.to_thread(db_get_user_profile, user_id)

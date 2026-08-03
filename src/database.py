@@ -1783,11 +1783,6 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_join_organization(user_id, org_tag: str) -> dict:
-    """
-    Attempts to register/link a student to an organization based on Tag.
-    If org is public (is_public = True), sets membership state to 'pending' (requires approval).
-    If org is private (is_public = False), joins immediately as a standard member.
-    """
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1796,31 +1791,77 @@ def db_join_organization(user_id, org_tag: str) -> dict:
             row = cur.fetchone()
             if not row:
                 return None
-            
-            org_id = row['org_id']
-            org_name = row['org_name']
-            is_public = row['is_public']
-            creator_id = row['creator_id']
-            
+            org_id, org_name, is_public, creator_id = row['org_id'], row['org_name'], row['is_public'], row['creator_id']
             role = "pending" if is_public else "member"
-            
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, org_id) DO NOTHING;
+                ON CONFLICT (user_id, org_id) DO UPDATE SET
+                    org_role = EXCLUDED.org_role, joined_at = NOW()
+                WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), org_id, role))
             conn.commit()
-            
-            return {
-                "org_id": org_id,
-                "org_name": org_name,
-                "role_assigned": role,
-                "creator_id": creator_id
-            }
+            return {"org_id": org_id, "org_name": org_name, "role_assigned": role, "creator_id": creator_id}
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Join failed: {e}", flush=True)
         raise e
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_join_organization_by_id(user_id, org_id: int) -> dict:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE org_id = %s;", (int(org_id),))
+            row = cur.fetchone()
+            if not row:
+                return None
+            role = "pending" if row['is_public'] else "member"
+            cur.execute("""
+                INSERT INTO org_memberships (user_id, org_id, org_role)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, org_id) DO UPDATE SET
+                    org_role = EXCLUDED.org_role, joined_at = NOW()
+                WHERE org_memberships.org_role = 'rejected';
+            """, (str(user_id), int(org_id), role))
+            conn.commit()
+            return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Join by id failed: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_join_organization_by_token(user_id, join_token: str) -> dict:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE join_token = %s;", (join_token,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            role = "pending" if row["is_public"] else "member"
+            cur.execute("""
+                INSERT INTO org_memberships (user_id, org_id, org_role)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, org_id) DO UPDATE SET
+                    org_role = EXCLUDED.org_role, joined_at = NOW()
+                WHERE org_memberships.org_role = 'rejected';
+            """, (str(user_id), row["org_id"], role))
+            conn.commit()
+            return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Join by token failed: {e}", flush=True)
+        return None
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
@@ -1864,6 +1905,7 @@ def db_get_user_organizations(user_id):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
 def db_count_referrals(referrer_id) -> int:
     """Counts how many users this person has referred — used to throttle notifications."""
     conn = None
@@ -1879,7 +1921,6 @@ def db_count_referrals(referrer_id) -> int:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_find_similar_organizations(name: str):
     """Looks for existing teams with a similar name before letting someone create a duplicate."""
@@ -1904,35 +1945,9 @@ def db_find_similar_organizations(name: str):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
-def db_join_organization_by_id(user_id, org_id: int) -> dict:
-    """Same as db_join_organization but by org_id — used for team deep-links (?start=join_<id>)."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE org_id = %s;", (int(org_id),))
-            row = cur.fetchone()
-            if not row:
-                return None
-            role = "pending" if row['is_public'] else "member"
-            cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, org_id) DO NOTHING;
-            """, (str(user_id), int(org_id), role))
-            conn.commit()
-            return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB-ORG-ERROR] Join by id failed: {e}", flush=True)
-        return None
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
 def db_get_organization_roster(org_id: int):
-    """Retrieves all mapped scholars and their scores inside an organization (excluding pending requests)."""
+    """Active roster only — pending requests and rejected/past requests live
+    in the membership history view instead."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1941,7 +1956,7 @@ def db_get_organization_roster(org_id: int):
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks, m.org_role, u.public_consent_granted
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_id = %s AND m.org_role != 'pending'
+                WHERE m.org_id = %s AND m.org_role NOT IN ('pending', 'rejected')
                 ORDER BY u.total_marks DESC;
             """, (int(org_id),))
             return cur.fetchall()
@@ -1952,6 +1967,218 @@ def db_get_organization_roster(org_id: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_org_membership_log(org_id: int, limit: int = 40):
+    """Full roster + request history: members, admins, pending, and rejected."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted,
+                       u.total_marks, m.org_role, m.joined_at
+                FROM org_memberships m
+                JOIN user_stats u ON m.user_id = u.user_id
+                WHERE m.org_id = %s
+                ORDER BY
+                    CASE m.org_role
+                        WHEN 'creator' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2
+                        WHEN 'pending' THEN 3 ELSE 4
+                    END,
+                    m.joined_at DESC
+                LIMIT %s;
+            """, (int(org_id), limit))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB-ORG-ERROR] Fetch membership log failed: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_subjects_summary(user_id):
+    """Subject picker for /myanswers: total questions vs. how many this user answered."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT q.subject,
+                       COUNT(DISTINCT q.id) AS total_count,
+                       COUNT(DISTINCT ur.q_id) AS answered_count
+                FROM questions q
+                LEFT JOIN user_responses ur ON ur.q_id = q.id AND ur.user_id = %s
+                GROUP BY q.subject
+                ORDER BY q.subject ASC;
+            """, (str(user_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user subjects summary: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", limit: int = 8, offset: int = 0):
+    """Every question (optionally scoped to a subject) tagged with whether THIS user
+    answered it. filter_mode: 'all' | 'answered' | 'unanswered'."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH latest AS (
+                    SELECT DISTINCT ON (q.id)
+                        q.id AS q_id, q.subject, q.topic, q.difficulty, q.tags, q.question,
+                        st.display_id, st.message_id, st.status AS track_status, st.sent_at,
+                        ur.is_correct, ur.marks_awarded
+                    FROM questions q
+                    LEFT JOIN sent_tracks st ON st.q_id = q.id
+                    LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
+                    WHERE (%s::text IS NULL OR lower(q.subject) = lower(%s))
+                    ORDER BY q.id, st.sent_at DESC NULLS LAST
+                )
+                SELECT * FROM latest
+                WHERE CASE
+                        WHEN %s = 'answered' THEN is_correct IS NOT NULL
+                        WHEN %s = 'unanswered' THEN is_correct IS NULL
+                        ELSE TRUE
+                      END
+                ORDER BY subject ASC, topic ASC, q_id ASC
+                LIMIT %s OFFSET %s;
+            """, (str(user_id), subject, subject, filter_mode, filter_mode, limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user question matrix: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_count_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all") -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH latest AS (
+                    SELECT DISTINCT ON (q.id) q.id AS q_id, q.subject, ur.is_correct
+                    FROM questions q
+                    LEFT JOIN sent_tracks st ON st.q_id = q.id
+                    LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
+                    WHERE (%s::text IS NULL OR lower(q.subject) = lower(%s))
+                    ORDER BY q.id, st.sent_at DESC NULLS LAST
+                )
+                SELECT COUNT(*) AS cnt FROM latest
+                WHERE CASE
+                        WHEN %s = 'answered' THEN is_correct IS NOT NULL
+                        WHEN %s = 'unanswered' THEN is_correct IS NULL
+                        ELSE TRUE
+                      END;
+            """, (str(user_id), subject, subject, filter_mode, filter_mode))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count user question matrix: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_latest_track_for_question(q_id: str):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM sent_tracks WHERE q_id = %s ORDER BY sent_at DESC NULLS LAST LIMIT 1;", (q_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch latest track for question {q_id}: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_admin_question_overview(subject: str = None, status_filter: str = "all", limit: int = 10, offset: int = 0):
+    """Admin master list. status_filter: 'all' | 'posted' | 'unposted' | 'deleted'."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH latest AS (
+                    SELECT DISTINCT ON (q.id)
+                        q.id AS q_id, q.subject, q.topic, q.difficulty, q.scheduled_for, q.is_sent,
+                        st.display_id, st.message_id, st.status AS track_status, st.sent_at
+                    FROM questions q
+                    LEFT JOIN sent_tracks st ON st.q_id = q.id
+                    ORDER BY q.id, st.sent_at DESC NULLS LAST
+                ),
+                stats AS (
+                    SELECT l.q_id,
+                           COUNT(ur.user_id) AS answer_count,
+                           COUNT(ur.user_id) FILTER (WHERE ur.is_correct) AS correct_count
+                    FROM latest l
+                    LEFT JOIN user_responses ur ON ur.message_id = l.message_id
+                    GROUP BY l.q_id
+                )
+                SELECT l.*, COALESCE(s.answer_count, 0) AS answer_count, COALESCE(s.correct_count, 0) AS correct_count
+                FROM latest l JOIN stats s ON s.q_id = l.q_id
+                WHERE (%s::text IS NULL OR lower(l.subject) = lower(%s))
+                  AND (
+                        %s = 'all'
+                        OR (%s = 'unposted' AND l.message_id IS NULL)
+                        OR (%s = 'posted' AND l.message_id IS NOT NULL AND l.track_status != 'deleted')
+                        OR (%s = 'deleted' AND l.track_status = 'deleted')
+                      )
+                ORDER BY l.subject ASC, l.q_id ASC
+                LIMIT %s OFFSET %s;
+            """, (subject, subject, status_filter, status_filter, status_filter, status_filter, limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch admin question overview: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_count_admin_questions(subject: str = None, status_filter: str = "all") -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH latest AS (
+                    SELECT DISTINCT ON (q.id) q.id AS q_id, q.subject, st.message_id, st.status AS track_status
+                    FROM questions q
+                    LEFT JOIN sent_tracks st ON st.q_id = q.id
+                    ORDER BY q.id, st.sent_at DESC NULLS LAST
+                )
+                SELECT COUNT(*) AS cnt FROM latest
+                WHERE (%s::text IS NULL OR lower(subject) = lower(%s))
+                  AND (
+                        %s = 'all'
+                        OR (%s = 'unposted' AND message_id IS NULL)
+                        OR (%s = 'posted' AND message_id IS NOT NULL AND track_status != 'deleted')
+                        OR (%s = 'deleted' AND track_status = 'deleted')
+                      );
+            """, (subject, subject, status_filter, status_filter, status_filter, status_filter))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count admin questions: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: str = None, is_public: bool = None) -> bool:
     """Updates metadata profile fields for an active organization."""
     conn = None
@@ -2040,22 +2267,18 @@ def db_get_pending_org_requests(org_id: int):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_approve_member_request(user_id, org_id: int, approve: bool) -> bool:
-    """Approves or rejects a student's pending team registration request."""
+    """Approves or rejects a pending request. Rejections are KEPT as 'rejected'
+    rows (not deleted) so the team's request history stays visible."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            if approve:
-                cur.execute("""
-                    UPDATE org_memberships 
-                    SET org_role = 'member' 
-                    WHERE user_id = %s AND org_id = %s;
-                """, (str(user_id), int(org_id)))
-            else:
-                cur.execute("""
-                    DELETE FROM org_memberships 
-                    WHERE user_id = %s AND org_id = %s;
-                """, (str(user_id), int(org_id)))
+            new_role = "member" if approve else "rejected"
+            cur.execute("""
+                UPDATE org_memberships
+                SET org_role = %s, joined_at = NOW()
+                WHERE user_id = %s AND org_id = %s;
+            """, (new_role, str(user_id), int(org_id)))
             conn.commit()
             return True
     except Exception as e:
@@ -2270,6 +2493,7 @@ def db_get_feedback_by_id(feedback_id: int):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
 
 
 def db_update_feedback_status(feedback_id: int, status: str) -> bool:
@@ -2544,30 +2768,6 @@ def db_get_user_id_by_referral_token(token: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_join_organization_by_token(user_id, join_token: str) -> dict:
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE join_token = %s;", (join_token,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            role = "pending" if row["is_public"] else "member"
-            cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, org_id) DO NOTHING;
-            """, (str(user_id), row["org_id"], role))
-            conn.commit()
-            return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB-ORG-ERROR] Join by token failed: {e}", flush=True)
-        return None
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
 
 def db_claim_admin(user_id) -> bool:
     """Grants admin status. Only ever called after the secret has already been verified by the caller."""

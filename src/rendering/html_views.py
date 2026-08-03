@@ -601,6 +601,7 @@ def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
          InlineKeyboardButton(team_label, callback_data="alliance_portal|0")],
         [InlineKeyboardButton("🏆 LEADERBOARD", callback_data="menu_leaderboard|0"),
          InlineKeyboardButton("🤝 INVITE & EARN", callback_data="menu_invite|0")],
+        [InlineKeyboardButton("📚 MY ANSWERS", callback_data="my_answers_menu|0")],
         [InlineKeyboardButton("💬 FEEDBACK", callback_data="fb_menu|0"),
          InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")],
@@ -1119,3 +1120,133 @@ def build_welcome_message_text() -> str:
         "their time.\n\n"
         "<i>Glad you're here. Let's get started. 🚀</i>"
     )
+
+def build_org_history_text(org: dict, log_rows: list) -> str:
+    name = html.escape(org.get("org_name", "TEAM"))
+    tag = org.get("org_tag", "")
+    role_icon = {"creator": "👑", "admin": "🛡️", "member": "👤", "pending": "📥", "rejected": "🚫"}
+    role_label = {"creator": "Creator", "admin": "Admin", "member": "Member", "pending": "Pending Request", "rejected": "Rejected"}
+    lines = []
+    for r in log_rows:
+        icon = role_icon.get(r['org_role'], "•")
+        label = role_label.get(r['org_role'], r['org_role'].title())
+        name_str = format_public_name(r)
+        when = r['joined_at'].strftime('%b %d, %Y') if r.get('joined_at') else ""
+        lines.append(f" {icon} <b>{name_str}</b> — {label} <i>({when})</i>")
+    body = "\n".join(lines) if lines else "<i>No members or requests yet.</i>"
+    return (
+        f"👥 <b>MEMBERS &amp; REQUESTS — {name}</b> <code>#{tag}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<blockquote expandable>\n{body}\n</blockquote>\n\n"
+        f"<i>👑 Creator │ 🛡️ Admin │ 👤 Member │ 📥 Pending │ 🚫 Rejected (can re-request anytime)</i>"
+    )
+
+
+def build_my_answers_subject_menu_text(summary: list) -> str:
+    if not summary:
+        return "📚 <b>MY ANSWERS</b>\n<hr/>\n<i>No questions in the bank yet.</i>"
+    lines = ["📚 <b>MY ANSWERS — Pick a Subject</b>", "<hr/>"]
+    for s in summary:
+        subj = html.escape(str(s['subject']).title())
+        lines.append(f" • <b>{subj}</b> — {s['answered_count']}/{s['total_count']} answered")
+    return "\n".join(lines)
+
+
+def build_my_answers_subject_keyboard(summary: list) -> InlineKeyboardMarkup:
+    rows = []
+    for s in summary:
+        subj = str(s['subject'])
+        label = f"{subj.title()} ({s['answered_count']}/{s['total_count']})"
+        rows.append([InlineKeyboardButton(label, callback_data=f"my_ans_subj|{subj}|all|0")])
+    rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_my_answers_list_text(rows: list, subject: str, filter_mode: str, offset: int, total: int) -> str:
+    filt_label = {"all": "All", "answered": "✅ Answered", "unanswered": "⬜ Unanswered"}.get(filter_mode, "All")
+    header = f"📚 <b>{html.escape(subject.title())}</b> — {filt_label}  <i>({offset+1}-{offset+len(rows)} of {total})</i>\n<hr/>\n"
+    if not rows:
+        return header + "<i>Nothing here.</i>"
+    lines = [header]
+    for r in rows:
+        q_preview = html.escape((r.get('question') or '')[:55]).replace("<tg-math-block>", "").replace("</tg-math-block>", "")
+        if r.get('is_correct') is not None:
+            status = "🟩 Correct" if r['is_correct'] else "🟥 Wrong"
+        elif r.get('message_id'):
+            status = "⚫ Removed" if r.get('track_status') == 'deleted' else "⬜ Unanswered"
+        else:
+            status = "📅 Not posted"
+        ref = f"REF {r['display_id']}" if r.get('display_id') else "—"
+        lines.append(f"{status} • <code>{ref}</code> — {q_preview}…")
+    return "\n".join(lines)
+
+
+def build_my_answers_keyboard(rows: list, subject: str, filter_mode: str, offset: int, total: int) -> InlineKeyboardMarkup:
+    kb = []
+    for r in rows:
+        if r.get('is_correct') is not None:
+            icon = "🟩" if r['is_correct'] else "🟥"
+        elif r.get('message_id'):
+            icon = "⚫" if r.get('track_status') == 'deleted' else "⬜"
+        else:
+            icon = "📅"
+        ref_lbl = f"REF {r['display_id']}" if r.get('display_id') else "Unpublished"
+        kb.append([InlineKeyboardButton(f"{icon} {ref_lbl} — {r['topic'][:24]}", callback_data=f"my_ans_open|{r['q_id']}|{subject}|{filter_mode}|{offset}")])
+    kb.append([
+        InlineKeyboardButton(("• " if filter_mode == "all" else "") + "All", callback_data=f"my_ans_subj|{subject}|all|0"),
+        InlineKeyboardButton(("• " if filter_mode == "answered" else "") + "✅", callback_data=f"my_ans_subj|{subject}|answered|0"),
+        InlineKeyboardButton(("• " if filter_mode == "unanswered" else "") + "⬜", callback_data=f"my_ans_subj|{subject}|unanswered|0"),
+    ])
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{max(0, offset-8)}"))
+    if offset + 8 < total:
+        nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset+8}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 SUBJECTS", callback_data="my_answers_menu|0")])
+    return InlineKeyboardMarkup(kb)
+
+
+def build_admin_questions_text(rows: list, subject: str, status_filter: str, offset: int, total: int, channel_username: str) -> str:
+    subj_label = subject.title() if subject and subject != "all" else "All Subjects"
+    stat_label = {"all": "All", "posted": "🟢 Posted", "unposted": "⚪ Unposted", "deleted": "⚫ Deleted"}.get(status_filter, "All")
+    lines = [f"📚 <b>QUESTION BANK — {html.escape(subj_label)}</b>", f"<i>{stat_label} • {offset+1}-{offset+len(rows)} of {total}</i>", "<hr/>"]
+    if not rows:
+        lines.append("<i>No questions match this filter.</i>")
+        return "\n".join(lines)
+    for r in rows:
+        if r.get('message_id') is None:
+            status = "⚪ Unposted" if not r.get('scheduled_for') else f"📅 Scheduled {r['scheduled_for']}"
+            link = ""
+        elif r.get('track_status') == 'deleted':
+            status = "⚫ Deleted"
+            link = f" · <a href='https://t.me/{channel_username}/{r['message_id']}'>🔗 (dead link)</a>"
+        else:
+            status = "🟢 Live" if r.get('track_status') == 'active' else "🔵 Closed"
+            link = f" · <a href='https://t.me/{channel_username}/{r['message_id']}'>🔗 Open</a>"
+        lines.append(
+            f"<code>{r['q_id']}</code> [{html.escape(str(r['difficulty']))}] {html.escape(r['topic'])}\n"
+            f" {status}{link} · 📊 {r['answer_count']} answered ({r['correct_count']} correct)"
+        )
+    return "\n\n".join(lines)
+
+
+def build_admin_questions_keyboard(subject: str, status_filter: str, offset: int, total: int) -> InlineKeyboardMarkup:
+    subj_key = subject or "all"
+    status_row = [
+        InlineKeyboardButton("All", callback_data=f"admin_questions|{subj_key}:all:0"),
+        InlineKeyboardButton("🟢 Posted", callback_data=f"admin_questions|{subj_key}:posted:0"),
+        InlineKeyboardButton("⚪ Unposted", callback_data=f"admin_questions|{subj_key}:unposted:0"),
+        InlineKeyboardButton("⚫ Deleted", callback_data=f"admin_questions|{subj_key}:deleted:0"),
+    ]
+    rows = [status_row]
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_questions|{subj_key}:{status_filter}:{max(0, offset-10)}"))
+    if offset + 10 < total:
+        nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_questions|{subj_key}:{status_filter}:{offset+10}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+    return InlineKeyboardMarkup(rows)

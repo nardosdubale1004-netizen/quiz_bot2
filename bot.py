@@ -75,7 +75,7 @@ from src.tournament import tournament_watcher_loop, emergency_shutdown_cleanup
 import httpx
 from telegram import Poll
 from src.typography import lite_math
-
+_UTILITY_LOCKS: dict = {}
 engine = QuizEngine()
 
 # Consolidated commands to simplify the user interface
@@ -86,6 +86,7 @@ BOT_COMMANDS = [
     BotCommand("invite", "Get your referral link & earn bonus marks"),
     BotCommand("help", "How the bot works, step by step"),
     BotCommand("feedback", "Report a bug, request a feature, or share feedback"),
+    BotCommand("myanswers", "Browse every question & your answers"),
 ]
 
 async def handle_http_request(reader, writer, app):
@@ -1050,10 +1051,11 @@ async def admin_dashboard_command(update: Update, context):
     from src.rendering.html_views import build_admin_dashboard_text
     stats = await asyncio.to_thread(db_get_admin_dashboard_stats)
     text = build_admin_dashboard_text(stats)
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
-        InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")
-    ]])
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
+         InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
+        [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")]
+    ])
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=kb)
 
 def db_get_all_admin_ids():
@@ -1080,20 +1082,24 @@ async def _delete_silent(bot, chat_id, mid):
 
 async def _open_utility_view(context, user_id, chat_id, html_content, reply_markup=None):
     """Ensures only one 'utility' message (profile/leaderboard/invite/help/feedback/alliance)
-    is ever visible in a user's DM at a time. Deletes the previously tracked utility message
-    (if any) and sends a fresh one, then remembers its ID. Question/answer explanation cards
-    are tracked completely separately (per-REF via db_update_private_message_id) and are
-    never touched by this function."""
-    prev_mid = LAST_UTILITY_MID.get(user_id)
-    if prev_mid:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=prev_mid)
-        except Exception:
-            pass
-    m = await send_rich_message_safe(context.bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
-    if m:
-        LAST_UTILITY_MID[user_id] = m.message_id
-    return m
+    is ever visible in a user's DM at a time. Guarded by a per-user lock: two utility
+    requests fired close together (e.g. double-tapping /profile, or a callback + a command
+    landing in the same tick) previously both read the same stale LAST_UTILITY_MID before
+    either finished deleting it — so both would send a fresh card, and only the LAST one to
+    write LAST_UTILITY_MID stayed tracked, leaving the other orphaned on screen forever.
+    The lock serializes delete-then-send-then-track into one atomic unit per user."""
+    lock = _UTILITY_LOCKS.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        prev_mid = LAST_UTILITY_MID.get(user_id)
+        if prev_mid:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=prev_mid)
+            except Exception:
+                pass
+        m = await send_rich_message_safe(context.bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
+        if m:
+            LAST_UTILITY_MID[user_id] = m.message_id
+        return m
 
 async def handle_pin_service_message(update: Update, context):
     """Telegram auto-inserts a 'X pinned a message' service notification every time
@@ -1484,7 +1490,6 @@ async def whoami_command(update: Update, context):
         parse_mode="HTML", reply_markup=nav_kb
     )
 
-
 async def cancel_command(update, context):
     user_id = update.effective_user.id
     state = USER_STATES.get(user_id)
@@ -1512,6 +1517,19 @@ async def cancel_command(update, context):
         await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b>", cancel_return_kb)
     else:
         await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
+
+async def myanswers_command(update: Update, context):
+    user = update.effective_user
+    user_id = user.id
+    await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+
+    from src.database import db_get_user_subjects_summary
+    from src.rendering.html_views import build_my_answers_subject_menu_text, build_my_answers_subject_keyboard
+    summary = await asyncio.to_thread(db_get_user_subjects_summary, user_id)
+    text = build_my_answers_subject_menu_text(summary)
+    kb = build_my_answers_subject_keyboard(summary)
+    await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 
 
 BOT_COMMAND_LIST_TEXT = (
@@ -1599,6 +1617,7 @@ def main():
     app.add_handler(CommandHandler("name", name_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("myanswers", myanswers_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
     app.add_handler(MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, handle_pin_service_message))
 
