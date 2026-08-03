@@ -310,13 +310,6 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     final_msg_id = mid
 
     db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
-    global _LAST_WELCOME_RECONCILE
-        if time.time() - _LAST_WELCOME_RECONCILE > 60:
-            _LAST_WELCOME_RECONCILE = time.time()
-            try:
-                await reconcile_channel_campaigns(app, engine)
-            except Exception as pin_err:
-                dlog_exception("tournament_watcher_loop reconcile_channel_campaigns", pin_err)
     await asyncio.to_thread(db_update_tournament_meta_field, "last_closed_at", db_epoch)
     dlog(f"[CONSOLIDATED-FIX] Synchronized round close time to DB tournament_meta: {db_epoch}")
 
@@ -993,3 +986,24 @@ async def unpin_all_channel_messages(app, engine: QuizEngine):
     for track in await asyncio.to_thread(db_get_active_tournament_rounds):
         if track.get('followup_mid'):
             await _unpin_safe(app.bot, engine.config['channel'], track['followup_mid'])
+
+async def verify_track_message(app, engine: QuizEngine, message_id) -> bool:
+    """Confirms a channel message still physically exists on Telegram (wasn't deleted
+    out-of-band by an admin/user). Uses the same forward-probe technique the CLI's
+    'clean' sync command already relies on — forward-then-delete to the bot's own chat."""
+    if not app or not message_id:
+        return False
+    try:
+        bot_info = await app.bot.get_me()
+        fwd = await app.bot.forward_message(
+            chat_id=bot_info.id,
+            from_chat_id=engine.config['channel'],
+            message_id=int(message_id)
+        )
+        try:
+            await app.bot.delete_message(chat_id=bot_info.id, message_id=fwd.message_id)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False

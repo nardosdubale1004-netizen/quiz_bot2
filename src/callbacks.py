@@ -940,6 +940,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         import src.config as cfg
         still_there = await verify_track_message(cfg.ACTIVE_APP, engine, track['message_id'])
         if not still_there:
+            # Persist the deletion so every future viewer (including /myanswers and the
+            # admin question overview) sees "Removed" immediately without re-probing Telegram.
+            await asyncio.to_thread(engine.db_update_track_status, track['message_id'], "deleted")
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.", reply_markup=back_kb)
             return
 
