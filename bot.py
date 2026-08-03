@@ -264,7 +264,7 @@ async def start_command(update: Update, context):
 
     channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
     channel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 RETURN TO QUESTION", url=f"https://t.me/{channel_username}")
+        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")
     ]])
 
     if args and args[0].startswith("ans_"):
@@ -295,7 +295,7 @@ async def start_command(update: Update, context):
             print(f" └─ Correct Option:     {question_data.get('correct_option')}", flush=True)
 
             channel_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")
+                InlineKeyboardButton("📣 RETURN TO QUESTION", url=f"https://t.me/{channel_username}/{track['message_id']}")
             ]])
 
             track_status = track.get('status')

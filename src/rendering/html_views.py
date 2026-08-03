@@ -446,17 +446,23 @@ def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: boo
         buttons.append([InlineKeyboardButton("📊 VIEW PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|1")])
 
     channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
+    # This button always deep-links to the exact question message when message_id is
+    # known (which is every real call site) — label it accordingly instead of the
+    # generic "RETURN TO CHANNEL", so users aren't misled into thinking they'll land
+    # on the channel's top/latest post instead of their own question.
     if message_id:
         return_url = f"https://t.me/{channel_username}/{message_id}"
+        return_label = "🔙 RETURN TO QUESTION"
     else:
         return_url = f"https://t.me/{channel_username}"
+        return_label = "📣 RETURN TO CHANNEL"
 
     # Both buttons share one row. "MY PROFILE" opens a SEPARATE tracked utility message
     # (via the profile_popup callback) instead of editing this card in place — the question/
     # answer content must survive forever for future reference, never get overwritten.
     buttons.append([
         InlineKeyboardButton("👤 MY PROFILE", callback_data="profile_popup|0"),
-        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=return_url)
+        InlineKeyboardButton(return_label, url=return_url)
     ])
     return InlineKeyboardMarkup(buttons)
 
