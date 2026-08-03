@@ -562,7 +562,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
     finally:
         _FINALIZING_ROUNDS.discard(mid)
         dlog(f"[DEBUG-FINALIZE-EXIT] finalize_tournament_round finished for mid={mid}.")
-        
+
 async def emergency_shutdown_cleanup(app, engine: QuizEngine):
     """Emergency finalization hook triggered immediately on SIGTERM/System Shutdown."""
     import src.config
@@ -848,6 +848,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
 
         await asyncio.sleep(poll_seconds)
 
+
 async def _pin_safe(bot, chat_id, mid):
     """Pins a message so it stays visible at the top of the channel and pushes a
     notification to members — used for the live/scheduled tournament card so
@@ -877,3 +878,27 @@ async def _schedule_message_deletion(bot, chat_id, message_id, delay_seconds: in
         await bot.delete_message(chat_id=chat_id, message_id=int(message_id))
     except Exception:
         pass
+
+async def post_welcome_message(app, engine: QuizEngine):
+    """Posts (or reposts) the pinned welcome/intro card to the channel. If a previous
+    welcome card is already pinned, it's unpinned and deleted first — exactly one welcome
+    card is ever pinned at a time, same pattern as the tournament champions podium."""
+    from src.rendering.html_views import build_welcome_message_text
+    from src.rendering.rich_helpers import send_rich_message_safe
+
+    old_mid = await asyncio.to_thread(db_get_bot_state, "welcome_mid", None)
+    if old_mid:
+        await _unpin_safe(app.bot, engine.config['channel'], old_mid)
+        try:
+            await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(old_mid))
+        except Exception:
+            pass
+
+    msg = await send_rich_message_safe(
+        app.bot,
+        chat_id=engine.config['channel'],
+        html_content=build_welcome_message_text()
+    )
+    await _pin_safe(app.bot, engine.config['channel'], msg.message_id)
+    await asyncio.to_thread(db_set_bot_state, "welcome_mid", msg.message_id)
+    return msg

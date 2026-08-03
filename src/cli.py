@@ -232,6 +232,7 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [7] 🛑 Emergency Stop / Pause Live Tournament")
         print(f" [8] 🎯 Smart Scheduler (Suggest Next Batch)")
         print(f" [9] ⚙️  Bot Settings (Cleanup Timers)")
+        print(f" [W] 👋 Post & Pin Welcome/Intro Message")
         print(f" [0] 🚪 Shutdown System")
 
         choice = await cli.ask("<ansicyan><b>Choice > </b></ansicyan>")
@@ -851,6 +852,14 @@ async def admin_panel(app, engine: QuizEngine):
             await render_smart_scheduler(app, engine, cli)
         elif choice == "9":
             await render_bot_settings_panel(engine, cli)
+            
+        elif choice.upper() == "W":
+            from src.tournament import post_welcome_message
+            confirm = await cli.ask("<b>Post/repost the pinned welcome message now? (y/n): </b>")
+            if confirm and confirm.lower() == 'y':
+                await post_welcome_message(app, engine)
+                print(f"{Style.GREEN}✅ Welcome message posted and pinned.{Style.RESET}")
+                await asyncio.sleep(1.5)
 
 
 async def render_control_center_panel(app, engine: QuizEngine, cli: CLI):

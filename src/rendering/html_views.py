@@ -1092,3 +1092,30 @@ def build_feedback_thread_text(fb: dict, thread: list) -> str:
         f"<hr/>\n\n"
         f"{conversation}"
     )
+
+def build_welcome_message_text() -> str:
+    """The channel's pinned welcome/intro card — marketing tone, not technical.
+    Posted and pinned on demand via the admin CLI (option [W])."""
+    return (
+        "🎓 <b>Welcome — you just found something good.</b>\n"
+        "<hr/>\n\n"
+        "Hey! We're just getting started here, and honestly? We're glad you're one of the first "
+        "ones in the room.\n\n"
+        "This channel drops <b>bite-sized challenges</b> — math, science, language, logic, general "
+        "knowledge, a bit of everything — right into your feed, day and night. No sign-up forms, "
+        "no boring lectures. You just tap an answer and instantly see if you nailed it, with a full "
+        "explanation waiting for you.\n\n"
+        "<blockquote>"
+        "🔥 Answer daily, build a streak, watch your rank climb\n"
+        "⚔️ Jump into live tournaments where everyone competes at the same time\n"
+        "🏫 Team up with friends or your school and climb the boards together\n"
+        "🤝 Invite people you know — when they learn, you earn too\n"
+        "🔐 Your name stays private unless you choose to show it off"
+        "</blockquote>\n\n"
+        "We built this because learning shouldn't feel like a chore, and a good challenge is way "
+        "more fun with other people around. So here's the honest ask:\n\n"
+        "👉 <b>Stick around. Answer one today. And if you like it — send it to someone.</b>\n"
+        "That's genuinely how a channel like this grows — one person telling another it's worth "
+        "their time.\n\n"
+        "<i>Glad you're here. Let's get started. 🚀</i>"
+    )
