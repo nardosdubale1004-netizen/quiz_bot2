@@ -356,7 +356,7 @@ async def start_command(update: Update, context):
                         else:
                             m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=channel_kb)
                             await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
-                            return
+                        return
 
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
                 is_correct = (user_selection == question_data['correct_option'])
