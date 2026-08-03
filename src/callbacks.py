@@ -829,12 +829,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     if action not in ("ans", "toggle", "toggle_photo"):
-    profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-    text = build_profile_card_text(profile, None, subject_marks)
-    kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-    await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-    return
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
+        text = build_profile_card_text(profile, None, subject_marks)
+        kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
 
     # --- ORIGINAL CORE ENGINE FLOWS ---
 
