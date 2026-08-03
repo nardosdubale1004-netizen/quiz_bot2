@@ -650,6 +650,7 @@ async def start_command(update: Update, context):
          InlineKeyboardButton("🎒 Grade 12", callback_data="set_grade|12")],
         [InlineKeyboardButton("📝 SET PUBLIC NICKNAME", callback_data="set_nick_fsm|0")],
         [InlineKeyboardButton("🏰 STUDY ALLIANCE TEAMS", callback_data="alliance_portal|0")],
+        [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0")],
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -659,8 +660,8 @@ async def start_command(update: Update, context):
         chat_id=update.message.chat_id,
         html_content=(
             "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
-            "To customize your study experience and compare scores inside "
-            "leaderboards, select your grade level below:\n\n"
+            "This is your first-time setup — pick your grade level below to unlock your "
+            "personal profile, scoreboard, and study team options:\n\n"
             "💡 <i>Tip: Tap the Public Nickname button to set your scoreboard handle! Otherwise, the bot will use your Telegram username or first name.</i>"
         ),
         reply_markup=reply_markup
@@ -696,11 +697,13 @@ async def school_command(update: Update, context):
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
 
+    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+
     if not context.args:
         await update.message.reply_text(
             "⚠️ Please specify a team's Code. Example: <code>/school ABYSSINIA</code>\n\n"
             "No code yet, or want to create your own team? Type /profile → 🏰 STUDY ALLIANCE TEAMS.",
-            parse_mode="HTML"
+            parse_mode="HTML", reply_markup=nav_kb
         )
         return
 
@@ -711,7 +714,7 @@ async def school_command(update: Update, context):
         await update.message.reply_text(
             f"⚠️ No team found with the code <code>#{tag.upper()}</code>. Double-check with your school admin, "
             f"or type /profile → 🏰 STUDY ALLIANCE TEAMS to create your own.",
-            parse_mode="HTML"
+            parse_mode="HTML", reply_markup=nav_kb
         )
         return
 
@@ -719,13 +722,13 @@ async def school_command(update: Update, context):
         await update.message.reply_text(
             f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> (<code>#{tag.upper()}</code>) requires admin "
             f"approval — you'll be added to the roster once the team creator confirms.",
-            parse_mode="HTML"
+            parse_mode="HTML", reply_markup=nav_kb
         )
     else:
         await update.message.reply_text(
             f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b> "
             f"(<code>#{tag.upper()}</code>). Every correct answer you submit now also scores for your team!",
-            parse_mode="HTML"
+            parse_mode="HTML", reply_markup=nav_kb
         )
 
 async def name_command(update: Update, context):
@@ -735,25 +738,28 @@ async def name_command(update: Update, context):
 
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+
+    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+
     if not context.args:
         await update.message.reply_text(
             "📝 <b>How to set your Public Scoreboard Name:</b>\n\n"
             "Type <code>/name YOUR_NICKNAME</code> to set a custom scoreboard nickname!\n"
             "<i>Example:</i> <code>/name Einstein_12</code>\n\n"
             "If you want to clear your custom nickname and use your Telegram username or first name instead, type <code>/name clear</code>.",
-            parse_mode="HTML"
-                )
+            parse_mode="HTML", reply_markup=nav_kb
+        )
         return
 
     nickname = " ".join(context.args).strip()
     if nickname.lower() == "clear":
         await asyncio.to_thread(db_set_user_nickname, user_id, None)
-        await update.message.reply_text("✅ Your custom nickname has been cleared. The system will fall back to your Telegram username or first name on public standings.", parse_mode="HTML")
+        await update.message.reply_text("✅ Your custom nickname has been cleared. The system will fall back to your Telegram username or first name on public standings.", parse_mode="HTML", reply_markup=nav_kb)
         return
 
     clean_name = re.sub(r'[^\w\s\-@]', '', nickname)[:20].strip()
     if not clean_name:
-        await update.message.reply_text("⚠️ Invalid nickname format. Please use alphanumeric characters, underscores, or dashes (max 20 characters).")
+        await update.message.reply_text("⚠️ Invalid nickname format. Please use alphanumeric characters, underscores, or dashes (max 20 characters).", reply_markup=nav_kb)
         return
 
     success = await asyncio.to_thread(db_set_user_nickname, user_id, clean_name)
@@ -761,7 +767,7 @@ async def name_command(update: Update, context):
         await update.message.reply_text(
             f"✅ <b>Success!</b> Your public display handle has been updated to: <b>{clean_name}</b>.\n"
             f"This name will now be used on round podiums and weekly grade leaderboards! 🏆",
-            parse_mode="HTML"
+            parse_mode="HTML", reply_markup=nav_kb
         )
 
 async def leaderboard_command(update: Update, context):
@@ -890,7 +896,7 @@ async def myfeedback_command(update: Update, context):
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
-    
+
 def build_user_directory_text(users: list) -> str:
     """Rich-text paginated user list for the admin dashboard."""
     if not users:
@@ -1362,13 +1368,27 @@ async def run_cloud_server(app, port):
 async def whoami_command(update: Update, context):
     """Anyone can run this — it only echoes back their own ID, never anyone else's."""
     user = update.effective_user
+    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
     await update.message.reply_text(
         f"🆔 Your Telegram User ID: <code>{user.id}</code>\n\n"
         f"Add this to ADMIN_IDS in your .env (comma-separated) or config.json's "
         f"\"admin_ids\" list, then restart the bot to unlock /admin_dashboard.",
+        parse_mode="HTML", reply_markup=nav_kb
+    )
+    
+async def unknown_command_handler(update: Update, context):
+    """Catches any /command not matched by a registered handler above it."""
+    chat_id = update.message.chat_id
+    cmd_mid = update.message.message_id
+
+    asyncio.create_task(_delete_silent(context.bot, chat_id, cmd_mid))
+
+    notice = await context.bot.send_message(
+        chat_id=chat_id,
+        text="❓ <b>Unknown command.</b> Type /help to see everything I understand.",
         parse_mode="HTML"
     )
-
+    asyncio.create_task(_delayed_delete(context.bot, chat_id, notice.message_id, delay_seconds=8))
 
 
 def main():
@@ -1419,11 +1439,16 @@ def main():
     app.add_handler(CommandHandler("feedback_admin", feedback_admin_command))
     app.add_handler(CommandHandler(["admin_dashboard", "admindashboard"], admin_dashboard_command))
     app.add_handler(CommandHandler("claimadmin", claim_admin_command))
+    app.add_handler(CommandHandler("school", school_command))
+    app.add_handler(CommandHandler("name", name_command))
+    app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CallbackQueryHandler(lambda u, c: handle_callback(update=u, context=c, engine=engine)))
 
-    
     # Priority FSM handler filtering text messages during active state dialog sessions
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_fsm_message), group=-1)
+
+    # Catch-all: any /command not matched above. Must be added LAST among command handlers.
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
 
     RENDER_PORT = os.getenv("PORT")
 
