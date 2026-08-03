@@ -53,6 +53,7 @@ FEEDBACK_STATUS_LABELS = {
 
 # --- Shared In-Memory Tracking for Lockout States ---
 LOCKOUT_MESSAGES = set()
+FEEDBACK_NOTICE_MIDS = {}  
 SHUTTING_DOWN = False
 
 # --- Central Application State Hooks for Graceful Shutdowns ---

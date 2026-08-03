@@ -386,6 +386,61 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("Dashboard closed.")
         await query.delete_message()
         return
+    elif action == "menu_leaderboard":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if not profile or not profile.get("grade"):
+            await query.answer("Please set your grade first via /start.", show_alert=True)
+            return
+        from src.database import db_get_weekly_leaderboard
+        from src.rendering.html_views import format_public_name
+        from src.rendering import get_grade_mastery_title
+        grade = profile['grade']
+        user_marks = profile['total_marks']
+        mastery = get_grade_mastery_title(user_marks)
+        weekly_top = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
+        lines = [
+            f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
+            f"🏅 <b>Your Rank Status:</b>",
+            f"├─ Display Handle: <b>{format_public_name(profile)}</b>",
+            f"├─ Mastery Level: <b>{mastery}</b>",
+            f"├─ Practice Score: <b>{user_marks} Marks</b>",
+            f"├─ Daily Streak: <b>🔥 {profile.get('current_streak', 0)} Days</b>",
+            f"└─ Accuracy: <b>{int((profile['correct']/profile['total'])*100) if profile['total'] > 0 else 0}%</b>\n",
+            "━━━━━━━━━━━━━━━━━━━━━━━━",
+            "🔥 <b>TOP 10 THIS WEEK:</b>"
+        ]
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        for i, row in enumerate(weekly_top):
+            lines.append(f" {medals[i]} {format_public_name(row)} — <b>{row['total_score']} Marks</b>")
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
+            InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
+        ]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="\n".join(lines), reply_markup=kb)
+        return
+
+    elif action == "menu_invite":
+        await query.answer()
+        from src.database import db_get_or_create_referral_token
+        referral_token = await asyncio.to_thread(db_get_or_create_referral_token, user_id)
+        bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
+        invite_link = f"https://t.me/{bot_username}?start=ref_{referral_token}"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
+            InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
+        ]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=(
+                "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
+                "Share your link. When a friend joins and answers correctly, you get "
+                "<b>+1 Mark</b> per correct answer — and a smaller share two levels deep too.\n\n"
+                f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>"
+            ),
+            reply_markup=kb
+        )
+        return
   
     elif action == "full_docs":
         await query.answer()
@@ -477,16 +532,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         return
 
     elif action == "fb_cancel":
-        await query.answer("Cancelled.")
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
         buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
         buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
-        buttons.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons)
-        )
+        buttons.append([
+            InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0"),
+            InlineKeyboardButton("❌ CANCEL", callback_data="close_portal|0")
+        ])
+        try:
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        except Exception:
+            pass
+        await query.answer("Cancelled.")
         return
 
     elif action == "fb_status":
@@ -504,6 +565,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             thread = await asyncio.to_thread(db_get_feedback_thread, int(fb_id))
             kb = _build_feedback_detail_keyboard(fb_id, return_state)
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread), reply_markup=kb)
+
             if new_status in ("planned", "resolved"):
                 try:
                     notice_text = (
@@ -511,9 +573,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                         if new_status == "planned" else
                         f"✅ Your feedback #{fb_id} has been <b>resolved</b>! Thanks for helping improve the bot."
                     )
-                    notice_text += "\n\n<i>This note will clear itself after a while — the full history always stays in /myfeedback.</i>"
-                    notice_msg = await context.bot.send_message(chat_id=int(fb['user_id']), text=notice_text, parse_mode="HTML")
-                    asyncio.create_task(_delayed_delete(context.bot, int(fb['user_id']), notice_msg.message_id))
+                    notice_text += "\n\n<i>The full history always stays in /myfeedback.</i>"
+                    notice_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 VIEW & REPLY", callback_data=f"fb_view|{fb_id}|0")],
+                        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+                    ])
+                    from src.config import FEEDBACK_NOTICE_MIDS
+                    existing = FEEDBACK_NOTICE_MIDS.get(int(fb_id))
+                    if existing and str(existing[0]) == str(fb['user_id']):
+                        try:
+                            await edit_rich_message_safe(context.bot, chat_id=int(fb['user_id']), message_id=existing[1], html_content=notice_text, reply_markup=notice_kb)
+                        except Exception:
+                            notice_msg = await send_rich_message_safe(context.bot, chat_id=int(fb['user_id']), html_content=notice_text, reply_markup=notice_kb)
+                            FEEDBACK_NOTICE_MIDS[int(fb_id)] = (fb['user_id'], notice_msg.message_id)
+                    else:
+                        notice_msg = await send_rich_message_safe(context.bot, chat_id=int(fb['user_id']), html_content=notice_text, reply_markup=notice_kb)
+                        FEEDBACK_NOTICE_MIDS[int(fb_id)] = (fb['user_id'], notice_msg.message_id)
                 except Exception:
                     pass
         return
@@ -639,7 +714,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_feedback|{offset+5}"))
         if nav_row:
             item_rows.append(nav_row)
-        item_rows.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
+        item_rows.append([InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")])
         item_rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
 
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
@@ -650,7 +725,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         from src.rendering.html_views import build_feedback_menu_text
         buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
         buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
-        buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
+        buttons.append([
+            InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0"),
+            InlineKeyboardButton("❌ CANCEL", callback_data="close_portal|0")
+        ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_menu_text(), reply_markup=InlineKeyboardMarkup(buttons))
         return
 

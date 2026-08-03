@@ -584,10 +584,12 @@ def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎛️ SETTINGS", callback_data="settings_menu|0"),
          InlineKeyboardButton(team_label, callback_data="alliance_portal|0")],
-        [InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0"),
-         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
+        [InlineKeyboardButton("🏆 LEADERBOARD", callback_data="menu_leaderboard|0"),
+         InlineKeyboardButton("🤝 INVITE & EARN", callback_data="menu_invite|0")],
+        [InlineKeyboardButton("💬 FEEDBACK", callback_data="fb_menu|0"),
+         InlineKeyboardButton("📖 HOW IT WORKS", callback_data="full_docs|0")],
+        [InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
     ])
-
 
 def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeyboardMarkup:
     consent_label = "🔴 GO PRIVATE" if public_consent_granted else "🟢 GO PUBLIC"
@@ -1043,13 +1045,30 @@ def build_feedback_browse_list_text(items: list, category: str, status: str, off
 def build_feedback_thread_text(fb: dict, thread: list) -> str:
     from src.config import FEEDBACK_CATEGORIES
     cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
-    lines = [
-        f"<b>#{fb['id']} • {cat_label}</b>",
-        _status_progress_line(fb['status']),
-        "<hr/>",
-        f"<blockquote><b>🧑 You:</b>\n{html.escape(fb['message'])}</blockquote>"
+
+    all_msgs = [{"role": "user", "text": fb['message']}] + [
+        {"role": m['sender_role'], "text": m['message']} for m in thread
     ]
-    for m in thread:
-        who = "🛠️ Support" if m['sender_role'] == "admin" else "🧑 You"
-        lines.append(f"<blockquote><b>{who}:</b>\n{html.escape(m['message'])}</blockquote>")
-    return "\n\n".join(lines)
+
+    def bubble(role, text):
+        safe = html.escape(text)
+        if role == "admin":
+            return f"➡️ <b>🛠️ Support</b>\n<blockquote>{safe}</blockquote>"
+        return f"⬅️ <b>🧑 You</b>\n<blockquote>{safe}</blockquote>"
+
+    if len(all_msgs) > 4:
+        older, recent = all_msgs[:-3], all_msgs[-3:]
+        older_block = "\n\n".join(bubble(m["role"], m["text"]) for m in older)
+        conversation = (
+            f"<blockquote expandable><b>📜 Earlier in this conversation ({len(older)})</b>\n\n{older_block}</blockquote>\n\n"
+            + "\n\n".join(bubble(m["role"], m["text"]) for m in recent)
+        )
+    else:
+        conversation = "\n\n".join(bubble(m["role"], m["text"]) for m in all_msgs)
+
+    return (
+        f"<b>#{fb['id']} • {cat_label}</b>\n"
+        f"{_status_progress_line(fb['status'])}\n"
+        f"<hr/>\n\n"
+        f"{conversation}"
+    )

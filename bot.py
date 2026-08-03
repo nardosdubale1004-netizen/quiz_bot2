@@ -855,16 +855,15 @@ async def help_command(update: Update, context):
     )
 
 async def feedback_command(update: Update, context):
-    """Unified feedback entry point: category buttons to submit something new,
-    plus a tracker button to see the status of everything already sent — no
-    separate /myfeedback menu, it all lives here."""
     from src.rendering.html_views import build_feedback_menu_text
     buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
     buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
-    buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="fb_cancel|0")])
+    buttons.append([
+        InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0"),
+        InlineKeyboardButton("❌ CANCEL", callback_data="close_portal|0")
+    ])
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-
     await send_rich_message_safe(
         context.bot, chat_id=update.message.chat_id,
         html_content=build_feedback_menu_text(),
@@ -886,12 +885,12 @@ async def myfeedback_command(update: Update, context):
     ]
     if total > 5:
         item_rows.append([InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5")])
-    item_rows.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
+    item_rows.append([InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")])
     item_rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
-
+    
 def build_user_directory_text(users: list) -> str:
     """Rich-text paginated user list for the admin dashboard."""
     if not users:
@@ -1059,9 +1058,18 @@ async def handle_fsm_message(update: Update, context):
     ]])
 
     if text_input.lower() == "/cancel":
+        prior_state = state
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
-        await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
+
+        if prior_state in ("AWAITING_FEEDBACK_TEXT", "AWAITING_ADMIN_REPLY", "AWAITING_USER_FEEDBACK_REPLY"):
+            cancel_return_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
+                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+            ])
+            await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b>", cancel_return_kb)
+        else:
+            await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
         return
 
     try:
