@@ -264,7 +264,7 @@ async def start_command(update: Update, context):
 
     channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
     channel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")
+        InlineKeyboardButton("📣 RETURN TO QUESTION", url=f"https://t.me/{channel_username}")
     ]])
 
     if args and args[0].startswith("ans_"):
