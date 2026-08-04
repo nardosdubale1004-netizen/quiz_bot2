@@ -311,12 +311,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")]
         ])
         await query.edit_message_text(
-            "📍 <b>PROMPT: YOUR CITY</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Only matters if you're not on a school team — it powers the 🌆 City leaderboard for solo scholars.\n\n"
-            "Please type the city you're studying in:\n"
-            "<i>(Example: Addis Ababa)</i>",
-            + FSM_INPUT_HINT,
+            (
+                "📍 <b>PROMPT: YOUR CITY</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Only matters if you're not on a school team — it powers the 🌆 City leaderboard for solo scholars.\n\n"
+                "Please type the city you're studying in:\n"
+                "<i>(Example: Addis Ababa)</i>"
+            ) + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -428,13 +429,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")]
         ])
         await query.edit_message_text(
-            "✍️ <b>PROMPT: SCOREBOARD PSEUDONYM</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please type your preferred display name for leaderboards directly into this chat.\n\n"
-            "⚠️ <b>Simple Rules:</b>\n"
-            "├─ Max 20 characters\n"
-            "└─ Spaces and underscores allowed",
-            + FSM_INPUT_HINT,
+            (
+                "✍️ <b>PROMPT: SCOREBOARD PSEUDONYM</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Please type your preferred display name for leaderboards directly into this chat.\n\n"
+                "⚠️ <b>Simple Rules:</b>\n"
+                "├─ Max 20 characters\n"
+                "└─ Spaces and underscores allowed"
+            ) + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -444,16 +446,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_NAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
-        
+
         fsm_cancel_kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")
         ]])
         await query.edit_message_text(
-            "✍️ <b>PROMPT: CREATE SCHOOL TEAM</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please type the full formal name of your school or study academy team:\n"
-            "<i>(Example: Abyssinia Academy)</i>",
-            + FSM_INPUT_HINT,
+            (
+                "✍️ <b>PROMPT: CREATE SCHOOL TEAM</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Please type the full formal name of your school or study academy team:\n"
+                "<i>(Example: Abyssinia Academy)</i>"
+            ) + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -463,16 +466,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_JOIN"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
-        
+
         fsm_cancel_kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")
         ]])
         await query.edit_message_text(
-            "✍️ <b>PROMPT: JOIN SCHOOL TEAM</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Please enter the short, uppercase Code Tag of the school team you want to join:\n"
-            "<i>(Example: ABYSSINIA)</i>",
-            + FSM_INPUT_HINT,
+            (
+                "✍️ <b>PROMPT: JOIN SCHOOL TEAM</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Please enter the short, uppercase Code Tag of the school team you want to join:\n"
+                "<i>(Example: ABYSSINIA)</i>"
+            ) + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -532,14 +536,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
             InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
         ]])
-       await edit_rich_message_safe(
+        await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=(
                 "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
                 "Share your link. When a friend joins and answers correctly, you get "
                 "<b>+1 Mark</b> per correct answer — and a smaller share two levels deep too.\n\n"
                 f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>\n\n"
-                f"👆 <i>Tap the link above — Telegram copies it straight to your clipboard.</i>"
+                f"👆 <i>Tap the code above to copy it, then paste it anywhere to share.</i>"
             ),
             reply_markup=kb
         )
@@ -895,6 +899,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         buttons.append([InlineKeyboardButton("🔙 BACK", callback_data="fb_menu|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
+        
     elif action == "fb_view":
         await query.answer()
         fb_id = int(d_id)
@@ -909,7 +914,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
             [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
         ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text,+ FSM_INPUT_HINT, reply_markup=kb)
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=text, reply_markup=kb
+        )
         return
 
     elif action == "fb_user_reply":

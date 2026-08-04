@@ -24,7 +24,7 @@ if os.path.exists("config.json"):
     except Exception:
         pass
 
-FSM_INPUT_HINT = "\n\n📝 <i>Type your message in the box below, then tap send.</i>"
+FSM_INPUT_HINT = "\n\n📝 <i>Type your answer in the message box below and tap ➤ send to submit it.</i>"
 
 # Read configurations securely with local fallbacks
 CONFIG = {

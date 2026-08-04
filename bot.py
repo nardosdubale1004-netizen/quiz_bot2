@@ -1287,11 +1287,12 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
-                "✍ <b>PROMPT: Team City Location</b>\n"
-                "Please enter the city where your school or academy is located:\n"
-                "<i>(Example: Addis Ababa)</i>",
-                + FSM_INPUT_HINT,
+                (
+                    f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
+                    "✍ <b>PROMPT: Team City Location</b>\n"
+                    "Please enter the city where your school or academy is located:\n"
+                    "<i>(Example: Addis Ababa)</i>"
+                ) + FSM_INPUT_HINT,
                 cancel_kb
             )
 
@@ -1305,11 +1306,12 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "AWAITING_ORG_COUNTRY"
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
-                "✍ <b>PROMPT: Team Country Location</b>\n"
-                "Please enter the country where your school or academy is located:\n"
-                "<i>(Example: Ethiopia)</i>",
-                + FSM_INPUT_HINT,
+                (
+                    f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
+                    "✍ <b>PROMPT: Team Country Location</b>\n"
+                    "Please enter the country where your school or academy is located:\n"
+                    "<i>(Example: Ethiopia)</i>"
+                ) + FSM_INPUT_HINT,
                 cancel_kb
             )
 
@@ -1374,9 +1376,10 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "AWAITING_LOCATION_COUNTRY"
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
-                "✍ <b>PROMPT: YOUR COUNTRY</b>\nPlease type the country you're studying in:\n<i>(Example: Ethiopia)</i>",
-                + FSM_INPUT_HINT,
+                (
+                    f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
+                    "✍ <b>PROMPT: YOUR COUNTRY</b>\nPlease type the country you're studying in:\n<i>(Example: Ethiopia)</i>"
+                ) + FSM_INPUT_HINT,
                 cancel_kb
             )
 
