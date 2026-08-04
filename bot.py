@@ -1335,6 +1335,23 @@ async def handle_fsm_message(update: Update, context):
                 return
 
             USER_PAYLOADS[user_id]["org_tag"] = clean_tag
+
+            prefilled_city = USER_PAYLOADS[user_id].get("org_city")
+            prefilled_country = USER_PAYLOADS[user_id].get("org_country")
+            if prefilled_city and prefilled_country:
+                org_name = USER_PAYLOADS[user_id]["org_name"]
+                try:
+                    await asyncio.to_thread(db_create_organization, org_name, clean_tag, user_id, "School", True, prefilled_city, prefilled_country)
+                    USER_STATES[user_id] = "IDLE"
+                    from src.callbacks import _regloc_finish
+                    await _regloc_finish(context, update.message.chat_id, edit_mid, user_id, school_msg=f"✅ Created and joined <b>{org_name}</b>!")
+                except Exception as e:
+                    if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                        await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Error: <code>#{clean_tag}</code> is already taken. Enter a unique tag:", cancel_kb)
+                    else:
+                        await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed due to a database exception.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
+                return
+
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
@@ -1526,10 +1543,13 @@ async def handle_fsm_message(update: Update, context):
 
             from src.rendering.html_views import build_feedback_thread_text
             from src.callbacks import _build_feedback_detail_keyboard
+            from src.database import db_get_user_timezone
             fb = await asyncio.to_thread(db_get_feedback_by_id, target_fb_id)
             thread = await asyncio.to_thread(db_get_feedback_thread, target_fb_id)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
             kb = _build_feedback_detail_keyboard(target_fb_id, return_state)
-            await _fsm_advance(context, update.message.chat_id, edit_mid, build_feedback_thread_text(fb, thread), kb)
+            await _fsm_advance(context, update.message.chat_id, edit_mid, build_feedback_thread_text(fb, thread, viewer_tz), kb)
+            
         elif state == "AWAITING_USER_FEEDBACK_REPLY":
             fb_id = session.get("fb_id")
             return_offset = session.get("return_offset", "0")
@@ -1542,8 +1562,10 @@ async def handle_fsm_message(update: Update, context):
             USER_PAYLOADS.pop(user_id, None)
 
             from src.rendering.html_views import build_feedback_thread_text
+            from src.database import db_get_user_timezone
             fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
             thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
                 [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
@@ -1561,6 +1583,32 @@ async def handle_fsm_message(update: Update, context):
                         pass
             except Exception:
                 pass
+
+        elif state == "AWAITING_REGLOC_CITY_TEXT":
+            clean_city = re.sub(r'[^\w\s\-,]', '', text_input)[:60].strip().title()
+            if not clean_city:
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid city/state name.\n\n<i>Try again.</i>", None)
+                return
+            USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = clean_city
+            USER_STATES[user_id] = "IDLE"
+            from src.callbacks import _regloc_show_school_step
+            await _regloc_show_school_step(context, update.message.chat_id, edit_mid, user_id)
+
+        elif state == "AWAITING_REGLOC_SCHOOL_SEARCH":
+            from src.database import db_search_schools
+            from src.callbacks import _build_school_kb
+            session = USER_PAYLOADS.get(user_id, {})
+            results = await asyncio.to_thread(db_search_schools, text_input, session.get("reg_city"), session.get("reg_country"), 8)
+            USER_STATES[user_id] = "IDLE"
+            if results:
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🏫 <b>Results for '{html.escape(text_input)}':</b>", _build_school_kb(results))
+            else:
+                no_match_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✨ CREATE NEW SCHOOL", callback_data="regloc_school_create|0")],
+                    [InlineKeyboardButton("⏭ SKIP / NO SCHOOL", callback_data="regloc_school_skip|0")]
+                ])
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🔍 No matches for '{html.escape(text_input)}'.", no_match_kb)
+
     except Exception:
         traceback.print_exc()
         await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Connection Error: Failed to commit your input.", profile_nav_kb)

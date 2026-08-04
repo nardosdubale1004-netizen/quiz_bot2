@@ -325,7 +325,7 @@ class QuizEngine:
 
                 # Add dynamic MLM referral invite tag column
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20) REFERENCES user_stats(user_id) ON DELETE SET NULL;")
-
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) DEFAULT 'UTC';")
                 # Setup Dynamic Many-to-Many Membership table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS org_memberships (
@@ -1824,7 +1824,10 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
                 VALUES (%s, %s, 'creator')
                 ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
             """, (str(creator_id), org_id))
-            
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
+            )
             conn.commit()
             return org_id
     except Exception as e:
@@ -1861,6 +1864,15 @@ def db_join_organization(user_id, org_tag: str) -> dict:
                     org_role = EXCLUDED.org_role, joined_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), org_id, role))
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
+            )
+            from src.geo import get_timezone_for_country
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
+            )
             conn.commit()
             return {"org_id": org_id, "org_name": org_name, "role_assigned": role, "creator_id": creator_id}
     except Exception as e:
@@ -1897,6 +1909,20 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
                     org_role = EXCLUDED.org_role, joined_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), int(org_id), role))
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
+            )
+            from src.geo import get_timezone_for_country
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
+            )
+            from src.geo import get_timezone_for_country
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
+            )
             conn.commit()
             return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
     except Exception as e:
@@ -1933,6 +1959,16 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
                     org_role = EXCLUDED.org_role, joined_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), row["org_id"], role))
+
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
+            )
+            from src.geo import get_timezone_for_country
+            cur.execute(
+                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
+            )
             conn.commit()
             return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
     except Exception as e:
@@ -2461,20 +2497,23 @@ def db_get_country_leaderboard():
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_update_user_location(user_id, city: str, country: str):
-    """Sets the student's own personal city/country — used for city/country
-    leaderboards only while the student isn't linked to a team (a team's
-    location takes precedence once they join one)."""
+    """Sets the student's personal city/country AND auto-derives their timezone from the
+    country (used for city/country leaderboards while unlinked from a team, and to render
+    every DM-facing timestamp in their own local time)."""
+    from src.geo import get_timezone_for_country
+    tz_name = get_timezone_for_country(country)
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO user_stats (user_id, personal_city, personal_country, total, correct, total_marks)
-                VALUES (%s, %s, %s, 0, 0, 0)
+                INSERT INTO user_stats (user_id, personal_city, personal_country, timezone, total, correct, total_marks)
+                VALUES (%s, %s, %s, %s, 0, 0, 0)
                 ON CONFLICT (user_id) DO UPDATE SET
                     personal_city = EXCLUDED.personal_city,
-                    personal_country = EXCLUDED.personal_country;
-            """, (str(user_id), city, country))
+                    personal_country = EXCLUDED.personal_country,
+                    timezone = EXCLUDED.timezone;
+            """, (str(user_id), city, country, tz_name))
             user_profile_cache.invalidate(f"profile:{user_id}")
             conn.commit()
             return True
@@ -2485,6 +2524,84 @@ def db_update_user_location(user_id, city: str, country: str):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_timezone(user_id) -> str:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT timezone FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            return row['timezone'] if row and row.get('timezone') else "UTC"
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user timezone: {e}", flush=True)
+        return "UTC"
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_cities_for_country(country: str):
+    """Distinct cities already registered (personal profiles or teams) within a country —
+    powers the city picker so users select instead of misspelling a free-text entry."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT city FROM (
+                    SELECT personal_city AS city FROM user_stats WHERE personal_country = %s AND personal_city IS NOT NULL
+                    UNION
+                    SELECT city FROM organizations WHERE country = %s AND city IS NOT NULL
+                ) t
+                WHERE city != ''
+                ORDER BY city ASC
+                LIMIT 60;
+            """, (country, country))
+            return [r['city'] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch cities for country: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_search_schools(query: str = None, city: str = None, country: str = None, limit: int = 8):
+    """Searches registered schools (organizations), optionally scoped to city/country — powers
+    the school picker so a student selects an existing team instead of retyping/misspelling it."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            clauses, params = [], []
+            if query:
+                clauses.append("org_name ILIKE %s")
+                params.append(f"%{query.strip()}%")
+            if city:
+                clauses.append("city = %s")
+                params.append(city)
+            if country:
+                clauses.append("country = %s")
+                params.append(country)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            params.append(limit)
+            cur.execute(f"""
+                SELECT org_id, org_name, org_tag, city, country
+                FROM organizations
+                {where}
+                ORDER BY org_name ASC
+                LIMIT %s;
+            """, tuple(params))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to search schools: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
 
 def db_set_user_referrer(user_id, referrer_id):
     """
@@ -3048,7 +3165,7 @@ def db_get_tournament_geo_leaderboard(run_id: str, group_by: str, limit: int = 5
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_count_feedback(status: str = None, category: str = None) -> int:
     conn = None
     try:

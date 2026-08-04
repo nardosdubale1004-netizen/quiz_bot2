@@ -609,7 +609,7 @@ def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeybo
         [InlineKeyboardButton(consent_label, callback_data=f"toggle_consent|{consent_target}")],
         [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
          InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
-        [InlineKeyboardButton("📍 LOCATION", callback_data="set_location_fsm|0")],
+        [InlineKeyboardButton("📍 COUNTRY / CITY / SCHOOL", callback_data="regloc_start|0")],
         [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
     ])
 
@@ -949,7 +949,7 @@ def build_leaderboard_keyboard(scope: str) -> InlineKeyboardMarkup:
          InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
     ])
 
-    
+
 def build_help_topic_text(key: str) -> str:
     topic = HELP_TOPICS.get(key)
     return topic[1] if topic else "⚠️ Topic not found."
@@ -1128,8 +1128,9 @@ def build_feedback_browse_list_text(items: list, category: str, status: str, off
 
     return "\n\n".join(lines)
 
-def build_feedback_thread_text(fb: dict, thread: list) -> str:
+def build_feedback_thread_text(fb: dict, thread: list, viewer_tz: str = "UTC") -> str:
     from src.config import FEEDBACK_CATEGORIES
+    from src.geo import format_local_time
     cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
 
     all_msgs = [{"role": "user", "text": fb['message'], "created_at": fb.get('created_at')}] + [
@@ -1137,12 +1138,7 @@ def build_feedback_thread_text(fb: dict, thread: list) -> str:
     ]
 
     def _fmt_time(dt):
-        if not dt:
-            return ""
-        try:
-            return dt.strftime("%b %d, %Y · %H:%M UTC")
-        except AttributeError:
-            return str(dt)[:16]
+        return format_local_time(dt, viewer_tz) if dt else ""
 
     def bubble(role, text, created_at):
         safe = html.escape(text)
@@ -1167,6 +1163,7 @@ def build_feedback_thread_text(fb: dict, thread: list) -> str:
         f"<hr/>\n\n"
         f"{conversation}"
     )
+    
 
 def build_welcome_message_text() -> str:
     """The channel's pinned welcome/intro card — marketing tone, not technical.
@@ -1195,7 +1192,8 @@ def build_welcome_message_text() -> str:
         "<i>Glad you're here. Let's get started. 🚀</i>"
     )
 
-def build_org_history_text(org: dict, log_rows: list) -> str:
+def build_org_history_text(org: dict, log_rows: list, viewer_tz: str = "UTC") -> str:
+    from src.geo import format_local_time
     name = html.escape(org.get("org_name", "TEAM"))
     tag = org.get("org_tag", "")
     role_icon = {"creator": "👑", "admin": "🛡️", "member": "👤", "pending": "📥", "rejected": "🚫"}
@@ -1207,7 +1205,7 @@ def build_org_history_text(org: dict, log_rows: list) -> str:
         body = ["<tr><td><b>Scholar</b></td><td><b>Role</b></td><td><b>Since</b></td></tr>"]
         for r in rows:
             icon = role_icon.get(r['org_role'], "•")
-            when = r['joined_at'].strftime('%b %d, %Y') if r.get('joined_at') else "—"
+            when = format_local_time(r['joined_at'], viewer_tz, fmt="%b %d, %Y") if r.get('joined_at') else "—"
             body.append(f"<tr><td>{html.escape(format_public_name(r))}</td><td>{icon} {r['org_role'].title()}</td><td>{when}</td></tr>")
         return "<table>" + "".join(body) + "</table>"
 

@@ -20,7 +20,7 @@ from src.database import (
     db_update_user_consent_state,
     db_leave_organization,
     db_join_organization,
-    db_join_organization_by_id,
+    db_join_organization_by_id as _dummy_unused,
     db_create_organization,
     db_get_organization_roster,
     db_get_user_organizations,
@@ -45,6 +45,9 @@ from src.database import (
     db_get_org_membership_log,
     db_get_weekly_leaderboard,
     db_update_user_location,
+    db_get_user_timezone,
+    db_search_schools,
+    db_get_cities_for_country,
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -89,6 +92,8 @@ def check_message_has_lockout(user_id, message) -> bool:
     current_text_lower = current_text.lower()
     return any(kw in current_text_lower for kw in ["lockout active", "already answered", "securely locked"])
 
+
+
 def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKeyboardMarkup:
     rs = return_state or "all:all:0"
     rows = [
@@ -103,6 +108,78 @@ def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKe
         cat, stat, off = parts
         rows.append([InlineKeyboardButton("🔙 BACK TO QUEUE", callback_data=f"fb_browse|{cat}|{stat}:{off}")])
     return InlineKeyboardMarkup(rows)
+
+def _build_country_index_kb() -> InlineKeyboardMarkup:
+    from src.geo import COUNTRY_NAMES
+    letters = sorted(set(c[0] for c in COUNTRY_NAMES))
+    rows, row = [], []
+    for l in letters:
+        row.append(InlineKeyboardButton(l, callback_data=f"regloc_az|{l}"))
+        if len(row) == 7:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⏭ SKIP FOR NOW", callback_data="regloc_skip_all|0")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_country_letter_kb(letter: str) -> InlineKeyboardMarkup:
+    from src.geo import COUNTRY_NAMES
+    matches = sorted(c for c in COUNTRY_NAMES if c.startswith(letter))
+    rows, row = [], []
+    for c in matches:
+        row.append(InlineKeyboardButton(c, callback_data=f"regloc_country|{c}"))
+        if len(row) == 1:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("🔤 BACK TO A-Z", callback_data="regloc_start|0")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_city_kb(cities: list) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(c, callback_data=f"regloc_city|{c}")] for c in cities[:20]]
+    rows.append([InlineKeyboardButton("✍️ TYPE A DIFFERENT CITY", callback_data="regloc_city_type|0")])
+    rows.append([InlineKeyboardButton("⏭ SKIP CITY", callback_data="regloc_skip_city|0")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_school_kb(schools: list) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(f"🏫 {s['org_name']} (#{s['org_tag']})", callback_data=f"regloc_school|{s['org_id']}")] for s in schools]
+    rows.append([InlineKeyboardButton("🔍 SEARCH BY NAME", callback_data="regloc_school_search|0")])
+    rows.append([InlineKeyboardButton("✨ CREATE NEW SCHOOL", callback_data="regloc_school_create|0")])
+    rows.append([InlineKeyboardButton("⏭ SKIP / NO SCHOOL", callback_data="regloc_school_skip|0")])
+    return InlineKeyboardMarkup(rows)
+
+async def _regloc_show_school_step(context, chat_id, message_id, user_id):
+    session = USER_PAYLOADS.get(user_id, {})
+    city, country = session.get("reg_city"), session.get("reg_country")
+    schools = await asyncio.to_thread(db_search_schools, None, city, country, 8)
+    if schools:
+        html_content = "🏫 <b>PICK YOUR SCHOOL</b>\n\nWe found these already registered nearby:"
+        kb = _build_school_kb(schools)
+    else:
+        html_content = "🏫 <b>NO SCHOOLS FOUND NEARBY YET</b>\n\nSearch by name, create a new one, or skip:"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 SEARCH BY NAME", callback_data="regloc_school_search|0")],
+            [InlineKeyboardButton("✨ CREATE NEW SCHOOL", callback_data="regloc_school_create|0")],
+            [InlineKeyboardButton("⏭ SKIP / NO SCHOOL", callback_data="regloc_school_skip|0")]
+        ])
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
+
+
+async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str):
+    session = USER_PAYLOADS.pop(user_id, {})
+    USER_STATES[user_id] = "IDLE"
+    city, country = session.get("reg_city"), session.get("reg_country")
+    if city or country:
+        await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
+    profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]])
+    await edit_rich_message_safe(
+        context.bot, chat_id=chat_id, message_id=message_id,
+        html_content=f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'}\n{school_msg}",
+        reply_markup=profile_nav_kb
+    )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     """Thin safety wrapper — any exception in any action branch below used to make a
@@ -158,12 +235,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         await asyncio.to_thread(db_set_user_grade, query.from_user.id, grade)
         await query.answer(f"Grade {grade} registered!")
-        msg = f"✅ <b>Academic Level Registered: Grade {grade}</b>\n\nYour profile is complete." if not previous_grade else \
-              f"✅ <b>Grade Updated:</b> {previous_grade} → <b>{grade}</b>\n\nYour challenge-bonus multiplier now compares against Grade {grade}."
-        confirm_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 CHANGE GRADE AGAIN", callback_data="reselect_grade_panel|0")],
-            [InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")]
-        ])
+        if not previous_grade:
+            msg = f"✅ <b>Academic Level Registered: Grade {grade}</b>\n\nWant to set your country, city, and school now? It's optional and you can change it anytime."
+            confirm_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌍 SET COUNTRY, CITY & SCHOOL", callback_data="regloc_start|0")],
+                [InlineKeyboardButton("⏭ SKIP FOR NOW", callback_data="privacy_menu|0")]
+            ])
+        else:
+            msg = f"✅ <b>Grade Updated:</b> {previous_grade} → <b>{grade}</b>\n\nYour challenge-bonus multiplier now compares against Grade {grade}."
+            confirm_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 CHANGE GRADE AGAIN", callback_data="reselect_grade_panel|0")],
+                [InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")]
+            ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=msg, reply_markup=confirm_kb)
         return
 
@@ -325,6 +408,117 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
+        return
+
+    elif action == "regloc_start":
+        await query.answer()
+        USER_STATES[user_id] = "IDLE"
+        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🌍 <b>PROMPT: YOUR COUNTRY</b>\n\nTap the first letter of your country to find it quickly:",
+            reply_markup=_build_country_index_kb()
+        )
+        return
+
+    elif action == "regloc_az":
+        await query.answer()
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"🌍 <b>COUNTRIES STARTING WITH '{d_id}'</b>\n\nTap yours:",
+            reply_markup=_build_country_letter_kb(d_id)
+        )
+        return
+
+    elif action == "regloc_country":
+        await query.answer()
+        country = d_id
+        USER_PAYLOADS.setdefault(user_id, {})["reg_country"] = country
+        cities = await asyncio.to_thread(db_get_cities_for_country, country)
+        if cities:
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"🏙️ <b>{country}</b>\n\nPick your city (or state/region), or type a new one:",
+                reply_markup=_build_city_kb(cities)
+            )
+        else:
+            USER_STATES[user_id] = "AWAITING_REGLOC_CITY_TEXT"
+            skip_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⏭ SKIP CITY", callback_data="regloc_skip_city|0")]])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"🏙️ <b>{country}</b>\n\nNo cities on file yet — type yours (city or state/region):" + FSM_INPUT_HINT,
+                reply_markup=skip_kb
+            )
+        return
+
+    elif action == "regloc_city_type":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_REGLOC_CITY_TEXT"
+        skip_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⏭ SKIP CITY", callback_data="regloc_skip_city|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="✍️ Type your city or state/region:" + FSM_INPUT_HINT, reply_markup=skip_kb
+        )
+        return
+
+    elif action == "regloc_skip_city":
+        await query.answer()
+        await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id)
+        return
+
+    elif action in ("regloc_city",):
+        await query.answer()
+        USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = d_id
+        await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id)
+        return
+
+    elif action == "regloc_school_search":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_REGLOC_SCHOOL_SEARCH"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🔍 Type your school's name to search:" + FSM_INPUT_HINT,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⏭ SKIP / NO SCHOOL", callback_data="regloc_school_skip|0")]])
+        )
+        return
+
+    elif action == "regloc_school":
+        await query.answer()
+        org_id = int(d_id)
+        join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, org_id)
+        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id,
+                              school_msg=f"✅ Joined <b>{join_data['org_name']}</b>!" if join_data else "⚠️ Could not join that school.")
+        return
+
+    elif action == "regloc_school_skip":
+        await query.answer()
+        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg="⏭ No school linked.")
+        return
+
+    elif action == "regloc_school_create":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        USER_STATES[user_id] = "AWAITING_ORG_NAME"
+        USER_PAYLOADS[user_id] = {
+            "edit_mid": query.message.message_id,
+            "org_city": session.get("reg_city"),
+            "org_country": session.get("reg_country"),
+        }
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="✍️ <b>NEW SCHOOL NAME</b>\n\nType the full formal name of your school:" + FSM_INPUT_HINT,
+            reply_markup=cancel_kb
+        )
+        return
+
+    elif action == "regloc_skip_all":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
+        text = build_profile_card_text(profile, None, subject_marks)
+        kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
     elif action == "view_org":
@@ -944,8 +1138,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Not found.", show_alert=True)
             return
         thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
         kb = _build_feedback_detail_keyboard(fb_id, return_state)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread), reply_markup=kb)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb)
         return
 
     elif action == "my_feedback":
@@ -975,7 +1170,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Not found.", show_alert=True)
             return
         thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
-        text = build_feedback_thread_text(fb, thread)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        text = build_feedback_thread_text(fb, thread, viewer_tz)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
             [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
@@ -1066,7 +1262,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         from src.database import db_get_org_membership_log
         from src.rendering.html_views import build_org_history_text
         log_rows = await asyncio.to_thread(db_get_org_membership_log, org_id)
-        text = build_org_history_text(org_details, log_rows)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        text = build_org_history_text(org_details, log_rows, viewer_tz)
 
         pending_rows = [r for r in log_rows if r['org_role'] == 'pending']
         kb_rows = []
@@ -1437,3 +1634,4 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
         await query.answer("System Error: Could not render response.", show_alert=True)
+
