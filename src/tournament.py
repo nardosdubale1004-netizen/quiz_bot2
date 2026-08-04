@@ -651,11 +651,14 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             await finalize_tournament_round(app, engine, track, interrupted=True)
 
         queue = await asyncio.to_thread(db_get_tournament_queue)
+        has_live_round_at_startup = len(await asyncio.to_thread(db_get_active_tournament_rounds)) > 0
 
-        if queue and not queue.get('remaining_ids') and not has_live_round and not did_finalize:
+        if queue and not queue.get('remaining_ids') and not has_live_round_at_startup:
             dlog("[DEBUG-WATCHER] Queue exhausted with no live round. Clearing stale queue row.")
             await asyncio.to_thread(db_clear_tournament_queue)
             queue = None
+        elif queue and queue.get('is_paused'):
+            dlog("[DEBUG-WATCHER] Found tournament queue still marked paused at startup — leaving as-is (use Emergency Stop panel to resume).")
         print(f"{Style.GREEN}[TOURNAMENT] Recovery sweep complete.{Style.RESET}", flush=True)
     except Exception as e:
         dlog_exception("tournament_watcher_loop startup recovery sweep", e)

@@ -69,6 +69,7 @@ from src.rendering.html_views import (
     build_leaderboard_text,
     build_leaderboard_keyboard,
     build_geo_picker_keyboard,
+    format_public_name,
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton

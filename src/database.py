@@ -1040,8 +1040,8 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
             meta_json = Json(tournament_meta) if tournament_meta is not None else '{}'
 
             cur.execute("""
-                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds, tournament_meta)
-                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO tournament_queue (id, remaining_ids, last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds, tournament_meta, is_paused)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (id) DO UPDATE SET
                     remaining_ids = EXCLUDED.remaining_ids,
                     last_seq = EXCLUDED.last_seq,
@@ -1050,7 +1050,8 @@ def db_save_tournament_queue(remaining_ids: list, last_seq: int, round_seconds: 
                     scheduled_start = EXCLUDED.scheduled_start,
                     announcement_mid = EXCLUDED.announcement_mid,
                     cooldown_seconds = EXCLUDED.cooldown_seconds,
-                    tournament_meta = EXCLUDED.tournament_meta;
+                    tournament_meta = EXCLUDED.tournament_meta,
+                    is_paused = FALSE;
             """, (Json(remaining_ids), last_seq, round_seconds, total_count, scheduled_start, announcement_mid, cooldown_seconds, meta_json))
             conn.commit()
     except Exception as e:
