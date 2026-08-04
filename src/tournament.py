@@ -16,6 +16,8 @@ from src.database import (
     db_get_overdue_tournament_rounds,
     db_get_active_tournament_rounds,
     db_get_tournament_queue,
+    db_peek_tournament_question, 
+    db_advance_tournament_queue, 
     db_pop_tournament_question,
     db_clear_tournament_queue,
     db_get_question_by_id,
@@ -821,99 +823,85 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         await asyncio.to_thread(db_clear_tournament_queue)
                         continue
 
-                    dlog(f"[DEBUG-POP-ATTEMPT] Watcher attempting to pop from queue. remaining_ids={fresh_queue.get('remaining_ids')}")
-                    next_qid, next_seq = await asyncio.to_thread(db_pop_tournament_question)
-                    dlog(f"[DEBUG-WATCHER] db_pop_tournament_question returned next_qid={next_qid}, next_seq={next_seq}")
-                    if next_qid:
-                        q = await asyncio.to_thread(db_get_question_by_id, next_qid)
-                        if q:
-                            total_rounds = fresh_queue['total_count']
-                            remaining_count = len(fresh_queue['remaining_ids']) - 1
-                            current_round = total_rounds - remaining_count
+                    dlog(f"[DEBUG-PEEK-ATTEMPT] Watcher peeking next question. remaining_ids={fresh_queue.get('remaining_ids')}")
+                        next_qid, next_seq = await asyncio.to_thread(db_peek_tournament_question)
+                        dlog(f"[DEBUG-WATCHER] db_peek_tournament_question returned next_qid={next_qid}, next_seq={next_seq} (queue NOT yet mutated)")
+                        if next_qid:
+                            q = await asyncio.to_thread(db_get_question_by_id, next_qid)
+                            if q:
+                                total_rounds = fresh_queue['total_count']
+                                remaining_count = len(fresh_queue['remaining_ids']) - 1
+                                current_round = total_rounds - remaining_count
 
-                            grace_msg = None
-                            try:
-                                grace_msg = await app.bot.send_message(
-                                    chat_id=engine.config['channel'],
-                                    text=f"🚀 <b>Get ready! Round {current_round}/{total_rounds} starts in 3 seconds...</b>",
-                                    parse_mode="HTML"
-                                )
-                            except Exception as grace_err:
-                                dlog_exception("tournament_watcher_loop grace message send", grace_err)
-                            await asyncio.sleep(3)
-                            if grace_msg:
+                                grace_msg = None
                                 try:
-                                    await app.bot.delete_message(chat_id=engine.config['channel'], message_id=grace_msg.message_id)
-                                except Exception:
-                                    pass
+                                    grace_msg = await app.bot.send_message(
+                                        chat_id=engine.config['channel'],
+                                        text=f"🚀 <b>Get ready! Round {current_round}/{total_rounds} starts in 3 seconds...</b>",
+                                        parse_mode="HTML"
+                                    )
+                                except Exception as grace_err:
+                                    dlog_exception("tournament_watcher_loop grace message send", grace_err)
+                                await asyncio.sleep(3)
+                                if grace_msg:
+                                    try:
+                                        await app.bot.delete_message(chat_id=engine.config['channel'], message_id=grace_msg.message_id)
+                                    except Exception:
+                                        pass
 
-                            dlog(f"[DEBUG-WATCHER] Launching round {current_round}/{total_rounds} for q_id={next_qid}, display_id={next_seq}...")
-                            try:
-                                await launch_tournament_round(app, engine, q, next_seq, fresh_queue.get('round_seconds', 60), current_round, total_rounds)
-                                dlog(f"[DEBUG-WATCHER] launch_tournament_round returned normally for display_id={next_seq}.")
-                            except Exception as launch_err:
-                                dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
+                                dlog(f"[DEBUG-WATCHER] Launching round {current_round}/{total_rounds} for q_id={next_qid}, display_id={next_seq}...")
+                                try:
+                                    await launch_tournament_round(app, engine, q, next_seq, fresh_queue.get('round_seconds', 60), current_round, total_rounds)
+                                    dlog(f"[DEBUG-WATCHER] launch_tournament_round CONFIRMED success for display_id={next_seq}. Advancing queue now...")
+                                    advanced = await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
+                                    dlog(f"[DEBUG-WATCHER] db_advance_tournament_queue('{next_qid}') -> {advanced}")
+                                    _LAUNCH_FAIL_COUNTS.pop(next_qid, None)
+                                except Exception as launch_err:
+                                    # Nothing was ever removed from the DB queue — next_qid is STILL
+                                    # sitting at the front of remaining_ids, so no rollback/reinsertion
+                                    # logic is needed. We just retry (or give up after N tries) without
+                                    # ever having lost the question from the database.
+                                    dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
 
-                                fail_count = _LAUNCH_FAIL_COUNTS.get(next_qid, 0) + 1
-                                _LAUNCH_FAIL_COUNTS[next_qid] = fail_count
+                                    fail_count = _LAUNCH_FAIL_COUNTS.get(next_qid, 0) + 1
+                                    _LAUNCH_FAIL_COUNTS[next_qid] = fail_count
 
-                                if fail_count >= _MAX_LAUNCH_RETRIES:
-                                    dlog(f"[DEBUG-WATCHER-SKIP] q_id={next_qid} failed {fail_count}x. Skipping it — NOT re-queued.")
+                                    if fail_count >= _MAX_LAUNCH_RETRIES:
+                                        dlog(f"[DEBUG-WATCHER-SKIP] q_id={next_qid} failed {fail_count}x. Skipping it — advancing queue past it WITHOUT relaunching.")
+                                        await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
+                                        try:
+                                            await app.bot.send_message(
+                                                chat_id=engine.config['channel'],
+                                                text=(
+                                                    f"⚠️ <b>Skipped question in round {current_round}/{total_rounds}</b>\n"
+                                                    f"Question <code>{next_qid}</code> failed to launch {fail_count}× "
+                                                    f"(<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>) "
+                                                    f"and was skipped. Check its content for malformed formatting."
+                                                ),
+                                                parse_mode="HTML"
+                                            )
+                                        except Exception:
+                                            pass
+                                        continue
+
                                     try:
                                         await app.bot.send_message(
                                             chat_id=engine.config['channel'],
                                             text=(
-                                                f"⚠️ <b>Skipped question in round {current_round}/{total_rounds}</b>\n"
-                                                f"Question <code>{next_qid}</code> failed to launch {fail_count}× "
-                                                f"(<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>) "
-                                                f"and was skipped. Check its content for malformed formatting."
+                                                f"⚠️ <b>Failed to launch round {current_round}/{total_rounds}</b> "
+                                                f"(attempt {fail_count}/{_MAX_LAUNCH_RETRIES}).\n"
+                                                f"<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>\n"
+                                                f"Retrying shortly — question is still safely queued."
                                             ),
                                             parse_mode="HTML"
                                         )
                                     except Exception:
                                         pass
-                                    continue
-
-                                rollback_conn = None
-                                try:
-                                    dlog(f"[DEBUG-WATCHER-ROLLBACK] Attempting database queue recovery for popped question ID: {next_qid}")
-                                    rollback_conn = GLOBAL_ENGINE.get_db_connection()
-                                    with rollback_conn.cursor() as cur:
-                                        cur.execute("SELECT remaining_ids, last_seq FROM tournament_queue WHERE id = 1 FOR UPDATE;")
-                                        row = cur.fetchone()
-                                        if row:
-                                            rem = row['remaining_ids']
-                                            if isinstance(rem, str):
-                                                rem = json.loads(rem)
-                                            if next_qid not in rem:
-                                                rem.insert(0, next_qid)
-                                            cur.execute("UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;", (Json(rem), row['last_seq'] - 1))
-                                            rollback_conn.commit()
-                                            dlog(f"[DEBUG-WATCHER-ROLLBACK] Recovery confirmed! Restored {next_qid}. New remaining: {rem}")
-                                except Exception as rollback_err:
-                                    dlog_exception("Failed to rollback tournament queue after launch failure", rollback_err)
-                                finally:
-                                    if rollback_conn:
-                                        GLOBAL_ENGINE.release_connection(rollback_conn)
-
-                                try:
-                                    await app.bot.send_message(
-                                        chat_id=engine.config['channel'],
-                                        text=(
-                                            f"⚠️ <b>Failed to launch round {current_round}/{total_rounds}</b> "
-                                            f"(attempt {fail_count}/{_MAX_LAUNCH_RETRIES}).\n"
-                                            f"<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>\n"
-                                            f"Retrying shortly."
-                                        ),
-                                        parse_mode="HTML"
-                                    )
-                                except Exception:
-                                    pass
+                            else:
+                                dlog(f"[DEBUG-WATCHER-ERROR] Question {next_qid} not found in DB. Advancing past it (it can never launch).")
+                                await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
                         else:
-                            dlog(f"[DEBUG-WATCHER-ERROR] Question {next_qid} not found in DB. Skipping.")
-                    else:
-                        dlog("[DEBUG-WATCHER] db_pop_tournament_question returned None (active live round or lock is "
-                             "blocking, or queue genuinely empty). Queue preserved, not cleared.")
+                            dlog("[DEBUG-WATCHER] db_peek_tournament_question returned None (queue genuinely empty). Nothing to launch.")
 
         except Exception as e:
             traceback.print_exc()

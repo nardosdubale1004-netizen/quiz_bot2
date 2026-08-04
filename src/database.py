@@ -1087,7 +1087,43 @@ def db_get_tournament_queue():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_pop_tournament_question():
+def db_peek_tournament_question():
+    """Read-only peek at the next question in the queue — does NOT mutate the queue.
+    The id is only removed via db_advance_tournament_queue() AFTER the round has
+    actually launched successfully. This closes the crash window where a question
+    could be popped from the DB but the process dies/restarts before the message
+    is actually posted, silently losing that round forever."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT remaining_ids, last_seq FROM tournament_queue WHERE id = 1;")
+            row = cur.fetchone()
+            if not row:
+                return None, None
+            remaining = row['remaining_ids']
+            if isinstance(remaining, str):
+                try:
+                    remaining = json.loads(remaining)
+                except Exception:
+                    remaining = []
+            if not remaining:
+                return None, None
+            print(f"[DEBUG-DB-PEEK] Peeked next tournament question: '{remaining[0]}' (queue unchanged: {remaining})", flush=True)
+            return remaining[0], row['last_seq'] + 1
+    except Exception as e:
+        print(f"[DB ERROR] Failed to peek tournament question: {e}")
+        return None, None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_advance_tournament_queue(consumed_id, new_last_seq):
+    """Commits the queue's progress AFTER a round has been CONFIRMED launched
+    (message actually posted to Telegram). Idempotent: only removes consumed_id
+    if it's still at the front of the list, so a duplicate call (e.g. from a
+    race between two processes) is a safe no-op."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1096,40 +1132,30 @@ def db_pop_tournament_question():
             row = cur.fetchone()
             if not row:
                 conn.commit()
-                return None, None
-
+                print(f"[DEBUG-DB-ADVANCE] No queue row found — nothing to advance for '{consumed_id}'.", flush=True)
+                return False
             remaining = row['remaining_ids']
             if isinstance(remaining, str):
                 try:
                     remaining = json.loads(remaining)
                 except Exception:
                     remaining = []
-
-            if not remaining:
-                print("[DEBUG-DB-POP] Remaining ids is empty. Aborting pop.", flush=True)
+            if remaining and remaining[0] == consumed_id:
+                remaining.pop(0)
+                cur.execute(
+                    "UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;",
+                    (Json(remaining), max(row['last_seq'], new_last_seq))
+                )
                 conn.commit()
-                return None, None
-
-            cur.execute("SELECT 1 FROM sent_tracks WHERE status = 'tournament_active' LIMIT 1;")
-            if cur.fetchone():
-                print("[DEBUG-DB-POP] Active live round already detected in tracks table. Bypassing popping.", flush=True)
-                conn.commit()
-                return None, None
-
-            next_id = remaining.pop(0)
-            new_last_seq = row['last_seq'] + 1
-
-            print(f"[DEBUG-DB-POP] Popped next tournament question: '{next_id}'. New remaining queue: {remaining}", flush=True)
-            cur.execute(
-                "UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;",
-                (Json(remaining), new_last_seq)
-            )
+                print(f"[DEBUG-DB-ADVANCE] Confirmed launch — removed '{consumed_id}' from queue. New remaining: {remaining}", flush=True)
+                return True
             conn.commit()
-            return next_id, new_last_seq
+            print(f"[DEBUG-DB-ADVANCE] '{consumed_id}' no longer at front of queue (front={remaining[0] if remaining else None}) — skipping, already advanced elsewhere.", flush=True)
+            return False
     except Exception as e:
         if conn: conn.rollback()
-        print(f"[DB ERROR] Failed to pop tournament question: {e}")
-        return None, None
+        print(f"[DB ERROR] Failed to advance tournament queue: {e}")
+        return False
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
