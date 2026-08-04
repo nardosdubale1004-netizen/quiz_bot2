@@ -282,6 +282,15 @@ async def admin_panel(app, engine: QuizEngine):
                 if count > 0:
                     print(f"{Style.GREEN}✅ SUCCESS: {count} questions successfully imported/synced to Neon database.{Style.RESET}")
                     await asyncio.to_thread(engine.refresh_database, force=True)
+
+                    repeats = getattr(engine, "_last_import_repeats", [])
+                    if repeats:
+                        print(f"\n{Style.YELLOW}{Style.BOLD}🔁 {len(repeats)} of these question(s) were already asked before:{Style.RESET}")
+                        for r in repeats:
+                            first_str = r['first_shown_at'].strftime('%b %d, %Y') if r['first_shown_at'] else "unknown"
+                            last_str = r['last_shown_at'].strftime('%b %d, %Y') if r['last_shown_at'] else "unknown"
+                            print(f"  ⚠️  {r['id']}  —  asked {r['times_shown']}× already  │  first: {first_str}  │  last: {last_str}")
+                        print(f"{Style.YELLOW}These will keep their existing send history — students who already saw them will see the 🔁 repeat badge next time.{Style.RESET}\n")
                 else:
                     print(f"{Style.RED}❌ FAILED: No questions were imported. Check your JSON schema.{Style.RESET}")
             except Exception as e:
@@ -1396,6 +1405,48 @@ async def render_campaign_manager(app, engine, cli: CLI):
         db_delete_campaign
     )
     from src.tournament import post_campaign_now
+    from src.rendering.rich_helpers import convert_to_legacy_html
+
+    def _is_cancel(raw: str) -> bool:
+        return raw is None or raw.strip().lower() in ('cancel', 'c', 'q', 'exit')
+
+    async def _paste_html_block(prompt_label: str) -> str or None:
+        """Multi-line HTML capture with a live preview + confirm step. Returns None if the
+        user backs out at any point — caller does nothing in that case, nothing is lost
+        upstream since this only returns the finished text, never partially commits."""
+        print(f"\n{Style.YELLOW}{prompt_label}{Style.RESET}")
+        print(f"{Style.CYAN}Paste your rich HTML now. Type END on its own line when finished, "
+              f"or CANCEL on its own line to back out without saving.{Style.RESET}\n")
+        while True:
+            lines = []
+            while True:
+                line = await cli.ask("")
+                if line is None:
+                    return None
+                stripped = line.strip()
+                if stripped.upper() == "END":
+                    break
+                if stripped.upper() == "CANCEL":
+                    print(f"{Style.YELLOW}Cancelled — nothing saved.{Style.RESET}")
+                    return None
+                lines.append(line)
+
+            content = "\n".join(lines)
+            if not content.strip():
+                print(f"{Style.RED}Empty content isn't allowed. Paste again, or type CANCEL to back out.{Style.RESET}\n")
+                continue
+
+            print(f"\n{Style.GREEN}{Style.BOLD}--- PREVIEW (how it renders on Telegram) ---{Style.RESET}")
+            print(convert_to_legacy_html(content))
+            print(f"{Style.GREEN}--------------------------------------------{Style.RESET}\n")
+            print("[y] Looks good, save it   [r] Re-paste from scratch   [c] Cancel, don't save")
+            confirm = await cli.ask("<b>Confirm > </b>")
+            if confirm is None or confirm.strip().lower() == 'c':
+                print(f"{Style.YELLOW}Cancelled — nothing saved.{Style.RESET}")
+                return None
+            if confirm.strip().lower() == 'r':
+                continue
+            return content
 
     while True:
         clear_screen()
@@ -1410,62 +1461,103 @@ async def render_campaign_manager(app, engine, cli: CLI):
             sched_lbl = "always-on" if not sched.get("enabled") else f"{sched.get('start_hour_utc')}h-{sched.get('end_hour_utc')}h UTC"
             print(f"  {i+1}. [{status}] {c['name']}  ({pin_lbl}, {sched_lbl})")
 
-        print(f"\n{Style.CYAN}[n] New campaign  [e] Edit content  [t] Toggle on/off  [s] Set schedule  [p] Post now  [d] Delete  [b] Back{Style.RESET}")
+        print(f"\n{Style.CYAN}[n] New campaign  [e] Edit content  [t] Toggle on/off  [s] Set schedule  "
+              f"[p] Post now  [d] Delete  [x] Back to Main Cockpit{Style.RESET}")
         action = await cli.ask("<b>Action > </b>")
-        if not action or action == 'b':
+        if action is None or action.strip().lower() in ('x', 'b'):
             return
 
+        action = action.strip().lower()
+
         if action == 'n':
-            name = await cli.ask("<b>Campaign name (unique, e.g. 'welcome' or 'summer_promo'): </b>")
-            if not name:
+            name = await cli.ask("<b>Campaign name (unique, e.g. 'welcome' or 'summer_promo'), or CANCEL: </b>")
+            if _is_cancel(name):
                 continue
-            print(f"{Style.YELLOW}Paste your rich HTML content. Type END on its own line when done:{Style.RESET}")
-            lines = []
-            while True:
-                line = await cli.ask("")
-                if line is None or line.strip() == "END":
-                    break
-                lines.append(line)
-            html_content = "\n".join(lines)
-            pin_in = await cli.ask("<b>Pin this campaign when active? (y/n, default y): </b>")
-            pin_it = (pin_in or "y").lower() != 'n'
-            ok = await asyncio.to_thread(db_create_campaign, name, html_content, pin_it)
-            print(f"{Style.GREEN if ok else Style.RED}{'✅ Created.' if ok else '❌ Failed (name may already exist).'}{Style.RESET}")
+            name = name.strip()
+            if await asyncio.to_thread(db_get_campaign_by_name, name):
+                print(f"{Style.RED}A campaign named '{name}' already exists — use [e] Edit content instead.{Style.RESET}")
+                await asyncio.sleep(1.8)
+                continue
+
+            content = await _paste_html_block(f"✍️  NEW CAMPAIGN: {name}")
+            if content is None:
+                continue
+
+            pin_in = await cli.ask("<b>Pin this campaign when active? (y/n, default y, or CANCEL): </b>")
+            if _is_cancel(pin_in):
+                continue
+            pin_it = (pin_in or "y").strip().lower() != 'n'
+
+            ok = await asyncio.to_thread(db_create_campaign, name, content, pin_it)
+            print(f"{Style.GREEN if ok else Style.RED}{'✅ Created.' if ok else '❌ Failed to save.'}{Style.RESET}")
             await asyncio.sleep(1.2)
 
         elif action == 'e':
-            name = await cli.ask("<b>Campaign name to edit: </b>")
-            if not name:
+            if not campaigns:
+                print(f"{Style.YELLOW}No campaigns to edit yet.{Style.RESET}")
+                await asyncio.sleep(1.2)
                 continue
-            print(f"{Style.YELLOW}Paste replacement HTML content. Type END on its own line when done:{Style.RESET}")
-            lines = []
-            while True:
-                line = await cli.ask("")
-                if line is None or line.strip() == "END":
-                    break
-                lines.append(line)
-            ok = await asyncio.to_thread(db_update_campaign_content, name, "\n".join(lines))
-            print(f"{Style.GREEN if ok else Style.RED}{'✅ Updated.' if ok else '❌ Not found.'}{Style.RESET}")
+            name = await cli.ask("<b>Campaign name to edit (or CANCEL): </b>")
+            if _is_cancel(name):
+                continue
+            existing = await asyncio.to_thread(db_get_campaign_by_name, name.strip())
+            if not existing:
+                print(f"{Style.RED}No campaign named '{name.strip()}'.{Style.RESET}")
+                await asyncio.sleep(1.5)
+                continue
+
+            content = await _paste_html_block(f"✍️  EDITING: {existing['name']} (replaces the current content)")
+            if content is None:
+                continue
+
+            ok = await asyncio.to_thread(db_update_campaign_content, existing['name'], content)
+            print(f"{Style.GREEN if ok else Style.RED}{'✅ Updated.' if ok else '❌ Failed.'}{Style.RESET}")
             await asyncio.sleep(1.2)
 
         elif action == 't':
-            name = await cli.ask("<b>Campaign name to toggle: </b>")
-            c = await asyncio.to_thread(db_get_campaign_by_name, name) if name else None
-            if c:
-                await asyncio.to_thread(db_set_campaign_active, name, not c['is_active'])
-                print(f"{Style.GREEN}✅ Now {'OFF' if c['is_active'] else 'ON'}.{Style.RESET}")
+            if not campaigns:
+                print(f"{Style.YELLOW}No campaigns yet.{Style.RESET}")
+                await asyncio.sleep(1.2)
+                continue
+            name = await cli.ask("<b>Campaign name to toggle (or CANCEL): </b>")
+            if _is_cancel(name):
+                continue
+            c = await asyncio.to_thread(db_get_campaign_by_name, name.strip())
+            if not c:
+                print(f"{Style.RED}Not found.{Style.RESET}")
+                await asyncio.sleep(1.2)
+                continue
+            await asyncio.to_thread(db_set_campaign_active, name.strip(), not c['is_active'])
+            print(f"{Style.GREEN}✅ Now {'OFF' if c['is_active'] else 'ON'}.{Style.RESET}")
             await asyncio.sleep(1.0)
 
         elif action == 's':
-            name = await cli.ask("<b>Campaign name to schedule: </b>")
-            if not name:
+            if not campaigns:
+                print(f"{Style.YELLOW}No campaigns yet.{Style.RESET}")
+                await asyncio.sleep(1.2)
                 continue
-            mode = await cli.ask("<b>[1] Set daily/weekly window  [2] Always-on (disable schedule): </b>")
-            if mode == "1":
-                days_in = await cli.ask("<b>Days (0=Mon..6=Sun, comma-separated, blank=every day): </b>")
+            name = await cli.ask("<b>Campaign name to schedule (or CANCEL): </b>")
+            if _is_cancel(name):
+                continue
+            if not await asyncio.to_thread(db_get_campaign_by_name, name.strip()):
+                print(f"{Style.RED}Not found.{Style.RESET}")
+                await asyncio.sleep(1.2)
+                continue
+
+            mode = await cli.ask("<b>[1] Set daily/weekly window  [2] Always-on  [c] Cancel: </b>")
+            if _is_cancel(mode) or mode.strip().lower() == 'c':
+                continue
+            if mode.strip() == "1":
+                days_in = await cli.ask("<b>Days (0=Mon..6=Sun, comma-separated, blank=every day, or CANCEL): </b>")
+                if _is_cancel(days_in):
+                    continue
                 days = [int(d.strip()) for d in days_in.split(",") if d.strip().isdigit()] if days_in else list(range(7))
-                start_in = await cli.ask("<b>Start hour UTC (0-23): </b>")
-                end_in = await cli.ask("<b>End hour UTC (0-23): </b>")
+                start_in = await cli.ask("<b>Start hour UTC (0-23, or CANCEL): </b>")
+                if _is_cancel(start_in):
+                    continue
+                end_in = await cli.ask("<b>End hour UTC (0-23, or CANCEL): </b>")
+                if _is_cancel(end_in):
+                    continue
                 schedule = {
                     "enabled": True, "days": days,
                     "start_hour_utc": int(start_in) if start_in and start_in.isdigit() else 8,
@@ -1473,25 +1565,48 @@ async def render_campaign_manager(app, engine, cli: CLI):
                 }
             else:
                 schedule = {"enabled": False}
-            await asyncio.to_thread(db_set_campaign_schedule, name, schedule)
+
+            await asyncio.to_thread(db_set_campaign_schedule, name.strip(), schedule)
             print(f"{Style.GREEN}✅ Schedule saved. Takes effect within 60s.{Style.RESET}")
             await asyncio.sleep(1.2)
 
         elif action == 'p':
-            name = await cli.ask("<b>Campaign name to post right now: </b>")
-            c = await asyncio.to_thread(db_get_campaign_by_name, name) if name else None
-            if c:
+            if not campaigns:
+                print(f"{Style.YELLOW}No campaigns yet.{Style.RESET}")
+                await asyncio.sleep(1.2)
+                continue
+            name = await cli.ask("<b>Campaign name to post right now (or CANCEL): </b>")
+            if _is_cancel(name):
+                continue
+            c = await asyncio.to_thread(db_get_campaign_by_name, name.strip())
+            if not c:
+                print(f"{Style.RED}Not found.{Style.RESET}")
+                await asyncio.sleep(1.2)
+                continue
+            try:
                 await post_campaign_now(app, engine, c)
                 print(f"{Style.GREEN}✅ Posted{' and pinned' if c['pin_it'] else ''}.{Style.RESET}")
-            else:
-                print(f"{Style.RED}Not found.{Style.RESET}")
-            await asyncio.sleep(1.2)
+            except Exception as post_err:
+                print(f"{Style.RED}❌ Post failed: {post_err}{Style.RESET}")
+            await asyncio.sleep(1.4)
 
         elif action == 'd':
-            name = await cli.ask("<b>Campaign name to delete (content only — does not delete the posted channel message): </b>")
-            if name:
-                confirm = await cli.ask(f"<b>Confirm delete '{name}'? (y/n): </b>")
-                if confirm and confirm.lower() == 'y':
-                    await asyncio.to_thread(db_delete_campaign, name)
-                    print(f"{Style.GREEN}✅ Deleted.{Style.RESET}")
-                    await asyncio.sleep(1.0)
+            if not campaigns:
+                print(f"{Style.YELLOW}No campaigns yet.{Style.RESET}")
+                await asyncio.sleep(1.2)
+                continue
+            name = await cli.ask("<b>Campaign name to delete (or CANCEL): </b>")
+            if _is_cancel(name):
+                continue
+            if not await asyncio.to_thread(db_get_campaign_by_name, name.strip()):
+                print(f"{Style.RED}No campaign named '{name.strip()}' — nothing deleted.{Style.RESET}")
+                await asyncio.sleep(1.5)
+                continue
+            confirm = await cli.ask(f"<b>Confirm delete '{name.strip()}'? (y/n): </b>")
+            if confirm and confirm.strip().lower() == 'y':
+                await asyncio.to_thread(db_delete_campaign, name.strip())
+                print(f"{Style.GREEN}✅ Deleted.{Style.RESET}")
+                await asyncio.sleep(1.0)
+        else:
+            print(f"{Style.YELLOW}Unrecognized option.{Style.RESET}")
+            await asyncio.sleep(0.8)

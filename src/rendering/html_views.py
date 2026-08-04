@@ -1269,9 +1269,16 @@ def build_admin_questions_text(rows: list, subject: str, status_filter: str, off
         else:
             status = "🟢 Live" if r.get('track_status') == 'active' else "🔵 Closed"
             link = f" · <a href='https://t.me/{channel_username}/{r['message_id']}'>🔗 Open</a>"
+
+        times_shown = r.get('times_shown') or 0
+        repeat_line = ""
+        if times_shown > 1:
+            first_str = r['first_shown_at'].strftime('%b %d, %Y') if r.get('first_shown_at') else "unknown"
+            repeat_line = f"\n 🔁 Asked {times_shown}× — first on {first_str}"
+
         lines.append(
             f"<code>{r['q_id']}</code> [{html.escape(str(r['difficulty']))}] {html.escape(r['topic'])}\n"
-            f" {status}{link} · 📊 {r['answer_count']} answered ({r['correct_count']} correct)"
+            f" {status}{link} · 📊 {r['answer_count']} answered ({r['correct_count']} correct){repeat_line}"
         )
     return "\n\n".join(lines)
 

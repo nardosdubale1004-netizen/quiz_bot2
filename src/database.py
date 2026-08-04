@@ -406,6 +406,16 @@ class QuizEngine:
                 """)
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS last_shown_at TIMESTAMPTZ;")
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS times_shown INT DEFAULT 0;")
+                cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS first_shown_at TIMESTAMPTZ;")
+                # One-time backfill: earliest send per question becomes its first_shown_at
+                cur.execute("""
+                    UPDATE questions q SET first_shown_at = sub.min_sent
+                    FROM (
+                        SELECT q_id, MIN(sent_at) AS min_sent
+                        FROM sent_tracks GROUP BY q_id
+                    ) sub
+                    WHERE q.id = sub.q_id AND q.first_shown_at IS NULL;
+                """)
                 # One-time backfill from existing send history so cooldown works immediately
                 cur.execute("""
                     UPDATE questions q SET last_shown_at = sub.max_sent, times_shown = sub.cnt
@@ -659,15 +669,33 @@ class QuizEngine:
     @timed_sync(lambda self, json_data: "db_import_questions")
     def db_import_questions(self, json_data):
         conn = None
+        self._last_import_repeats = []
         try:
             questions_list = json_data if isinstance(json_data, list) else [json_data]
             conn = self.get_db_connection()
             with conn.cursor() as cur:
                 imported_count = 0
+                repeat_alerts = []
 
                 for q in questions_list:
                     if not q.get("id") or not q.get("subject"):
                         continue
+
+                    # Check prior history BEFORE the upsert overwrites it — this is what lets
+                    # an admin know "you just re-pasted a question already asked N times,
+                    # first on DATE" instead of it silently looking brand new.
+                    cur.execute(
+                        "SELECT times_shown, first_shown_at, last_shown_at FROM questions WHERE id = %s;",
+                        (q["id"],)
+                    )
+                    prior = cur.fetchone()
+                    if prior and (prior.get("times_shown") or 0) > 0:
+                        repeat_alerts.append({
+                            "id": q["id"],
+                            "times_shown": prior.get("times_shown") or 0,
+                            "first_shown_at": prior.get("first_shown_at"),
+                            "last_shown_at": prior.get("last_shown_at"),
+                        })
 
                     tags = q.get("tags")
                     if not isinstance(tags, list):
@@ -719,6 +747,7 @@ class QuizEngine:
 
                 conn.commit()
                 track_question_cache.invalidate_prefix("trackq:")
+                self._last_import_repeats = repeat_alerts
                 return imported_count
         except Exception as e:
             if conn: conn.rollback()
@@ -1189,17 +1218,20 @@ def db_get_recent_post_history(days: int = 7):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_mark_question_shown(q_id: str):
     """Call this every time a question is actually sent — scheduled, manual, or tournament.
-    This is what makes the cooldown filter work."""
+    Sets first_shown_at only once (COALESCE keeps the original date forever), and always
+    bumps last_shown_at + times_shown. This is what powers the 'repeat question' badge and
+    the admin re-import warning."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE questions
-                SET last_shown_at = NOW(), times_shown = COALESCE(times_shown, 0) + 1
+                SET first_shown_at = COALESCE(first_shown_at, NOW()),
+                    last_shown_at = NOW(),
+                    times_shown = COALESCE(times_shown, 0) + 1
                 WHERE id = %s;
             """, (q_id,))
             conn.commit()
@@ -1210,6 +1242,27 @@ def db_mark_question_shown(q_id: str):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
             
+def db_get_question_history(q_id: str):
+    """Single-question repeat-history lookup for admins: how many times it's gone out,
+    and its first/last send dates. Returns None if the question has never been sent."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, subject, topic, times_shown, first_shown_at, last_shown_at
+                FROM questions WHERE id = %s;
+            """, (q_id,))
+            row = cur.fetchone()
+            if not row or not (row.get("times_shown") or 0):
+                return None
+            return dict(row)
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch question history for {q_id}: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_track_and_question(display_id: int):
     cache_key = f"trackq:{display_id}"
@@ -2121,6 +2174,7 @@ def db_get_admin_question_overview(subject: str = None, status_filter: str = "al
                 WITH latest AS (
                     SELECT DISTINCT ON (q.id)
                         q.id AS q_id, q.subject, q.topic, q.difficulty, q.scheduled_for, q.is_sent,
+                        q.times_shown, q.first_shown_at,
                         st.display_id, st.message_id, st.status AS track_status, st.sent_at
                     FROM questions q
                     LEFT JOIN sent_tracks st ON st.q_id = q.id
@@ -2185,7 +2239,7 @@ def db_count_admin_questions(subject: str = None, status_filter: str = "all") ->
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: str = None, is_public: bool = None) -> bool:
     """Updates metadata profile fields for an active organization."""
     conn = None

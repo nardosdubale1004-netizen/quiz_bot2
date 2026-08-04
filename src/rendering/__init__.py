@@ -75,11 +75,30 @@ class UIFactory(metaclass=UIFactoryMeta):
         if has_tikz:
             caption_q += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
+        # 🔁 Repeat-question badge. times_shown/first_shown_at ride along on `q` already
+        # (refresh_database() SELECT *'s the questions table), so this needs no extra query.
+        # times_shown here reflects sends BEFORE this one — >0 means it's been seen before.
+        repeat_badge = ""
+        times_shown = q.get("times_shown") or 0
+        if times_shown > 0:
+            first_dt = q.get("first_shown_at")
+            first_str = ""
+            if first_dt:
+                try:
+                    first_str = first_dt.strftime("%b %d, %Y")
+                except AttributeError:
+                    first_str = str(first_dt)[:10]
+            seen_label = f"Seen {times_shown + 1}× total"
+            first_label = f" · first asked {first_str}" if first_str else ""
+            repeat_badge = (
+                f"\n<blockquote>🔁 <b>{seen_label}</b>{first_label} — "
+                f"didn't get to it last time? Here's another shot!</blockquote>"
+            )
+
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]
         channel_name = cls.WATERMARK
         channel_username = channel_name.lstrip('@')
 
-        # Unobtrusive per-user deep link back to this question's answer in the bot DM.
         bot_username = CONFIG.get("bot_username")
         dm_link = f" · <a href='https://t.me/{bot_username}?start=view_{display_id}'>💬</a>" if bot_username else ""
 
@@ -88,5 +107,5 @@ class UIFactory(metaclass=UIFactoryMeta):
             f"<b>REF <code>{display_id}</code></b> │ <a href='https://t.me/{channel_username}'>{channel_name}</a>{dm_link}\n"
             f"{' '.join(hashtag_list)}"
         )
-        final_caption = f"{caption_q}{footer}"
+        final_caption = f"{caption_q}{repeat_badge}{footer}"
         return img_url, final_caption

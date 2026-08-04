@@ -464,6 +464,7 @@ async def start_command(update: Update, context):
         try:
             print(f"[TRACE-STEP 3] Standard (non-tournament) active quiz path. Fetching history...", flush=True)
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
+            is_removed = (track_status == "deleted")
 
             if existing_response:
                 print(f" ├─ History found. Selected Option: {existing_response.get('selected_option')} | Is Correct: {existing_response.get('is_correct')}", flush=True)
@@ -486,8 +487,18 @@ async def start_command(update: Update, context):
 
                 print(f" ├─ Computing latest scoreboard metadata...", flush=True)
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
-                warning_notice = "ℹ️ <b>Already Answered</b>\n" \
-                                "<i>You've already submitted your answer for this one — here's your saved result.</i>\n\n"
+
+                # Answered-before and removed are NOT mutually exclusive — a question you
+                # already answered can later be pulled from the channel. Show BOTH facts
+                # instead of collapsing to a generic "quiz ended" message.
+                if is_removed:
+                    warning_notice = (
+                        "⚫ <b>This Question Was Removed</b>\n"
+                        "<i>It's no longer visible in the channel, but your saved answer below is completely unaffected.</i>\n\n"
+                    )
+                else:
+                    warning_notice = "ℹ️ <b>Already Answered</b>\n" \
+                                    "<i>You've already submitted your answer for this one — here's your saved result.</i>\n\n"
 
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
@@ -529,6 +540,32 @@ async def start_command(update: Update, context):
                 LOCKOUT_MESSAGES.add((user_id, m.message_id))
                 await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                 print(f"{Style.GREEN}[TRACE-COMPLETE] History fallback view successfully displayed.{Style.RESET}", flush=True)
+                return
+
+            # Not answered yet — if it was removed, there's nothing to submit against.
+            # THIS is the case that used to silently do nothing: track_status=="deleted"
+            # fell through the old "!= active and != closed" check into a generic dead-end.
+            if is_removed:
+                print(f" ├─ Question removed and never answered by this user. Showing removal confirmation.", flush=True)
+                removed_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")],
+                    [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")]
+                ])
+                await send_rich_message_safe(
+                    context.bot,
+                    chat_id=update.message.chat_id,
+                    html_content=(
+                        f"⚫ <b>This Question Was Removed</b>\n\n"
+                        f"REF <code>{display_id}</code> is no longer available in the channel, and no answer was "
+                        f"recorded for it — no worries, there's always the next question!"
+                    ),
+                    reply_markup=removed_kb
+                )
+                return
+
+            if track_status not in ("active", "closed"):
+                print(f" {Style.YELLOW}└─ [WARNING] Blocked submission: Quiz status is '{track_status}'.{Style.RESET}", flush=True)
+                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This quiz session has ended or the reference was not found.", reply_markup=channel_kb)
                 return
 
             print(f"[TRACE-STEP 4] Standard active path. Calculating first-time response...", flush=True)
@@ -591,7 +628,7 @@ async def start_command(update: Update, context):
         except Exception as e:
             tb_str = traceback.format_exc()
             error_class = type(e).__name__
-            
+
             print("\n" + "#"*80, flush=True)
             print(f"{Style.RED}[CONSOLIDATED-FIX] Critical exception occurred inside standard explanation-rendering!{Style.RESET}", flush=True)
             print(f" ├─ Error Message:      {e}", flush=True)
