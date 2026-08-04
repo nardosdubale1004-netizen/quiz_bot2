@@ -1202,25 +1202,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    elif action == "fb_view":
-        await query.answer()
+    elif action == "fb_user_reply":
         fb_id = int(d_id)
         return_offset = data[2] if len(data) > 2 else "0"
         fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
         if not fb or str(fb.get("user_id")) != str(user_id):
             await query.answer("Not found.", show_alert=True)
             return
-        thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
-        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
-        text = build_feedback_thread_text(fb, thread, viewer_tz)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
-            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
-        ])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=text, reply_markup=kb
-        )
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_USER_FEEDBACK_REPLY"
+        USER_PAYLOADS[user_id] = {"fb_id": fb_id, "return_offset": return_offset, "edit_mid": query.message.message_id}
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data=f"fb_view|{fb_id}|{return_offset}")]])
+        try:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="✍️ <b>Type your reply below:</b>", reply_markup=kb)
+        except Exception as e:
+            print(f"[FB-REPLY-ERROR] Failed to open reply box for feedback #{fb_id}: {e}", flush=True)
         return
 
     elif action == "fb_user_reply":
@@ -1430,10 +1426,26 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                     "\n\n<i>⚫ Note: this question was later removed from the channel — "
                     "your saved answer above is unaffected.</i>"
                 )
+            diagram_note = ""
+            from src.rendering.latex_templates import has_real_diagram
+            if has_real_diagram(q):
+                diagram_note = "\n\n<i>🖼️ This question has a diagram — view it via 📣 OPEN IN CHANNEL below for the full visual.</i>"
 
             perf_card = await asyncio.to_thread(process_user_score, user_id, track['message_id'], q_id, existing['is_correct'], existing['selected_option'])
-            explanation_html = UIFactory.build_answered_view(q, str(track['display_id']), existing['selected_option'], show_derivation=True, show_perf=False, perf_card=perf_card) + removed_note
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explanation_html, reply_markup=back_kb)
+            explanation_html = UIFactory.build_answered_view(
+                q, str(track['display_id']), existing['selected_option'],
+                show_derivation=True, show_perf=False, perf_card=perf_card, include_diagram=False
+            ) + removed_note + diagram_note
+
+            channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
+            diag_kb_rows = [[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]]
+            if has_real_diagram(q):
+                diag_kb_rows.insert(0, [InlineKeyboardButton("📣 OPEN IN CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")])
+            try:
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explanation_html, reply_markup=InlineKeyboardMarkup(diag_kb_rows))
+            except Exception as e:
+                print(f"[MY-ANS-OPEN-ERROR] Failed to render REF {track.get('display_id')}: {e}", flush=True)
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Couldn't load this question's details. Try again.", reply_markup=back_kb)
             return
 
         if track['status'] == 'deleted':

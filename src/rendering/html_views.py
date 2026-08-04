@@ -241,7 +241,7 @@ def build_closed_static_view(q, display_id: str, compact=False, continuation=Fal
 
     return final_html
 
-def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False) -> str:
+def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False, show_perf=False, mode="compact", compact=None, perf_card=None, continuation=False, include_diagram=True) -> str:
     if compact is not None:
         show_derivation = not compact
         show_perf = False
@@ -382,7 +382,7 @@ def build_answered_view(q, display_id: str, user_idx: int, show_derivation=False
         f"</blockquote>"
     )
     from src.rendering.latex_templates import has_real_diagram
-    if has_real_diagram(q):
+    if include_diagram and has_real_diagram(q):
         body += '\n<p><img src="tg://photo?id=quiz_diagram"/></p>'
 
     user_val = q['options'][user_idx] if user_idx < len(q['options']) else "Unknown"
