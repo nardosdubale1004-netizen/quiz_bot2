@@ -1920,21 +1920,37 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_leave_organization(user_id, org_id: int):
-    """Unmaps a user from a specific study team."""
+    """Removes a member. If the creator leaves, the longest-standing admin (or, if none,
+    the longest-standing member) is automatically promoted — a team can never be left
+    without an owner."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("""
-                DELETE FROM org_memberships 
-                WHERE user_id = %s AND org_id = %s;
-            """, (str(user_id), int(org_id)))
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            row = cur.fetchone()
+            was_creator = bool(row and row['org_role'] == 'creator')
+
+            cur.execute("DELETE FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+
+            promoted_id = None
+            if was_creator:
+                cur.execute("SELECT user_id FROM org_memberships WHERE org_id = %s AND org_role = 'admin' ORDER BY joined_at ASC LIMIT 1;", (int(org_id),))
+                nxt = cur.fetchone()
+                if not nxt:
+                    cur.execute("SELECT user_id FROM org_memberships WHERE org_id = %s AND org_role = 'member' ORDER BY joined_at ASC LIMIT 1;", (int(org_id),))
+                    nxt = cur.fetchone()
+                if nxt:
+                    promoted_id = nxt['user_id']
+                    cur.execute("UPDATE org_memberships SET org_role = 'creator' WHERE user_id = %s AND org_id = %s;", (promoted_id, int(org_id)))
+                    cur.execute("UPDATE organizations SET creator_id = %s WHERE org_id = %s;", (promoted_id, int(org_id)))
+
             conn.commit()
-            return True
+            return {"was_creator": was_creator, "promoted_id": promoted_id}
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Leave failed: {e}", flush=True)
-        return False
+        return None
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
@@ -2964,6 +2980,52 @@ def db_get_tournament_leaderboard(run_id: str, limit: int = 10):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_tournament_geo_leaderboard(run_id: str, group_by: str, limit: int = 5):
+    """Tournament-scoped city/country/school standings — sums marks_awarded across every
+    round tagged with this tournament_run_id ONLY, never the lifetime/all-time totals.
+    group_by: 'city' | 'country' | 'school'."""
+    if not run_id:
+        return []
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if group_by == "school":
+                cur.execute("""
+                    SELECT o.org_name AS label, SUM(ur.marks_awarded) AS total_score
+                    FROM user_responses ur
+                    JOIN sent_tracks st ON ur.message_id = st.message_id
+                    JOIN org_memberships m ON m.user_id = ur.user_id
+                    JOIN organizations o ON o.org_id = m.org_id
+                    WHERE st.tournament_run_id = %s AND ur.is_correct = TRUE
+                    GROUP BY o.org_name
+                    ORDER BY total_score DESC
+                    LIMIT %s;
+                """, (run_id, limit))
+            else:
+                geo_col = "o.city" if group_by == "city" else "o.country"
+                personal_col = "us.personal_city" if group_by == "city" else "us.personal_country"
+                cur.execute(f"""
+                    SELECT COALESCE({geo_col}, {personal_col}) AS label, SUM(ur.marks_awarded) AS total_score
+                    FROM user_responses ur
+                    JOIN sent_tracks st ON ur.message_id = st.message_id
+                    JOIN user_stats us ON us.user_id = ur.user_id
+                    LEFT JOIN org_memberships m ON m.user_id = ur.user_id
+                    LEFT JOIN organizations o ON o.org_id = m.org_id
+                    WHERE st.tournament_run_id = %s AND ur.is_correct = TRUE
+                    GROUP BY label
+                    ORDER BY total_score DESC
+                    LIMIT %s;
+                """, (run_id, limit))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch tournament geo leaderboard ({group_by}): {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_count_feedback(status: str = None, category: str = None) -> int:
     conn = None
     try:

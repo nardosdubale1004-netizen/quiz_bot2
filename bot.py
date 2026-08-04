@@ -756,6 +756,21 @@ async def start_command(update: Update, context):
         else:
             msg = "⚠️ This team invite link is invalid or the team no longer exists."
         await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=msg)
+    
+    if args and args[0].startswith("tourney_"):
+                run_id = args[0][len("tourney_"):].strip()
+                asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+                from src.database import db_get_tournament_leaderboard, db_get_tournament_geo_leaderboard
+                from src.rendering.html_views import build_tournament_leaderboard_text
+                rows = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 25)
+                top_schools = await asyncio.to_thread(db_get_tournament_geo_leaderboard, run_id, "school", 5)
+                text = build_tournament_leaderboard_text(rows)
+                if top_schools:
+                    school_lines = "\n".join(f"  🏫 <code>{s['label']}</code> — {s['total_score']} pts" for s in top_schools)
+                    text += f"\n\n🏫 <b>TOP SCHOOLS THIS TOURNAMENT</b>\n{school_lines}"
+                nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+                await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=text, reply_markup=nav_kb)
+                return
 
     # Check and render fallback grade profile if mapped
     profile = await asyncio.to_thread(db_get_user_profile, user_id)

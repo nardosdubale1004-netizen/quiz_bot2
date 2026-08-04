@@ -3,7 +3,7 @@ import asyncio
 import traceback
 import httpx
 import io
-from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS, FSM_INPUT_HINT
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
 from src.database import (
@@ -43,6 +43,7 @@ from src.database import (
     db_get_country_leaderboard,
     db_approve_member_request,
     db_get_org_membership_log,
+    db_get_weekly_leaderboard,
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -59,7 +60,9 @@ from src.rendering.html_views import (
     build_user_feedback_list_text,
     build_feedback_thread_text,
     build_profile_main_keyboard,
-    build_profile_settings_keyboard
+    build_profile_settings_keyboard,
+    build_leaderboard_text,
+    build_leaderboard_keyboard,
 )
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
@@ -899,7 +902,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         buttons.append([InlineKeyboardButton("🔙 BACK", callback_data="fb_menu|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
-        
+
     elif action == "fb_view":
         await query.answer()
         fb_id = int(d_id)
@@ -1110,26 +1113,24 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]])
 
         if not track:
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"📅 <b>{q['topic']}</b>\n\nThis question hasn't been published yet.", reply_markup=back_kb)
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"📅 <b>{q['topic']}</b>\n\nThis question hasn't been published yet.",
+                reply_markup=back_kb
+            )
             return
 
         existing = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
         if existing:
-            # A question you already answered must ALWAYS show your saved result — your
-            # answer and the full explanation live entirely in the database, so a channel
-            # post that was later deleted never blocks this view. This was the actual bug:
-            # previously an unhandled crash here (not the deletion itself) caused the tap
-            # to silently do nothing.
+            # Trust the stored track status — reconcile_deleted_track_messages() already
+            # keeps this current every ~30s. A live forward+delete probe on every tap was
+            # what caused the multi-second "freeze" opening an answered question.
             removed_note = ""
             if track.get('status') == 'deleted':
-                removed_note = "\n\n<i>⚫ Note: this question was later removed from the channel — your saved answer above is unaffected.</i>"
-            else:
-                from src.tournament import verify_track_message
-                import src.config as cfg
-                still_there = await verify_track_message(cfg.ACTIVE_APP, engine, track['message_id'])
-                if not still_there:
-                    await asyncio.to_thread(engine.db_update_track_status, track['message_id'], "deleted")
-                    removed_note = "\n\n<i>⚫ Note: this question was later removed from the channel — your saved answer above is unaffected.</i>"
+                removed_note = (
+                    "\n\n<i>⚫ Note: this question was later removed from the channel — "
+                    "your saved answer above is unaffected.</i>"
+                )
 
             perf_card = await asyncio.to_thread(process_user_score, user_id, track['message_id'], q_id, existing['is_correct'], existing['selected_option'])
             explanation_html = UIFactory.build_answered_view(q, str(track['display_id']), existing['selected_option'], show_derivation=True, show_perf=False, perf_card=perf_card) + removed_note
@@ -1137,15 +1138,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         if track['status'] == 'deleted':
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.", reply_markup=back_kb)
-            return
-
-        from src.tournament import verify_track_message
-        import src.config as cfg
-        still_there = await verify_track_message(cfg.ACTIVE_APP, engine, track['message_id'])
-        if not still_there:
-            await asyncio.to_thread(engine.db_update_track_status, track['message_id'], "deleted")
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.", reply_markup=back_kb)
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.",
+                reply_markup=back_kb
+            )
             return
 
         channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
@@ -1153,7 +1150,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("📣 OPEN IN CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")],
             [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]
         ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⬜ <b>{q['topic']}</b>\n\nYou haven't answered this one yet — tap below to open it in the channel.", reply_markup=open_kb)
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"⬜ <b>{q['topic']}</b>\n\nYou haven't answered this one yet — tap below to open it in the channel.",
+            reply_markup=open_kb
+        )
         return
 
     elif action == "admin_questions":

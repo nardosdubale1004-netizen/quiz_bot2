@@ -31,6 +31,7 @@ from src.database import (
     db_get_country_leaderboard,
     db_get_alliance_leaderboard,
     db_get_tournament_leaderboard,
+    db_get_tournament_geo_leaderboard
     db_get_bot_state,
     db_set_bot_state,
     db_set_campaign_posted_mid,
@@ -515,11 +516,11 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
                 try:
                     top_tourney = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 1)
-                    top_alliances = await asyncio.to_thread(db_get_alliance_leaderboard)
-                    top_cities = await asyncio.to_thread(db_get_city_leaderboard)
-                    top_countries = await asyncio.to_thread(db_get_country_leaderboard)
+                    top_schools = await asyncio.to_thread(db_get_tournament_geo_leaderboard, run_id, "school", 1)
+                    top_cities = await asyncio.to_thread(db_get_tournament_geo_leaderboard, run_id, "city", 1)
+                    top_countries = await asyncio.to_thread(db_get_tournament_geo_leaderboard, run_id, "country", 1)
 
-                    ind_val = "None"
+                    ind_val = "No entries yet"
                     ind_score = None
                     if top_tourney:
                         ind_val = format_public_name(top_tourney[0])
@@ -527,19 +528,22 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                             ind_val = f"{ind_val} (#{top_tourney[0]['alliance_tag']})"
                         ind_score = top_tourney[0].get('tournament_score')
 
-                    sch_val = top_alliances[0]['org_name'] if top_alliances else "None"
-                    city_val = top_cities[0]['city'] if top_cities else "None"
-                    cnt_val = top_countries[0]['country'] if top_countries else "None"
+                    sch_val = top_schools[0]['label'] if top_schools else "No entries yet"
+                    city_val = top_cities[0]['label'] if top_cities else "No entries yet"
+                    cnt_val = top_countries[0]['label'] if top_countries else "No entries yet"
 
                     podium_meta = (queue.get('tournament_meta') or {}) if queue else {}
                     final_completed_text = build_champions_podium_html(podium_meta, ind_val, ind_score, sch_val, city_val, cnt_val)
                     full_tourney_board = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 10)
                     final_completed_text += "\n\n" + build_tournament_leaderboard_text(full_tourney_board, total_rounds, total_rounds)
 
-                    # Safety net only — the PREVIOUS series' champions card is now
-                    # removed immediately when the NEW series' first round launches
-                    # (see launch_tournament_round). This just catches the rare case
-                    # where that removal somehow failed.
+                    bot_username = CONFIG.get("bot_username")
+                    champ_kb = None
+                    if bot_username and run_id:
+                        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                        champ_kb = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("💬 VIEW FULL RESULTS IN DM", url=f"https://t.me/{bot_username}?start=tourney_{run_id}")
+                        ]])
                     old_champions_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
                     if old_champions_mid:
                         await _unpin_safe(app.bot, engine.config['channel'], old_champions_mid)
@@ -548,7 +552,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                         except Exception:
                             pass
 
-                    champ_msg = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=final_completed_text)
+                    champ_msg = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=final_completed_text, reply_markup=champ_kb)
                     await _pin_safe(app.bot, engine.config['channel'], champ_msg.message_id)
                     await asyncio.to_thread(db_set_bot_state, "champions_podium_mid", champ_msg.message_id)
                 except Exception as score_err:
@@ -647,8 +651,11 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             await finalize_tournament_round(app, engine, track, interrupted=True)
 
         queue = await asyncio.to_thread(db_get_tournament_queue)
-        if queue and queue.get('remaining_ids'):
-            print(f"{Style.GREEN}[TOURNAMENT] Scheduled/queued series found ({len(queue['remaining_ids'])} remaining). Resuming tournament queue cleanly.{Style.RESET}", flush=True)
+
+        if queue and not queue.get('remaining_ids') and not has_live_round and not did_finalize:
+            dlog("[DEBUG-WATCHER] Queue exhausted with no live round. Clearing stale queue row.")
+            await asyncio.to_thread(db_clear_tournament_queue)
+            queue = None
         print(f"{Style.GREEN}[TOURNAMENT] Recovery sweep complete.{Style.RESET}", flush=True)
     except Exception as e:
         dlog_exception("tournament_watcher_loop startup recovery sweep", e)
@@ -844,10 +851,11 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                             except Exception as launch_err:
                                 dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
 
+                                rollback_conn = None
                                 try:
                                     dlog(f"[DEBUG-WATCHER-ROLLBACK] Attempting database queue recovery for popped question ID: {next_qid}")
-                                    conn = GLOBAL_ENGINE.get_db_connection()
-                                    with conn.cursor() as cur:
+                                    rollback_conn = GLOBAL_ENGINE.get_db_connection()
+                                    with rollback_conn.cursor() as cur:
                                         cur.execute("SELECT remaining_ids, last_seq FROM tournament_queue WHERE id = 1 FOR UPDATE;")
                                         row = cur.fetchone()
                                         if row:
@@ -857,10 +865,27 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                             if next_qid not in rem:
                                                 rem.insert(0, next_qid)
                                             cur.execute("UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;", (Json(rem), row['last_seq'] - 1))
-                                            conn.commit()
+                                            rollback_conn.commit()
                                             dlog(f"[DEBUG-WATCHER-ROLLBACK] Recovery confirmed! Successfully restored {next_qid} to queue. New remaining: {rem}")
                                 except Exception as rollback_err:
                                     dlog_exception("Failed to rollback tournament queue after launch failure", rollback_err)
+                                finally:
+                                    if rollback_conn:
+                                        GLOBAL_ENGINE.release_connection(rollback_conn)
+
+                                # Surface the failure — this is what made a dropped round
+                                # look like "the question just never showed up".
+                                try:
+                                    await app.bot.send_message(
+                                        chat_id=engine.config['channel'],
+                                        text=(
+                                            f"⚠️ <b>Failed to launch tournament round {current_round}/{total_rounds}.</b>\n"
+                                            f"It's been put back in the queue and will retry shortly."
+                                        ),
+                                        parse_mode="HTML"
+                                    )
+                                except Exception:
+                                    pass
                         else:
                             dlog(f"[DEBUG-WATCHER-ERROR] Question {next_qid} not found in DB. Skipping.")
                     else:
