@@ -803,7 +803,7 @@ async def school_command(update: Update, context):
             f"(<code>#{tag.upper()}</code>). Every correct answer you submit now also scores for your team!",
             nav_kb
         )
-        
+
 async def name_command(update: Update, context):
     """Sets a custom scoreboard nickname for the player."""
     user = update.effective_user
@@ -1172,18 +1172,14 @@ async def handle_fsm_message(update: Update, context):
     ]])
 
     if text_input.lower() == "/cancel":
-        prior_state = state
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
 
-        if prior_state in ("AWAITING_FEEDBACK_TEXT", "AWAITING_ADMIN_REPLY", "AWAITING_USER_FEEDBACK_REPLY"):
-            cancel_return_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
-                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
-            ])
-            await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b>", cancel_return_kb)
-        else:
-            await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
+        # Delete the in-flight prompt outright — no "Action cancelled" stub left behind.
+        if edit_mid:
+            asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, edit_mid))
+        from src.config import LAST_UTILITY_MID
+        LAST_UTILITY_MID.pop(user_id, None)
         return
 
     try:
@@ -1500,21 +1496,14 @@ async def cancel_command(update, context):
 
     session = USER_PAYLOADS.get(user_id, {})
     edit_mid = session.get("edit_mid")
-    prior_state = state
     USER_STATES[user_id] = "IDLE"
     USER_PAYLOADS.pop(user_id, None)
 
-    profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]])
-
-    if prior_state in ("AWAITING_FEEDBACK_TEXT", "AWAITING_ADMIN_REPLY", "AWAITING_USER_FEEDBACK_REPLY"):
-        cancel_return_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
-            [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
-        ])
-        await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b>", cancel_return_kb)
-    else:
-        await _fsm_advance(context, update.message.chat_id, edit_mid, "❌ <b>Action cancelled.</b> Session discarded.", profile_nav_kb)
-
+    if edit_mid:
+        asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, edit_mid))
+    from src.config import LAST_UTILITY_MID
+    LAST_UTILITY_MID.pop(user_id, None)
+    
 async def myanswers_command(update: Update, context):
     user = update.effective_user
     user_id = user.id

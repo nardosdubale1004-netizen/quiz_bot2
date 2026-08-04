@@ -840,7 +840,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer("Cancelled.")
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
+        from src.config import LAST_UTILITY_MID
+        LAST_UTILITY_MID.pop(user_id, None)
+
         destination = d_id or "privacy_menu"
+
+        # Delete the in-flight FSM card outright — the destination screen is opened
+        # as a fresh message instead of morphing this one back into it.
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
 
         if destination == "alliance_portal":
             orgs = await asyncio.to_thread(db_get_user_organizations, user_id)
@@ -855,14 +865,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
                            [InlineKeyboardButton("🔑 INTEGRATE USING GROUP TAG", callback_data="fsm_join_org|0")]]
             buttons.append([InlineKeyboardButton("❓ HOW IT WORKS", callback_data="help_menu|0")])
             buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+            m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+            if m:
+                LAST_UTILITY_MID[user_id] = m.message_id
             return
 
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
+        if m:
+            LAST_UTILITY_MID[user_id] = m.message_id
         return
 
 

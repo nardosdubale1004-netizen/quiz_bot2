@@ -1169,7 +1169,12 @@ def build_my_answers_list_text(rows: list, subject: str, filter_mode: str, offse
         return header + "<i>Nothing here.</i>"
     lines = [header]
     for r in rows:
-        q_preview = html.escape((r.get('question') or '')[:55]).replace("<tg-math-block>", "").replace("</tg-math-block>", "")
+        # Convert LaTeX/tg-math markup to clean unicode BEFORE truncating and escaping —
+        # doing html.escape() first (the old bug) left the <tg-math-block> tags escaped
+        # as literal text (&lt;tg-math-block&gt;), so the .replace() calls never matched
+        # and raw LaTeX source leaked straight into the card.
+        clean_q = lite_math(r.get('question') or '')
+        q_preview = html.escape(clean_q[:55])
         if r.get('is_correct') is not None:
             status = "🟩 Correct" if r['is_correct'] else "🟥 Wrong"
         elif r.get('message_id'):

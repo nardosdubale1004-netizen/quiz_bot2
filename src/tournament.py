@@ -640,6 +640,11 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
             break
 
         try:
+            global _LAST_RECONCILE_TS
+            now_ts = time.time()
+            if now_ts - _LAST_RECONCILE_TS > 30:
+                _LAST_RECONCILE_TS = now_ts
+                asyncio.create_task(reconcile_deleted_track_messages(app, engine))
             db_epoch = await asyncio.to_thread(engine.db_get_current_epoch)
             now_utc = datetime.fromtimestamp(db_epoch, timezone.utc)
 
@@ -1007,3 +1012,40 @@ async def verify_track_message(app, engine: QuizEngine, message_id) -> bool:
         return True
     except Exception:
         return False
+
+
+_LAST_RECONCILE_TS = 0.0
+
+async def reconcile_deleted_track_messages(app, engine: QuizEngine, batch_size: int = 25):
+    """Periodically verifies that channel question messages still tracked as 'active'
+    or 'closed' physically exist on Telegram. Catches posts a channel admin/user
+    deleted by hand (outside the bot) — without this sweep those tracks sit forever
+    looking live/answerable even though the post is gone. Runs a rotating small batch
+    each call so it never blocks the watcher loop for long."""
+    from src.debug_log import dlog, dlog_exception
+    if not app:
+        return
+    try:
+        tracks = await asyncio.to_thread(engine.db_get_all_tracks)
+        candidates = [
+            (mid, t) for mid, t in tracks.items()
+            if mid.isdigit() and t.get("status") in ("active", "closed") and t.get("type") != "native"
+        ]
+        if not candidates:
+            return
+
+        # Rotate through the pool over time instead of re-checking everything every
+        # tick — spreads the forward-probe cost out.
+        start = int(time.time() // 30) % max(1, len(candidates))
+        window = candidates[start:start + batch_size]
+        if len(window) < batch_size:
+            window += candidates[:batch_size - len(window)]
+
+        for mid, track in window:
+            still_there = await verify_track_message(app, engine, mid)
+            if not still_there:
+                dlog(f"[DEBUG-RECONCILE] Message {mid} (REF {track.get('display_id')}) "
+                     f"no longer exists on channel. Marking deleted.")
+                await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
+    except Exception as e:
+        dlog_exception("reconcile_deleted_track_messages", e)
