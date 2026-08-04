@@ -31,7 +31,7 @@ from src.database import (
     db_get_country_leaderboard,
     db_get_alliance_leaderboard,
     db_get_tournament_leaderboard,
-    db_get_tournament_geo_leaderboard
+    db_get_tournament_geo_leaderboard,
     db_get_bot_state,
     db_set_bot_state,
     db_set_campaign_posted_mid,

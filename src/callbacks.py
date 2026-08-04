@@ -1122,9 +1122,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         existing = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
         if existing:
-            # Trust the stored track status — reconcile_deleted_track_messages() already
-            # keeps this current every ~30s. A live forward+delete probe on every tap was
-            # what caused the multi-second "freeze" opening an answered question.
             removed_note = ""
             if track.get('status') == 'deleted':
                 removed_note = (
