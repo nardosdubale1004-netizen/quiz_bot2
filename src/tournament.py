@@ -253,6 +253,21 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             print(f"{Style.YELLOW}[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.{Style.RESET}", flush=True)
             return
 
+        # A previous tournament's "series complete" champions podium must not linger while
+        # a NEW series runs — clear it right now instead of waiting until this new series
+        # finishes (which is what used to happen, leaving stale results pinned for the
+        # whole duration of the new tournament).
+        if current_round == 1:
+            old_champions_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
+            if old_champions_mid:
+                print(f"[DEBUG-LAUNCH] New series starting — clearing previous champions podium (mid={old_champions_mid}).", flush=True)
+                await _unpin_safe(app.bot, engine.config['channel'], old_champions_mid)
+                try:
+                    await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(old_champions_mid))
+                except Exception:
+                    pass
+                await asyncio.to_thread(db_set_bot_state, "champions_podium_mid", None)
+
         announcement_text = _render_challenge_text(current_round, total_rounds, last_seq, round_seconds, "")
         ann_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=announcement_text, parse_mode="HTML")
         await _pin_safe(app.bot, engine.config['channel'], ann_msg.message_id)
@@ -504,22 +519,26 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                     top_countries = await asyncio.to_thread(db_get_country_leaderboard)
 
                     ind_val = "None"
+                    ind_score = None
                     if top_tourney:
                         ind_val = format_public_name(top_tourney[0])
                         if top_tourney[0].get('alliance_tag'):
-                            ind_val = f"{ind_val} (# {top_tourney[0]['alliance_tag']})"
+                            ind_val = f"{ind_val} (#{top_tourney[0]['alliance_tag']})"
+                        ind_score = top_tourney[0].get('tournament_score')
 
                     sch_val = top_alliances[0]['org_name'] if top_alliances else "None"
                     city_val = top_cities[0]['city'] if top_cities else "None"
                     cnt_val = top_countries[0]['country'] if top_countries else "None"
 
-                    final_completed_text = build_champions_podium_html(ind_val, sch_val, city_val, cnt_val)
+                    podium_meta = (queue.get('tournament_meta') or {}) if queue else {}
+                    final_completed_text = build_champions_podium_html(podium_meta, ind_val, ind_score, sch_val, city_val, cnt_val)
                     full_tourney_board = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 10)
                     final_completed_text += "\n\n" + build_tournament_leaderboard_text(full_tourney_board, total_rounds, total_rounds)
 
-                    # Retire the previous series' pinned champions card (if any)
-                    # before posting/pinning this one — only ever one champions
-                    # card pinned in the channel at a time.
+                    # Safety net only — the PREVIOUS series' champions card is now
+                    # removed immediately when the NEW series' first round launches
+                    # (see launch_tournament_round). This just catches the rare case
+                    # where that removal somehow failed.
                     old_champions_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
                     if old_champions_mid:
                         await _unpin_safe(app.bot, engine.config['channel'], old_champions_mid)
@@ -528,7 +547,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
                         except Exception:
                             pass
 
-                    champ_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=final_completed_text, parse_mode="HTML")
+                    champ_msg = await send_rich_message_safe(app.bot, chat_id=engine.config['channel'], html_content=final_completed_text)
                     await _pin_safe(app.bot, engine.config['channel'], champ_msg.message_id)
                     await asyncio.to_thread(db_set_bot_state, "champions_podium_mid", champ_msg.message_id)
                 except Exception as score_err:

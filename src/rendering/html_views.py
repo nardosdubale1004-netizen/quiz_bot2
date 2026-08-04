@@ -718,26 +718,37 @@ def build_comparative_standings_text(top_alliances: list, user_org: dict = None)
     return text
 
 
-def build_champions_podium_html(ind_val: str, sch_val: str, city_val: str, cnt_val: str) -> str:
+def build_champions_podium_html(meta: dict, ind_val: str, ind_score, sch_val: str, city_val: str, cnt_val: str) -> str:
     """
-    Grand finale standings card. Distinct crown banner + one expandable
-    blockquote (collapsed by default) so this reads as a single compact
-    card instead of blending into the round-complete/question cards.
+    Compact tournament-series wrap-up card. One header line (date · rounds · duration),
+    one table, one line naming the ranking criterion — reads cleanly on both mobile and
+    desktop without scrolling, instead of a long paragraph explaining the mechanics.
     """
-    text = (
-        f"👑 <b>TOURNAMENT SERIES COMPLETE</b> 👑\n\n"
-        f"All rounds in this synchronized showdown have been resolved!\n\n"
-        f"<blockquote expandable>"
-        f"🎖️ <b>GRAND CHAMPIONS LEAGUE</b>\n\n"
-        f"🥇 <b>Individual:</b> {ind_val}\n"
-        f"🏫 <b>School Alliance:</b> #{sch_val}\n"
-        f"🌆 <b>City:</b> {city_val}\n"
-        f"🌍 <b>Country:</b> {cnt_val}"
-        f"</blockquote>\n\n"
-        f"<i>Daily practice builds permanent mastery. See you at the next live challenge!</i> 🎓"
-    )
-    return text
+    from datetime import datetime, timezone
 
+    subject = meta.get("subject", "General")
+    total_rounds = meta.get("total_count", 1)
+    round_seconds = meta.get("round_seconds", 60)
+    cooldown_seconds = meta.get("cooldown_seconds", 15)
+
+    total_seconds = (total_rounds * round_seconds) + max(0, total_rounds - 1) * cooldown_seconds
+    mins = total_seconds // 60
+    duration_str = f"{mins}m" if mins else f"{total_seconds}s"
+    date_str = datetime.now(timezone.utc).strftime("%b %d, %Y")
+    score_str = f" · {ind_score} pts" if ind_score is not None else ""
+
+    return (
+        f"🏆 <b>TOURNAMENT COMPLETE — {html.escape(str(subject))}</b>\n"
+        f"📅 {date_str} · 🔢 {total_rounds} rounds · ⏱ {duration_str}\n"
+        f"<hr/>\n"
+        f"<table>"
+        f"<tr><td>🥇 Individual</td><td><b>{html.escape(ind_val)}</b>{score_str}</td></tr>"
+        f"<tr><td>🏫 School</td><td>{html.escape(sch_val)}</td></tr>"
+        f"<tr><td>🌆 City</td><td>{html.escape(city_val)}</td></tr>"
+        f"<tr><td>🌍 Country</td><td>{html.escape(cnt_val)}</td></tr>"
+        f"</table>\n"
+        f"<i>Ranked by total tournament points — correct answers × speed bonus.</i>"
+    )
 def check_tag_balance(html_str: str) -> list:
     """
     Scans assembled HTML for unclosed/mismatched tags before it's sent to Telegram.
@@ -1152,41 +1163,41 @@ def build_my_answers_subject_menu_text(summary: list) -> str:
     return "\n".join(lines)
 
 
-def build_my_answers_subject_keyboard(summary: list) -> InlineKeyboardMarkup:
-    rows = []
-    for s in summary:
-        subj = str(s['subject'])
-        label = f"{subj.title()} ({s['answered_count']}/{s['total_count']})"
-        rows.append([InlineKeyboardButton(label, callback_data=f"my_ans_subj|{subj}|all|0")])
-    rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
-    return InlineKeyboardMarkup(rows)
-
-
-def build_my_answers_list_text(rows: list, subject: str, filter_mode: str, offset: int, total: int) -> str:
+def build_my_answers_list_text(rows: list, subject: str, filter_mode: str, offset: int, total: int, sort_field: str = "topic", sort_dir: str = "asc") -> str:
     filt_label = {"all": "All", "answered": "✅ Answered", "unanswered": "⬜ Unanswered"}.get(filter_mode, "All")
-    header = f"📚 <b>{html.escape(subject.title())}</b> — {filt_label}  <i>({offset+1}-{offset+len(rows)} of {total})</i>\n<hr/>\n"
+    sort_label = {"topic": "Topic", "date": "Date Answered", "tags": "Tags", "difficulty": "Difficulty"}.get(sort_field, "Topic")
+    arrow = "↓" if sort_dir == "desc" else "↑"
+    header = (
+        f"<h3>📚 {html.escape(subject.title())} — {filt_label}</h3>\n"
+        f"<i>{offset+1}-{offset+len(rows)} of {total} · sorted by {sort_label} {arrow}</i>\n<hr/>\n"
+    )
     if not rows:
         return header + "<i>Nothing here.</i>"
-    lines = [header]
+
+    table_rows = ["<tr><td><b>Ref</b></td><td><b>Question</b></td><td><b>Status</b></td><td><b>Date</b></td></tr>"]
     for r in rows:
-        # Convert LaTeX/tg-math markup to clean unicode BEFORE truncating and escaping —
-        # doing html.escape() first (the old bug) left the <tg-math-block> tags escaped
-        # as literal text (&lt;tg-math-block&gt;), so the .replace() calls never matched
-        # and raw LaTeX source leaked straight into the card.
         clean_q = lite_math(r.get('question') or '')
-        q_preview = html.escape(clean_q[:55])
+        q_preview = html.escape(clean_q[:40] + ("…" if len(clean_q) > 40 else ""))
+
         if r.get('is_correct') is not None:
             status = "🟩 Correct" if r['is_correct'] else "🟥 Wrong"
         elif r.get('message_id'):
             status = "⚫ Removed" if r.get('track_status') == 'deleted' else "⬜ Unanswered"
         else:
             status = "📅 Not posted"
+
         ref = f"REF {r['display_id']}" if r.get('display_id') else "—"
-        lines.append(f"{status} • <code>{ref}</code> — {q_preview}…")
-    return "\n".join(lines)
+        date_str = r['answered_at'].strftime('%b %d, %Y') if r.get('answered_at') else "—"
+        table_rows.append(f"<tr><td>{ref}</td><td>{q_preview}</td><td>{status}</td><td>{date_str}</td></tr>")
+
+    return header + "<table>" + "".join(table_rows) + "</table>"
 
 
-def build_my_answers_keyboard(rows: list, subject: str, filter_mode: str, offset: int, total: int) -> InlineKeyboardMarkup:
+def build_my_answers_keyboard(rows: list, subject: str, filter_mode: str, offset: int, total: int, sort_field: str = "topic", sort_dir: str = "asc") -> InlineKeyboardMarkup:
+    code = {"topic": "t", "date": "d", "tags": "g", "difficulty": "l"}
+    dcode = {"asc": "a", "desc": "d"}
+    sort_code, dir_code = code.get(sort_field, "t"), dcode.get(sort_dir, "a")
+
     kb = []
     for r in rows:
         if r.get('is_correct') is not None:
@@ -1196,22 +1207,50 @@ def build_my_answers_keyboard(rows: list, subject: str, filter_mode: str, offset
         else:
             icon = "📅"
         ref_lbl = f"REF {r['display_id']}" if r.get('display_id') else "Unpublished"
-        kb.append([InlineKeyboardButton(f"{icon} {ref_lbl} — {r['topic'][:24]}", callback_data=f"my_ans_open|{r['q_id']}|{subject}|{filter_mode}|{offset}")])
+        kb.append([InlineKeyboardButton(
+            f"{icon} {ref_lbl} — {r['topic'][:24]}",
+            callback_data=f"my_ans_open|{r['q_id']}|{subject}|{filter_mode}|{offset}|{sort_code}|{dir_code}"
+        )])
+
     kb.append([
-        InlineKeyboardButton(("• " if filter_mode == "all" else "") + "All", callback_data=f"my_ans_subj|{subject}|all|0"),
-        InlineKeyboardButton(("• " if filter_mode == "answered" else "") + "✅", callback_data=f"my_ans_subj|{subject}|answered|0"),
-        InlineKeyboardButton(("• " if filter_mode == "unanswered" else "") + "⬜", callback_data=f"my_ans_subj|{subject}|unanswered|0"),
+        InlineKeyboardButton(("• " if filter_mode == "all" else "") + "All", callback_data=f"my_ans_subj|{subject}|all|0|{sort_code}|{dir_code}"),
+        InlineKeyboardButton(("• " if filter_mode == "answered" else "") + "✅", callback_data=f"my_ans_subj|{subject}|answered|0|{sort_code}|{dir_code}"),
+        InlineKeyboardButton(("• " if filter_mode == "unanswered" else "") + "⬜", callback_data=f"my_ans_subj|{subject}|unanswered|0|{sort_code}|{dir_code}"),
     ])
+
+    def _sort_btn(field, code_letter, label):
+        if sort_field == field:
+            next_dir = "desc" if sort_dir == "asc" else "asc"
+            arrow = "↓" if sort_dir == "desc" else "↑"
+            return InlineKeyboardButton(f"• {label} {arrow}", callback_data=f"my_ans_subj|{subject}|{filter_mode}|0|{code_letter}|{dcode[next_dir]}")
+        return InlineKeyboardButton(label, callback_data=f"my_ans_subj|{subject}|{filter_mode}|0|{code_letter}|a")
+
+    kb.append([
+        _sort_btn("topic", "t", "🔤 Topic"),
+        _sort_btn("date", "d", "📅 Date"),
+        _sort_btn("tags", "g", "🏷️ Tags"),
+        _sort_btn("difficulty", "l", "📈 Level"),
+    ])
+
     nav = []
     if offset > 0:
-        nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{max(0, offset-8)}"))
+        nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{max(0, offset-8)}|{sort_code}|{dir_code}"))
     if offset + 8 < total:
-        nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset+8}"))
+        nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset+8}|{sort_code}|{dir_code}"))
     if nav:
         kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 SUBJECTS", callback_data="my_answers_menu|0")])
     return InlineKeyboardMarkup(kb)
 
+
+def build_my_answers_subject_keyboard(summary: list) -> InlineKeyboardMarkup:
+    rows = []
+    for s in summary:
+        subj = str(s['subject'])
+        label = f"{subj.title()} ({s['answered_count']}/{s['total_count']})"
+        rows.append([InlineKeyboardButton(label, callback_data=f"my_ans_subj|{subj}|all|0|t|a")])
+    rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
+    return InlineKeyboardMarkup(rows)
 
 def build_admin_questions_text(rows: list, subject: str, status_filter: str, offset: int, total: int, channel_username: str) -> str:
     subj_label = subject.title() if subject and subject != "all" else "All Subjects"

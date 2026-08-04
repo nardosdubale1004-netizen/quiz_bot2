@@ -232,7 +232,7 @@ async def admin_panel(app, engine: QuizEngine):
         print(f" [7] 🛑 Emergency Stop / Pause Live Tournament")
         print(f" [8] 🎯 Smart Scheduler (Suggest Next Batch)")
         print(f" [9] ⚙️  Bot Settings (Cleanup Timers)")
-        print(f" [C] 📢 Manage Channel Campaigns (Welcome/Ads/Announcements)")
+        print(f" [P] 📢 Manage Channel Campaigns (Welcome/Ads/Announcements)")
         print(f" [U] 📌 Unpin All Channel Pins (Welcome + Tournament)")
         print(f" [0] 🚪 Shutdown System")
 
@@ -854,7 +854,7 @@ async def admin_panel(app, engine: QuizEngine):
         elif choice == "9":
             await render_bot_settings_panel(engine, cli)
 
-        elif choice.upper() == "C":
+        elif choice.upper() == "P":
             await render_campaign_manager(app, engine, cli)
 
         elif choice.upper() == "U":

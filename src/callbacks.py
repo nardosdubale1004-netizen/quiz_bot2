@@ -94,6 +94,20 @@ def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKe
     return InlineKeyboardMarkup(rows)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
+    """Thin safety wrapper — any exception in any action branch below used to make a
+    tap look like it silently did nothing (this was the exact cause behind REF 549
+    not responding). Now it always answers the user instead of crashing invisibly."""
+    try:
+        await _handle_callback_inner(update, context, engine)
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            await update.callback_query.answer("⚠️ Something went wrong. Please try again.", show_alert=True)
+        except Exception:
+            pass
+
+
+async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
     data = query.data.split("|")
     action, d_id = data[0], data[1]
@@ -915,25 +929,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         await query.answer()
         subject, filter_mode, offset_str = data[1], data[2], data[3]
         offset = int(offset_str)
+        sort_code = data[4] if len(data) > 4 else "t"
+        dir_code = data[5] if len(data) > 5 else "a"
+        sort_field = {"t": "topic", "d": "date", "g": "tags", "l": "difficulty"}.get(sort_code, "topic")
+        sort_dir = {"a": "asc", "d": "desc"}.get(dir_code, "asc")
+
         from src.database import db_get_user_question_matrix, db_count_user_question_matrix
         from src.rendering.html_views import build_my_answers_list_text, build_my_answers_keyboard
-        rows = await asyncio.to_thread(db_get_user_question_matrix, user_id, subject, filter_mode, 8, offset)
+        rows = await asyncio.to_thread(db_get_user_question_matrix, user_id, subject, filter_mode, 8, offset, sort_field, sort_dir)
         total = await asyncio.to_thread(db_count_user_question_matrix, user_id, subject, filter_mode)
-        text = build_my_answers_list_text(rows, subject, filter_mode, offset, total)
-        kb = build_my_answers_keyboard(rows, subject, filter_mode, offset, total)
+        text = build_my_answers_list_text(rows, subject, filter_mode, offset, total, sort_field, sort_dir)
+        kb = build_my_answers_keyboard(rows, subject, filter_mode, offset, total, sort_field, sort_dir)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
     elif action == "my_ans_open":
         await query.answer()
         q_id, subject, filter_mode, offset = data[1], data[2], data[3], data[4]
-        from src.database import db_get_question_by_id, db_get_latest_track_for_question
+        sort_code = data[5] if len(data) > 5 else "t"
+        dir_code = data[6] if len(data) > 6 else "a"
+        back_cb = f"my_ans_subj|{subject}|{filter_mode}|{offset}|{sort_code}|{dir_code}"
+
         q = await asyncio.to_thread(db_get_question_by_id, q_id)
         if not q:
             await query.answer("Question not found.", show_alert=True)
             return
         track = await asyncio.to_thread(db_get_latest_track_for_question, q_id)
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset}")]])
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]])
 
         if not track:
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"📅 <b>{q['topic']}</b>\n\nThis question hasn't been published yet.", reply_markup=back_kb)
@@ -941,8 +963,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
         existing = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
         if existing:
+            # A question you already answered must ALWAYS show your saved result — your
+            # answer and the full explanation live entirely in the database, so a channel
+            # post that was later deleted never blocks this view. This was the actual bug:
+            # previously an unhandled crash here (not the deletion itself) caused the tap
+            # to silently do nothing.
+            removed_note = ""
+            if track.get('status') == 'deleted':
+                removed_note = "\n\n<i>⚫ Note: this question was later removed from the channel — your saved answer above is unaffected.</i>"
+            else:
+                from src.tournament import verify_track_message
+                import src.config as cfg
+                still_there = await verify_track_message(cfg.ACTIVE_APP, engine, track['message_id'])
+                if not still_there:
+                    await asyncio.to_thread(engine.db_update_track_status, track['message_id'], "deleted")
+                    removed_note = "\n\n<i>⚫ Note: this question was later removed from the channel — your saved answer above is unaffected.</i>"
+
             perf_card = await asyncio.to_thread(process_user_score, user_id, track['message_id'], q_id, existing['is_correct'], existing['selected_option'])
-            explanation_html = UIFactory.build_answered_view(q, str(track['display_id']), existing['selected_option'], show_derivation=True, show_perf=False, perf_card=perf_card)
+            explanation_html = UIFactory.build_answered_view(q, str(track['display_id']), existing['selected_option'], show_derivation=True, show_perf=False, perf_card=perf_card) + removed_note
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explanation_html, reply_markup=back_kb)
             return
 
@@ -954,8 +992,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         import src.config as cfg
         still_there = await verify_track_message(cfg.ACTIVE_APP, engine, track['message_id'])
         if not still_there:
-            # Persist the deletion so every future viewer (including /myanswers and the
-            # admin question overview) sees "Removed" immediately without re-probing Telegram.
             await asyncio.to_thread(engine.db_update_track_status, track['message_id'], "deleted")
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⚫ <b>{q['topic']}</b>\n\nThis question was removed from the channel and is no longer available.", reply_markup=back_kb)
             return
@@ -963,7 +999,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
         open_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📣 OPEN IN CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")],
-            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_ans_subj|{subject}|{filter_mode}|{offset}")]
+            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]
         ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"⬜ <b>{q['topic']}</b>\n\nYou haven't answered this one yet — tap below to open it in the channel.", reply_markup=open_kb)
         return
@@ -1010,8 +1046,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
 
     track_status = track.get('status')
     mid_key = track['message_id']
-    warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
-                     "<i>Your original selection and score have been securely locked.</i>\n\n"
+    warning_notice = "ℹ️ <b>Already Answered</b>\n" \
+                    "<i>You've already submitted your answer for this one — here's your saved result.</i>\n\n"
 
     try:
         if action == "ans":
@@ -1022,7 +1058,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             if track_status == "tournament_active":
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
-                    await query.answer("Lockout active! Your response has already been submitted.", show_alert=True)
+                    await query.answer("✅ Already submitted — sit tight, results are on the way!", show_alert=False)
                     return
 
                 user_selection = int(data[2])
@@ -1103,9 +1139,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
             )
 
             if media_bytes and m and m.photo and not cached_file_id:
-                await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
+                            await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
-            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+            if m:
+                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
             return
 
         elif action in ["toggle", "toggle_photo"]:

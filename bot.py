@@ -321,11 +321,15 @@ async def start_command(update: Update, context):
 
         if track_status == "tournament_closed":
             print(f"[TRACE-STEP 3] Locked out: Round is closed for display_id: {display_id}", flush=True)
+            closed_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+            ])
             await send_rich_message_safe(
                 context.bot,
                 chat_id=update.message.chat_id,
-                html_content="⚠️ <b>Round Closed!</b>\n\nSubmissions are no longer accepted for this tournament question.",
-                reply_markup=channel_kb
+                html_content="🏁 <b>This Round Has Ended</b>\n\nThe timer ran out before your tap reached us, so this one's closed for submissions. Catch the next live round in the channel!",
+                reply_markup=closed_kb
             )
             return
 
@@ -335,11 +339,15 @@ async def start_command(update: Update, context):
                 print(f"[TRACE-STEP 3] Active tournament round detected. Reading student history...", flush=True)
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
-                    print(f" └─ Already Answered: User {user_id} is locked out of further responses.", flush=True)
+                    print(f" └─ Already Answered: User {user_id} has an existing response on file.", flush=True)
+                    lockout_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+                    ])
                     lockout_html = (
-                        f"⚠️ <b>Lockout active!</b>\n\n"
-                        f"You've already submitted your response for REF <code>{display_id}</code>. "
-                        f"Your selection is locked — the explanation card will be delivered right here automatically once the round ends."
+                        f"✅ <b>Already Submitted</b>\n\n"
+                        f"You've already answered REF <code>{display_id}</code> — your original selection is safely saved. "
+                        f"No need to tap again; the full explanation lands here automatically once the round wraps up."
                     )
                     existing_pmid = existing_response.get('private_message_id')
                     if existing_pmid:
@@ -349,15 +357,17 @@ async def start_command(update: Update, context):
                                 chat_id=update.message.chat_id,
                                 message_id=existing_pmid,
                                 html_content=lockout_html,
-                                reply_markup=channel_kb
+                                reply_markup=lockout_kb
                             )
                         except Exception as edit_err:
                             print(f" └─ [LOCKOUT-EDIT-FALLBACK] Could not edit existing placeholder {existing_pmid}: {edit_err}", flush=True)
-                            m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=channel_kb)
-                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                            m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=lockout_kb)
+                            if m:
+                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                     else:
-                        m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=channel_kb)
-                        await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                        m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=lockout_kb)
+                        if m:
+                            await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                     return
 
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
@@ -389,6 +399,10 @@ async def start_command(update: Update, context):
                 print(f"{Style.GREEN}[TRACE-SUCCESS] Score processed successfully. Total score: {perf_card.get('total_marks')} Marks.{Style.RESET}", flush=True)
 
                 print(f"[TRACE-STEP 6] Sending DM response receipt...", flush=True)
+                received_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                    [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+                ])
                 confirmation_msg = await send_rich_message_safe(
                     context.bot,
                     chat_id=update.message.chat_id,
@@ -397,7 +411,7 @@ async def start_command(update: Update, context):
                         "Your selection has been securely logged. The correct answer and step-by-step "
                         "explanation card will be automatically delivered here in your DMs once the round ends!"
                     ),
-                    reply_markup=channel_kb
+                    reply_markup=received_kb
                 )
                 if confirmation_msg:
                     print(f" └─ Placeholder message delivered with ID: {confirmation_msg.message_id}. Saving message reference...", flush=True)
@@ -472,8 +486,8 @@ async def start_command(update: Update, context):
 
                 print(f" ├─ Computing latest scoreboard metadata...", flush=True)
                 perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
-                warning_notice = "⚠️ <b>Lockout active: You have already answered this question!</b>\n" \
-                                 "<i>Your original selection and score have been securely locked.</i>\n\n"
+                warning_notice = "ℹ️ <b>Already Answered</b>\n" \
+                                "<i>You've already submitted your answer for this one — here's your saved result.</i>\n\n"
 
                 explanation_html = warning_notice + UIFactory.build_answered_view(
                     question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
@@ -636,10 +650,19 @@ async def start_command(update: Update, context):
             asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, prev_nudge_mid))
 
         if not existing_response:
+            is_closed = track.get('status') in ('closed', 'tournament_closed', 'deleted')
+            nudge_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+            ])
+            if is_closed:
+                nudge_text = f"🏁 <b>REF {display_id} is already closed.</b>\n\nSubmissions ended before you answered this one — no worries, there's always the next question!"
+            else:
+                nudge_text = f"📭 <b>No answer on file yet for REF {display_id}.</b>\n\nTap one of the options under the question in the channel first!"
             nudge_msg = await send_rich_message_safe(
                 context.bot, chat_id=update.message.chat_id,
-                html_content=f"📭 <b>No answer on file yet for REF {display_id}.</b>\n\nTap one of the options under the question in the channel first!",
-                reply_markup=channel_kb
+                html_content=nudge_text,
+                reply_markup=nudge_kb
             )
             NO_ANSWER_NUDGE_MIDS[nudge_key] = nudge_msg.message_id
             nudge_ttl = await asyncio.to_thread(db_get_bot_state, "no_answer_nudge_ttl_seconds", 45)
@@ -1503,7 +1526,7 @@ async def cancel_command(update, context):
         asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, edit_mid))
     from src.config import LAST_UTILITY_MID
     LAST_UTILITY_MID.pop(user_id, None)
-    
+
 async def myanswers_command(update: Update, context):
     user = update.effective_user
     user_id = user.id

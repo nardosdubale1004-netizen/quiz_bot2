@@ -2020,19 +2020,26 @@ def db_get_user_subjects_summary(user_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", limit: int = 8, offset: int = 0):
+def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", limit: int = 8, offset: int = 0, sort_field: str = "topic", sort_dir: str = "asc"):
     """Every question (optionally scoped to a subject) tagged with whether THIS user
-    answered it. filter_mode: 'all' | 'answered' | 'unanswered'."""
+    answered it, plus the date they first answered (if any). filter_mode: 'all' | 'answered' | 'unanswered'.
+    sort_field: 'topic' | 'date' | 'tags' | 'difficulty'. sort_dir: 'asc' | 'desc'."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("""
+            sort_columns = {"topic": "topic", "date": "answered_at", "tags": "tags_text", "difficulty": "difficulty"}
+            sort_col = sort_columns.get(sort_field, "topic")
+            direction = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+
+            cur.execute(f"""
                 WITH latest AS (
                     SELECT DISTINCT ON (q.id)
-                        q.id AS q_id, q.subject, q.topic, q.difficulty, q.tags, q.question,
+                        q.id AS q_id, q.subject, q.topic, q.difficulty, q.tags,
+                        array_to_string(q.tags, ', ') AS tags_text,
+                        q.question,
                         st.display_id, st.message_id, st.status AS track_status, st.sent_at,
-                        ur.is_correct, ur.marks_awarded
+                        ur.is_correct, ur.marks_awarded, ur.answered_at
                     FROM questions q
                     LEFT JOIN sent_tracks st ON st.q_id = q.id
                     LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
@@ -2045,7 +2052,7 @@ def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str =
                         WHEN %s = 'unanswered' THEN is_correct IS NULL
                         ELSE TRUE
                       END
-                ORDER BY subject ASC, topic ASC, q_id ASC
+                ORDER BY subject ASC, {sort_col} {direction} NULLS LAST, q_id ASC
                 LIMIT %s OFFSET %s;
             """, (str(user_id), subject, subject, filter_mode, filter_mode, limit, offset))
             return cur.fetchall()

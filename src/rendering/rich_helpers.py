@@ -250,6 +250,9 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
 
     print(f"\033[96m[RICH MESSENGER]\033[0m Editing active rich message state for Msg ID: {message_id} (media present: {has_media})", flush=True)
 
+    def _is_not_modified(text: str) -> bool:
+        return "message is not modified" in (text or "").lower()
+
     # --- TIER 1: raw HTTP POST with serialized JSON strings ---
     try:
         client = get_shared_client()
@@ -257,18 +260,10 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
         endpoint = "editMessageCaption" if has_media else "editMessageText"
         url = f"https://api.telegram.org/bot{bot.token}/{endpoint}"
 
-        rich_message_dict = {
-            "html": rich_html
-        }
+        rich_message_dict = {"html": rich_html}
         if has_media:
             rich_message_dict["media"] = [
-                {
-                    "id": "quiz_diagram",
-                    "media": {
-                        "type": "photo",
-                        "media": file_id if file_id else "attach://quiz_diagram"
-                    }
-                }
+                {"id": "quiz_diagram", "media": {"type": "photo", "media": file_id if file_id else "attach://quiz_diagram"}}
             ]
 
         data_payload = {
@@ -294,6 +289,9 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
             if resp_json.get("ok"):
                 print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on primary endpoint '{endpoint}'.", flush=True)
                 return Message.de_json(resp_json["result"], bot)
+        elif _is_not_modified(resp.text):
+            print(f"[RICH MSG] Edit skipped — message {message_id} content is already identical. No changes applied.", flush=True)
+            return None
 
         fallback_endpoint = "editMessageText" if has_media else "editMessageCaption"
         print(f"[DEBUG-FIX-EDIT-FALLBACK] Primary endpoint '{endpoint}' failed (HTTP {resp.status_code}). Retrying with: '{fallback_endpoint}'", flush=True)
@@ -305,6 +303,9 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
             if resp_json.get("ok"):
                 print(f"[DEBUG-FIX-SUCCESS] TIER 1 edit resolved successfully on fallback endpoint '{fallback_endpoint}'.", flush=True)
                 return Message.de_json(resp_json["result"], bot)
+        elif _is_not_modified(resp.text):
+            print(f"[RICH MSG] Edit skipped (fallback) — message {message_id} content is already identical.", flush=True)
+            return None
         else:
             print(f"[RICH MSG] editMessage HTTP raw request returned status {resp.status_code}: {resp.text[:300]}", flush=True)
     except Exception as e:
@@ -321,26 +322,24 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
     try:
         with timed(f"TIER2 legacy edit_message_text msg={message_id}"):
             return await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=legacy_html,
-                parse_mode="HTML",
-                reply_markup=reply_markup,
-                **kwargs
+                chat_id=chat_id, message_id=message_id, text=legacy_html,
+                parse_mode="HTML", reply_markup=reply_markup, **kwargs
             )
     except Exception as text_err:
+        if _is_not_modified(str(text_err)):
+            print(f"[RICH MSG] Legacy edit skipped — message {message_id} content is already identical.", flush=True)
+            return None
         print(f"[DEBUG-FIX-EDIT-WARNING] edit_message_text failed: {text_err}. Retrying with edit_message_caption...", flush=True)
         try:
             with timed(f"TIER2 legacy edit_message_caption msg={message_id}"):
                 return await bot.edit_message_caption(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    caption=legacy_html,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
-                    **kwargs
+                    chat_id=chat_id, message_id=message_id, caption=legacy_html,
+                    parse_mode="HTML", reply_markup=reply_markup, **kwargs
                 )
         except Exception as cap_err:
+            if _is_not_modified(str(cap_err)):
+                print(f"[RICH MSG] Legacy caption edit skipped — message {message_id} content is already identical.", flush=True)
+                return None
             print(f"[DEBUG-FIX-ERROR] Both TIER 2 legacy edit methods failed: {cap_err}", flush=True)
             raise text_err
 
