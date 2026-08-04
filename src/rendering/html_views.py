@@ -1132,25 +1132,34 @@ def build_feedback_thread_text(fb: dict, thread: list) -> str:
     from src.config import FEEDBACK_CATEGORIES
     cat_label = FEEDBACK_CATEGORIES.get(fb['category'], fb['category'])
 
-    all_msgs = [{"role": "user", "text": fb['message']}] + [
-        {"role": m['sender_role'], "text": m['message']} for m in thread
+    all_msgs = [{"role": "user", "text": fb['message'], "created_at": fb.get('created_at')}] + [
+        {"role": m['sender_role'], "text": m['message'], "created_at": m.get('created_at')} for m in thread
     ]
 
-    def bubble(role, text):
+    def _fmt_time(dt):
+        if not dt:
+            return ""
+        try:
+            return dt.strftime("%b %d, %Y · %H:%M UTC")
+        except AttributeError:
+            return str(dt)[:16]
+
+    def bubble(role, text, created_at):
         safe = html.escape(text)
+        ts_line = f"\n<i>{_fmt_time(created_at)}</i>" if created_at else ""
         if role == "admin":
-            return f"➡️ <b>🛠️ Support</b>\n<blockquote>{safe}</blockquote>"
-        return f"⬅️ <b>🧑 You</b>\n<blockquote>{safe}</blockquote>"
+            return f"➡️ <b>🛠️ Support</b>{ts_line}\n<blockquote>{safe}</blockquote>"
+        return f"⬅️ <b>🧑 You</b>{ts_line}\n<blockquote>{safe}</blockquote>"
 
     if len(all_msgs) > 4:
         older, recent = all_msgs[:-3], all_msgs[-3:]
-        older_block = "\n\n".join(bubble(m["role"], m["text"]) for m in older)
+        older_block = "\n\n".join(bubble(m["role"], m["text"], m["created_at"]) for m in older)
         conversation = (
             f"<blockquote expandable><b>📜 Earlier in this conversation ({len(older)})</b>\n\n{older_block}</blockquote>\n\n"
-            + "\n\n".join(bubble(m["role"], m["text"]) for m in recent)
+            + "\n\n".join(bubble(m["role"], m["text"], m["created_at"]) for m in recent)
         )
     else:
-        conversation = "\n\n".join(bubble(m["role"], m["text"]) for m in all_msgs)
+        conversation = "\n\n".join(bubble(m["role"], m["text"], m["created_at"]) for m in all_msgs)
 
     return (
         f"<b>#{fb['id']} • {cat_label}</b>\n"

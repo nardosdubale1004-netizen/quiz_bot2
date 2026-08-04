@@ -1845,6 +1845,14 @@ def db_join_organization(user_id, org_tag: str) -> dict:
             if not row:
                 return None
             org_id, org_name, is_public, creator_id = row['org_id'], row['org_name'], row['is_public'], row['creator_id']
+
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
+            existing = cur.fetchone()
+            if existing and existing['org_role'] in ('creator', 'admin', 'member'):
+                return {"org_id": org_id, "org_name": org_name, "role_assigned": existing['org_role'], "creator_id": creator_id, "already_member": True}
+            if existing and existing['org_role'] == 'pending':
+                return {"org_id": org_id, "org_name": org_name, "role_assigned": "pending", "creator_id": creator_id, "already_pending": True}
+
             role = "pending" if is_public else "member"
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
@@ -1873,6 +1881,14 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
             row = cur.fetchone()
             if not row:
                 return None
+
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            existing = cur.fetchone()
+            if existing and existing['org_role'] in ('creator', 'admin', 'member'):
+                return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": existing['org_role'], "creator_id": row['creator_id'], "already_member": True}
+            if existing and existing['org_role'] == 'pending':
+                return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": "pending", "creator_id": row['creator_id'], "already_pending": True}
+
             role = "pending" if row['is_public'] else "member"
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
@@ -1901,6 +1917,14 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
             row = cur.fetchone()
             if not row:
                 return None
+
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), row['org_id']))
+            existing = cur.fetchone()
+            if existing and existing['org_role'] in ('creator', 'admin', 'member'):
+                return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": existing['org_role'], "creator_id": row["creator_id"], "already_member": True}
+            if existing and existing['org_role'] == 'pending':
+                return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": "pending", "creator_id": row["creator_id"], "already_pending": True}
+
             role = "pending" if row["is_public"] else "member"
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
@@ -1918,7 +1942,6 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 def db_leave_organization(user_id, org_id: int):
     """Removes a member. If the creator leaves, the longest-standing admin (or, if none,
     the longest-standing member) is automatically promoted — a team can never be left

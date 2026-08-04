@@ -44,6 +44,7 @@ from src.database import (
     db_approve_member_request,
     db_get_org_membership_log,
     db_get_weekly_leaderboard,
+    db_update_user_location,
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -427,6 +428,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         USER_STATES[user_id] = "AWAITING_NICKNAME"
         USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
 
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        current_nick = profile.get("nickname") if profile else None
+        current_line = f"📛 <b>Current nickname:</b> {current_nick}\n\n" if current_nick else "📛 <i>No custom nickname set yet.</i>\n\n"
+
         fsm_cancel_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 BACK TO SETTINGS", callback_data="settings_menu|0")],
             [InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|privacy_menu")]
@@ -435,7 +440,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             (
                 "✍️ <b>PROMPT: SCOREBOARD PSEUDONYM</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Please type your preferred display name for leaderboards directly into this chat.\n\n"
+                f"{current_line}"
+                "Please type your NEW display name directly into this chat, then tap ➤ send to submit it.\n\n"
                 "⚠️ <b>Simple Rules:</b>\n"
                 "├─ Max 20 characters\n"
                 "└─ Spaces and underscores allowed"
@@ -443,6 +449,39 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
+        return
+
+    elif action == "confirm_nick":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        pending = session.get("pending_nickname")
+        profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]])
+        if d_id == "1" and pending:
+            await asyncio.to_thread(db_set_user_nickname, user_id, pending)
+            USER_PAYLOADS.pop(user_id, None)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"✅ <b>Nickname updated:</b> {pending}", reply_markup=profile_nav_kb)
+        else:
+            USER_PAYLOADS.pop(user_id, None)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content="❌ Nickname change cancelled. Your old nickname is unchanged.", reply_markup=profile_nav_kb)
+        return
+
+    elif action == "confirm_location":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        pending_city = session.get("pending_city")
+        pending_country = session.get("pending_country")
+        profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]])
+        if d_id == "1" and pending_city and pending_country:
+            await asyncio.to_thread(db_update_user_location, user_id, pending_city, pending_country)
+            USER_PAYLOADS.pop(user_id, None)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"✅ <b>Location updated!</b>\n📍 {pending_city}, {pending_country}", reply_markup=profile_nav_kb)
+        else:
+            USER_PAYLOADS.pop(user_id, None)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content="❌ Location change cancelled. Your previous location is unchanged.", reply_markup=profile_nav_kb)
         return
 
     elif action == "fsm_create_org":
@@ -585,14 +624,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         if not join_data:
             await query.edit_message_text("⚠️ That team no longer exists.", reply_markup=return_kb)
-            return
-
-        if join_data["role_assigned"] == "pending":
-            text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
-        else:
-            text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
+
+    if join_data.get("already_member"):
+        text = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b>."
+    elif join_data.get("already_pending"):
+        text = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
+    elif join_data["role_assigned"] == "pending":
+        text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
+    else:
+        text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+    await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=return_kb)
+    return
 
     elif action == "team_invite":
         await query.answer()

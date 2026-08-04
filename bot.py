@@ -22,7 +22,7 @@ for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.e
 from telegram import Update, BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, LAST_UTILITY_MID
+from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, LAST_UTILITY_MID, FSM_INPUT_HINT
 from src.database import (
     QuizEngine,
     db_get_user_profile,
@@ -748,13 +748,16 @@ async def start_command(update: Update, context):
     if args and args[0].startswith("join_"):
         join_token = args[0][5:].strip()
         join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
-        if join_data:
-            if join_data["role_assigned"] == "pending":
-                msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
-            else:
-                msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
-        else:
+        if not join_data:
             msg = "⚠️ This team invite link is invalid or the team no longer exists."
+        elif join_data.get("already_member"):
+            msg = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b> — nothing to do here."
+        elif join_data.get("already_pending"):
+            msg = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
+        elif join_data["role_assigned"] == "pending":
+            msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
+        else:
+            msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
         await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=msg)
     
     if args and args[0].startswith("tourney_"):
@@ -864,6 +867,24 @@ async def school_command(update: Update, context):
         )
         return
 
+    if join_data.get("already_member"):
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
+            f"ℹ️ <b>You're already on this team!</b>\n\nYou're registered under <b>{join_data['org_name']}</b> "
+            f"(<code>#{tag.upper()}</code>) as <b>{join_data['role_assigned'].title()}</b>.",
+            nav_kb
+        )
+        return
+
+    if join_data.get("already_pending"):
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
+            f"📥 <b>Request already pending.</b>\n\nYour join request for <b>{join_data['org_name']}</b> "
+            f"(<code>#{tag.upper()}</code>) is still waiting on admin approval.",
+            nav_kb
+        )
+        return
+
     if join_data["role_assigned"] == "pending":
         await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
         await _open_utility_view(
@@ -872,7 +893,6 @@ async def school_command(update: Update, context):
             f"approval — you'll be added to the roster once approved.",
             nav_kb
         )
-
     else:
         await _open_utility_view(
             context, user_id, update.message.chat_id,
@@ -1253,10 +1273,26 @@ async def handle_fsm_message(update: Update, context):
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid format. Only letters, spaces and underscores are allowed.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
 
-            await asyncio.to_thread(db_set_user_nickname, user_id, clean_name)
+            profile = await asyncio.to_thread(db_get_user_profile, user_id)
+            old_nick = profile.get("nickname") if profile else None
+            USER_PAYLOADS[user_id] = {"edit_mid": edit_mid, "pending_nickname": clean_name}
             USER_STATES[user_id] = "IDLE"
-            USER_PAYLOADS.pop(user_id, None)
-            await _fsm_advance(context, update.message.chat_id, edit_mid, f"✅ Nickname registered successfully: <b>{clean_name}</b>!", profile_nav_kb)
+
+            old_line = f"<b>{old_nick}</b>" if old_nick else "<i>none set</i>"
+            confirm_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ CONFIRM CHANGE", callback_data="confirm_nick|1"),
+                 InlineKeyboardButton("❌ CANCEL", callback_data="confirm_nick|0")]
+            ])
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
+                (
+                    "✍️ <b>CONFIRM NICKNAME CHANGE</b>\n<hr/>\n"
+                    f"From: {old_line}\n"
+                    f"To: <b>{clean_name}</b>\n\n"
+                    "This appears on public leaderboards and round podiums. Confirm?"
+                ),
+                confirm_kb
+            )
 
         elif state == "AWAITING_ORG_NAME":
             clean_org_name = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
@@ -1360,29 +1396,34 @@ async def handle_fsm_message(update: Update, context):
                     await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed due to a database exception.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
 
         elif state == "AWAITING_ORG_JOIN":
-                    clean_tag = re.sub(r'\W', '', text_input).upper().strip()
-                    join_data = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
-                    if join_data:
-                        USER_STATES[user_id] = "IDLE"
-                        USER_PAYLOADS.pop(user_id, None)
+            clean_tag = re.sub(r'\W', '', text_input).upper().strip()
+            join_data = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
+            if not join_data:
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Alliance code <code>#{clean_tag}</code> not found. Please enter a valid Tag:", cancel_kb)
+                return
 
-                        if join_data["role_assigned"] == "pending":
-                            response_text = (
-                                f"📥 <b>Request sent!</b>\n\n"
-                                f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>). "
-                                f"The team's admin(s) have been notified."
-                            )
-                            await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
-                        else:
-                            response_text = f"✅ <b>Integrated Successfully!</b> You're now registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>)."
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
 
-                        await _fsm_advance(context, update.message.chat_id, edit_mid, response_text, profile_nav_kb)
-                    else:
-                        await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Alliance code <code>#{clean_tag}</code> not found. Please enter a valid Tag:", cancel_kb)
+            if join_data.get("already_member"):
+                response_text = f"ℹ️ You're already registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>) as <b>{join_data['role_assigned'].title()}</b>."
+            elif join_data.get("already_pending"):
+                response_text = f"📥 Your request to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>) is already pending."
+            elif join_data["role_assigned"] == "pending":
+                response_text = (
+                    f"📥 <b>Request sent!</b>\n\n"
+                    f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>). "
+                    f"The team's admin(s) have been notified."
+                )
+                await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
+            else:
+                response_text = f"✅ <b>Integrated Successfully!</b> You're now registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>)."
+
+            await _fsm_advance(context, update.message.chat_id, edit_mid, response_text, profile_nav_kb)
 
 
         elif state == "AWAITING_LOCATION_CITY":
-            clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip().title()
             if not clean_city:
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid city name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
@@ -1393,25 +1434,44 @@ async def handle_fsm_message(update: Update, context):
                 context, update.message.chat_id, edit_mid,
                 (
                     f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
-                    "✍ <b>PROMPT: YOUR COUNTRY</b>\nPlease type the country you're studying in:\n<i>(Example: Ethiopia)</i>"
+                    "✍ <b>PROMPT: YOUR COUNTRY</b>\nPlease type the country you're studying in, then tap ➤ send:\n<i>(Example: Ethiopia)</i>"
                 ) + FSM_INPUT_HINT,
                 cancel_kb
             )
 
         elif state == "AWAITING_LOCATION_COUNTRY":
-            clean_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
-            if not clean_country:
+            from src.geo import normalize_country_input
+            raw_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            if not raw_country:
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid country name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
 
+            normalized_country, is_exact = normalize_country_input(raw_country)
             clean_city = USER_PAYLOADS[user_id].get("loc_city", "")
-            await asyncio.to_thread(db_update_user_location, user_id, clean_city, clean_country)
+
+            profile = await asyncio.to_thread(db_get_user_profile, user_id)
+            old_city = profile.get("personal_city") if profile else None
+            old_country = profile.get("personal_country") if profile else None
+
+            USER_PAYLOADS[user_id]["pending_city"] = clean_city
+            USER_PAYLOADS[user_id]["pending_country"] = normalized_country
             USER_STATES[user_id] = "IDLE"
-            USER_PAYLOADS.pop(user_id, None)
+
+            suggestion_note = "" if is_exact else "\n<i>(Interpreted as closest known match — cancel and re-enter if wrong)</i>"
+            old_line = f"{old_city}, {old_country}" if old_city else "<i>not set</i>"
+            confirm_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ CONFIRM", callback_data="confirm_location|1"),
+                 InlineKeyboardButton("❌ CANCEL", callback_data="confirm_location|0")]
+            ])
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                f"✅ <b>Location updated!</b>\n📍 {clean_city}, {clean_country}",
-                profile_nav_kb
+                (
+                    "📍 <b>CONFIRM LOCATION CHANGE</b>\n<hr/>\n"
+                    f"From: {old_line}\n"
+                    f"To: <b>{clean_city}, {normalized_country}</b>{suggestion_note}\n\n"
+                    "This powers your City/Country leaderboard placement. Confirm?"
+                ),
+                confirm_kb
             )
 
         elif state == "AWAITING_FEEDBACK_TEXT":
