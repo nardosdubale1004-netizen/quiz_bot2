@@ -624,18 +624,38 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         if not join_data:
             await query.edit_message_text("⚠️ That team no longer exists.", reply_markup=return_kb)
+            return
+
+        if join_data.get("already_member"):
+            text = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b>."
+        elif join_data.get("already_pending"):
+            text = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
+        elif join_data["role_assigned"] == "pending":
+            text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
+        else:
+            text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=return_kb)
         return
 
-    if join_data.get("already_member"):
-        text = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b>."
-    elif join_data.get("already_pending"):
-        text = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
-    elif join_data["role_assigned"] == "pending":
-        text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
-    else:
-        text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
-    await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=return_kb)
-    return
+    elif action == "team_invite":
+        await query.answer()
+        org_id = int(d_id)
+        conn = engine.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT join_token, org_name FROM organizations WHERE org_id = %s;", (org_id,))
+                row = cur.fetchone()
+        finally:
+            engine.release_connection(conn)
+        if not row:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Team not found.", reply_markup=return_kb)
+            return
+        bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
+        invite_link = f"https://t.me/{bot_username}?start=join_{row['join_token']}"
+        invite_text = f"🔗 <b>INVITE LINK FOR {row['org_name']}</b>\n\nShare this link — anyone who opens it joins (or requests to join) your team automatically:\n\n<code>{invite_link}</code>"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=invite_text, reply_markup=kb)
+        return
 
     elif action == "team_invite":
         await query.answer()
