@@ -265,7 +265,7 @@ async def start_command(update: Update, context):
 
     channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
     channel_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")
+        InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")
     ]])
 
     if args and args[0].startswith("ans_"):
@@ -296,7 +296,7 @@ async def start_command(update: Update, context):
             print(f" └─ Correct Option:     {question_data.get('correct_option')}", flush=True)
 
             channel_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📣 RETURN TO QUESTION", url=f"https://t.me/{channel_username}/{track['message_id']}")
+                InlineKeyboardButton("📣 TO QUESTION", url=f"https://t.me/{channel_username}/{track['message_id']}")
             ]])
 
             track_status = track.get('status')
@@ -322,7 +322,7 @@ async def start_command(update: Update, context):
         if track_status == "tournament_closed":
             print(f"[TRACE-STEP 3] Locked out: Round is closed for display_id: {display_id}", flush=True)
             closed_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],
                 [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
             ])
             await send_rich_message_safe(
@@ -341,7 +341,7 @@ async def start_command(update: Update, context):
                 if existing_response:
                     print(f" └─ Already Answered: User {user_id} has an existing response on file.", flush=True)
                     lockout_kb = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                        [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],
                         [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
                     ])
                     lockout_html = (
@@ -400,7 +400,7 @@ async def start_command(update: Update, context):
 
                 print(f"[TRACE-STEP 6] Sending DM response receipt...", flush=True)
                 received_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                    [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],
                     [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
                 ])
                 confirmation_msg = await send_rich_message_safe(
@@ -549,7 +549,7 @@ async def start_command(update: Update, context):
                 print(f" ├─ Question removed and never answered by this user. Showing removal confirmation.", flush=True)
                 removed_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")],
-                    [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")]
+                    [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")]
                 ])
                 await send_rich_message_safe(
                     context.bot,
@@ -663,7 +663,7 @@ async def start_command(update: Update, context):
     if args and args[0].startswith("view_"):
         asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
         channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
-        channel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")]])
+        channel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")]])
         try:
             display_id = int(args[0][5:])
         except ValueError:
@@ -689,7 +689,7 @@ async def start_command(update: Update, context):
         if not existing_response:
             is_closed = track.get('status') in ('closed', 'tournament_closed', 'deleted')
             nudge_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],
                 [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
             ])
             if is_closed:
@@ -850,12 +850,14 @@ async def school_command(update: Update, context):
         return
 
     if join_data["role_assigned"] == "pending":
+        await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
         await _open_utility_view(
             context, user_id, update.message.chat_id,
             f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> (<code>#{tag.upper()}</code>) requires admin "
-            f"approval — you'll be added to the roster once the team creator confirms.",
+            f"approval — you'll be added to the roster once approved.",
             nav_kb
         )
+
     else:
         await _open_utility_view(
             context, user_id, update.message.chat_id,
@@ -915,52 +917,16 @@ async def leaderboard_command(update: Update, context):
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
-    args = context.args
-    channel_username = CONFIG.get("channel", "EthiopiaEntranceExam").lstrip('@')
-    nav_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📣 RETURN TO CHANNEL", url=f"https://t.me/{channel_username}")],
-        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
-         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
-    ])
-
-    if args and args[0].lower() == "school":
-        alliance_top = await asyncio.to_thread(db_get_alliance_leaderboard)
-        leaderboard_text = ["🏆 <b>GLOBAL STUDY ALLIANCE STANDINGS</b> 🏆\n", "🔥 <b>TOP 10 SCHOOLS & CLANS:</b>\n"]
-        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-        if not alliance_top:
-            leaderboard_text.append("<i>No schools have registered points yet. Be the first with /school school_name!</i>")
-        else:
-            for i, row in enumerate(alliance_top):
-                leaderboard_text.append(f" {medals[i]} <b>#{row['alliance_tag']}</b> — <b>{row['total_score']} Marks</b> ({row['active_members']} members)")
-        await _open_utility_view(context, user_id, update.message.chat_id, "\n".join(leaderboard_text), nav_kb)
-        return
-
+    from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    if not profile:
+    if not profile or not profile.get("grade"):
         await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Please register your grade first by typing /start.")
         return
 
-    grade = profile['grade']
-    user_marks = profile['total_marks']
-    mastery = get_grade_mastery_title(user_marks)
-    weekly_top = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
-
-    leaderboard_text = [
-        f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
-        f"🏅 <b>Your Rank Status:</b>",
-        f"├─ Display Handle: <b>{format_public_name(profile)}</b>",
-        f"├─ Mastery Level: <b>{mastery}</b>",
-        f"├─ Practice Score: <b>{user_marks} Marks</b>",
-        f"├─ Daily Streak:   <b>🔥 {profile.get('current_streak', 0)} Days</b>",
-        f"└─ Accuracy: <b>{int((profile['correct']/profile['total'])*100) if profile['total'] > 0 else 0}%</b>\n",
-        "━━━━━━━━━━━━━━━━━━━━━━━━",
-        "🔥 <b>TOP 10 THIS WEEK:</b>"
-    ]
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    for i, row in enumerate(weekly_top):
-        leaderboard_text.append(f" {medals[i]} {format_public_name(row)} — <b>{row['total_score']} Marks</b>")
-
-    await _open_utility_view(context, user_id, update.message.chat_id, "\n".join(leaderboard_text), nav_kb)
+    rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
+    text = build_leaderboard_text("grade", rows, profile)
+    kb = build_leaderboard_keyboard("grade")
+    await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 
 async def invite_command(update: Update, context):
     """Generates the student's personal referral deep-link."""
@@ -985,7 +951,8 @@ async def invite_command(update: Update, context):
             "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
             "Share your link. When a friend joins and answers correctly, you get "
             "<b>+1 Mark</b> per correct answer — and a smaller share two levels deep too.\n\n"
-            f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>"
+            f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>\n\n"
+            f"👆 <i>Tap the link above — Telegram copies it straight to your clipboard.</i>"
         ),
         kb
     )
@@ -1184,6 +1151,28 @@ async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
     except Exception:
         pass
 
+
+async def _notify_org_admins_pending_request(context, org_id, org_name, requester):
+    from src.database import db_get_org_admin_ids
+    admin_ids = await asyncio.to_thread(db_get_org_admin_ids, org_id)
+    if not admin_ids:
+        return
+    approve_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🟢 APPROVE", callback_data=f"process_req|{org_id}|{requester.id}|1"),
+        InlineKeyboardButton("🔴 REJECT", callback_data=f"process_req|{org_id}|{requester.id}|0")
+    ]])
+    req_name = html.escape(requester.first_name or requester.username or "A student")
+    for admin_id in admin_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=int(admin_id),
+                text=f"📥 <b>NEW JOIN REQUEST</b>\n\n<b>{req_name}</b> wants to join <b>{html.escape(org_name)}</b>.",
+                reply_markup=approve_kb, parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+
 async def _fsm_advance(context, chat_id, edit_mid, html_content, reply_markup=None):
     """Edits the SAME prompt message across an entire multi-step flow (nickname, org
     creation, location) instead of sending a fresh message each step — the whole
@@ -1302,6 +1291,7 @@ async def handle_fsm_message(update: Update, context):
                 "✍ <b>PROMPT: Team City Location</b>\n"
                 "Please enter the city where your school or academy is located:\n"
                 "<i>(Example: Addis Ababa)</i>",
+                + FSM_INPUT_HINT,
                 cancel_kb
             )
 
@@ -1319,6 +1309,7 @@ async def handle_fsm_message(update: Update, context):
                 "✍ <b>PROMPT: Team Country Location</b>\n"
                 "Please enter the country where your school or academy is located:\n"
                 "<i>(Example: Ethiopia)</i>",
+                + FSM_INPUT_HINT,
                 cancel_kb
             )
 
@@ -1352,39 +1343,26 @@ async def handle_fsm_message(update: Update, context):
                     await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed due to a database exception.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
 
         elif state == "AWAITING_ORG_JOIN":
-            clean_tag = re.sub(r'\W', '', text_input).upper().strip()
-            join_data = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
-            if join_data:
-                USER_STATES[user_id] = "IDLE"
-                USER_PAYLOADS.pop(user_id, None)
+                    clean_tag = re.sub(r'\W', '', text_input).upper().strip()
+                    join_data = await asyncio.to_thread(db_join_organization, user_id, clean_tag)
+                    if join_data:
+                        USER_STATES[user_id] = "IDLE"
+                        USER_PAYLOADS.pop(user_id, None)
 
-                if join_data["role_assigned"] == "pending":
-                    response_text = (
-                        f"📥 <b>ADMISSION REQ SENT!</b>\n\n"
-                        f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>). "
-                        f"The Creator/Admin has been notified."
-                    )
-                    try:
-                        approve_kb = InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🟢 APPROVE MEMBER", callback_data=f"process_req|{join_data['org_id']}|{user_id}|1"),
-                             InlineKeyboardButton("🔴 REJECT MEMBER", callback_data=f"process_req|{join_data['org_id']}|{user_id}|0")]
-                        ])
-                        await context.bot.send_message(
-                            chat_id=int(join_data["creator_id"]),
-                            text=(
-                                f"📥 <b>NEW ADMISSION REQUEST</b>\n"
-                                f"Student <b>{html.escape(user.first_name)}</b> is requesting to join <b>{join_data['org_name']}</b>."
-                            ),
-                            reply_markup=approve_kb, parse_mode="HTML"
-                        )
-                    except Exception:
-                        pass
-                else:
-                    response_text = f"✅ <b>Integrated Successfully!</b> You're now registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>)."
+                        if join_data["role_assigned"] == "pending":
+                            response_text = (
+                                f"📥 <b>Request sent!</b>\n\n"
+                                f"You requested to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>). "
+                                f"The team's admin(s) have been notified."
+                            )
+                            await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
+                        else:
+                            response_text = f"✅ <b>Integrated Successfully!</b> You're now registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>)."
 
-                await _fsm_advance(context, update.message.chat_id, edit_mid, response_text, profile_nav_kb)
-            else:
-                await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Alliance code <code>#{clean_tag}</code> not found. Please enter a valid Tag:", cancel_kb)
+                        await _fsm_advance(context, update.message.chat_id, edit_mid, response_text, profile_nav_kb)
+                    else:
+                        await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Alliance code <code>#{clean_tag}</code> not found. Please enter a valid Tag:", cancel_kb)
+
 
         elif state == "AWAITING_LOCATION_CITY":
             clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
@@ -1398,6 +1376,7 @@ async def handle_fsm_message(update: Update, context):
                 context, update.message.chat_id, edit_mid,
                 f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
                 "✍ <b>PROMPT: YOUR COUNTRY</b>\nPlease type the country you're studying in:\n<i>(Example: Ethiopia)</i>",
+                + FSM_INPUT_HINT,
                 cancel_kb
             )
 

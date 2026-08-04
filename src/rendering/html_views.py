@@ -436,32 +436,26 @@ def build_answered_keyboard(d_id: str, user_selection: int, show_derivation: boo
     buttons = []
 
     if show_derivation:
-        buttons.append([InlineKeyboardButton("↩️ HIDE SOLUTION DETAILS", callback_data=f"{prefix}|{d_id}|{user_selection}|0|{1 if show_perf else 0}")])
+        buttons.append([InlineKeyboardButton("↩️ HIDE SOLUTION", callback_data=f"{prefix}|{d_id}|{user_selection}|0|{1 if show_perf else 0}")])
     else:
-        buttons.append([InlineKeyboardButton("📖 REVEAL COMPLETE DERIVATION", callback_data=f"{prefix}|{d_id}|{user_selection}|1|{1 if show_perf else 0}")])
+        buttons.append([InlineKeyboardButton("📖 SHOW SOLUTION", callback_data=f"{prefix}|{d_id}|{user_selection}|1|{1 if show_perf else 0}")])
 
     if show_perf:
-        buttons.append([InlineKeyboardButton("↩️ HIDE PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|0")])
+        buttons.append([InlineKeyboardButton("↩️ HIDE STATS", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|0")])
     else:
-        buttons.append([InlineKeyboardButton("📊 VIEW PERFORMANCE CARD", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|1")])
+        buttons.append([InlineKeyboardButton("📊 SHOW STATS", callback_data=f"{prefix}|{d_id}|{user_selection}|{1 if show_derivation else 0}|1")])
+
 
     channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
-    # This button always deep-links to the exact question message when message_id is
-    # known (which is every real call site) — label it accordingly instead of the
-    # generic "RETURN TO CHANNEL", so users aren't misled into thinking they'll land
-    # on the channel's top/latest post instead of their own question.
     if message_id:
         return_url = f"https://t.me/{channel_username}/{message_id}"
-        return_label = "🔙 RETURN TO QUESTION"
+        return_label = "🔙 TO QUESTION"
     else:
         return_url = f"https://t.me/{channel_username}"
-        return_label = "📣 RETURN TO CHANNEL"
+        return_label = "📣 TO CHANNEL"
 
-    # Both buttons share one row. "MY PROFILE" opens a SEPARATE tracked utility message
-    # (via the profile_popup callback) instead of editing this card in place — the question/
-    # answer content must survive forever for future reference, never get overwritten.
     buttons.append([
-        InlineKeyboardButton("👤 MY PROFILE", callback_data="profile_popup|0"),
+        InlineKeyboardButton("👤 PROFILE", callback_data="profile_popup|0"),
         InlineKeyboardButton(return_label, url=return_url)
     ])
     return InlineKeyboardMarkup(buttons)
@@ -644,45 +638,43 @@ def build_alliance_info_text() -> str:
     )
 
 
-def build_organization_card_text(org: dict, roster: list) -> str:
-    """
-    Builds a beautiful, simple, and expandable card displaying details and 
-    member rosters for a specific school team.
-    """
-    name = org.get("org_name", "UNKNOWN").upper()
+def build_organization_card_text(org: dict, roster: list, sort_field: str = "score", sort_dir: str = "desc") -> str:
+    name = html.escape(org.get("org_name", "UNKNOWN"))
     tag = org.get("org_tag", "UNKNOWN")
-    org_type = org.get("org_type", "School")
-    privacy = "🌐 PUBLIC TEAM (Requires manual admission confirmation)" if org.get("is_public", True) else "🔒 PRIVATE TEAM (Direct access passcode Tag)"
-    
+    org_type = html.escape(str(org.get("org_type", "School")))
+    privacy = "🌐 Public — needs admin approval" if org.get("is_public", True) else "🔒 Private — instant join by code"
+    city = html.escape(str(org.get("city") or "—"))
+    country = html.escape(str(org.get("country") or "—"))
+
     total_score = sum(r.get("total_marks", 0) for r in roster)
     avg_score = int(total_score / len(roster)) if roster else 0
-    
-    roster_lines = []
-    medals = ["🥇", "🥈", "🥉", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️", "▫️"]
-    for idx, r in enumerate(roster[:10]):
-        formatted_name = format_public_name(r)
-        role_marker = " 👑" if r.get("org_role") == "creator" else " 🛡️" if r.get("org_role") == "admin" else ""
-        roster_lines.append(f" {medals[idx]} <code>{formatted_name}</code> — <b>{r['total_marks']} Marks</b>{role_marker}")
-        
-    roster_block =  "\n".join(roster_lines) if roster_lines else "<i>No active scholars registered.</i>"
 
-    text = (
-        f"🏫 <b>SCHOOL TEAM: {name}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"• <b>Domain Code:</b> <code>#{tag}</code>\n"
-        f"• <b>Admission Protocol:</b> {privacy}\n"
-        f"• <b>Alliance Category:</b> {org_type}\n\n"
-        f"📊 <b>TEAM STATS:</b>\n"
-        f" ├─ Members: <code>{len(roster)} registered</code>\n"
-        f" ├─ Total Team Score: <code>{total_score} Marks</code>\n"
-        f" └─ Team Average: <code>{avg_score} Marks</code>\n\n"
-        f"🏆 <b>TEAM LEADERBOARD (TOP 10):</b>\n"
-        f"<blockquote expandable>\n"
-        f"{roster_block}\n"
-        f"</blockquote>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━"
+    rows = list(roster)
+    if sort_field == "name":
+        rows.sort(key=lambda r: format_public_name(r).lower(), reverse=(sort_dir == "desc"))
+    elif sort_field == "date":
+        rows.sort(key=lambda r: r.get("joined_at") or "", reverse=(sort_dir == "desc"))
+    else:
+        rows.sort(key=lambda r: r.get("total_marks", 0), reverse=(sort_dir == "desc"))
+
+    role_icon = {"creator": "👑", "admin": "🛡️"}
+    table_rows = ["<tr><td><b>#</b></td><td><b>Scholar</b></td><td><b>Marks</b></td></tr>"]
+    for i, r in enumerate(rows[:15]):
+        icon = role_icon.get(r.get("org_role"), "")
+        nm = html.escape(f"{icon} {format_public_name(r)}".strip())
+        table_rows.append(f"<tr><td>{i+1}</td><td>{nm}</td><td>{r.get('total_marks', 0)}</td></tr>")
+    roster_table = "<table>" + "".join(table_rows) + "</table>" if rows else "<i>No active scholars registered yet.</i>"
+
+    return (
+        f"<h2>🏫 {name}</h2>\n"
+        f"<code>#{tag}</code> · {org_type} · {privacy}\n"
+        f"📍 {city}, {country}\n"
+        f"<hr/>\n"
+        f"<b>{len(roster)}</b> members · <b>{total_score}</b> total marks · <b>{avg_score}</b> average\n"
+        f"<hr/>\n"
+        f"<h3>🏆 Roster</h3>\n"
+        f"{roster_table}"
     )
-    return text
 
 
 def build_comparative_standings_text(top_alliances: list, user_org: dict = None) -> str:
@@ -868,6 +860,24 @@ HELP_TOPICS = {
         "/name — set/clear nickname\n"
         "/school CODE — join a team"
     )),
+    "repeats": ("🔁 Repeat Questions", (
+        "<b>🔁 REPEAT QUESTIONS</b>\n"
+        "If you see a 🔁 badge on a question, it's been posted before. It still "
+        "counts fully — great for a second shot at one you missed."
+    )),
+    "teams_roles": ("👑 Team Roles & Leaving", (
+        "<b>👑 TEAM ROLES</b>\n"
+        "👑 Creator — approves requests, can dissolve\n"
+        "🛡️ Admin — promoted by creator, can approve requests\n"
+        "👤 Member — scores for the team\n\n"
+        "If a creator leaves, leadership passes automatically to the "
+        "longest-standing admin (or member)."
+    )),
+    "leaderboard_filters": ("📊 Leaderboard Filters", (
+        "<b>📊 LEADERBOARD VIEWS</b>\n"
+        "/leaderboard lets you switch between 🎒 Grade, 🏫 School, 🌆 City, "
+        "and 🌍 Country views — tap the filter buttons at the bottom."
+    )),
 }
 
 
@@ -896,6 +906,50 @@ def build_help_topic_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")]
     ])
 
+def build_leaderboard_text(scope: str, rows: list, profile: dict = None) -> str:
+    scope_labels = {
+        "grade": f"🎒 Grade {profile.get('grade') if profile else '—'}",
+        "country": "🌍 Country", "city": "🌆 City", "school": "🏫 School Teams",
+    }
+    lines = [f"<h2>🏆 {scope_labels.get(scope, 'Leaderboard')} — This Week</h2>"]
+
+    if profile and scope == "grade":
+        mastery = get_grade_mastery_title(profile.get("total_marks", 0))
+        acc = int((profile['correct']/profile['total'])*100) if profile.get('total') else 0
+        lines.append(
+            f"<b>You:</b> {format_public_name(profile)} · {mastery} · "
+            f"{profile.get('total_marks', 0)} marks · 🔥{profile.get('current_streak', 0)}d · 🎯{acc}%"
+        )
+        lines.append("<hr/>")
+
+    if not rows:
+        lines.append("<i>No scores yet — be the first!</i>")
+        return "\n".join(lines)
+
+    medals = ["🥇", "🥈", "🥉"]
+    table_rows = ["<tr><td><b>#</b></td><td><b>Scholar</b></td><td><b>Marks</b></td></tr>"]
+    for i, r in enumerate(rows[:10]):
+        rank = medals[i] if i < 3 else str(i + 1)
+        if scope == "school":
+            nm, score = f"#{r['alliance_tag']}", r['total_score']
+        else:
+            nm, score = format_public_name(r), r.get('total_score', r.get('total_marks', 0))
+        table_rows.append(f"<tr><td>{rank}</td><td>{html.escape(nm)}</td><td>{score}</td></tr>")
+    lines.append("<table>" + "".join(table_rows) + "</table>")
+    return "\n".join(lines)
+
+
+def build_leaderboard_keyboard(scope: str) -> InlineKeyboardMarkup:
+    def _b(key, label):
+        return InlineKeyboardButton(f"{'• ' if scope == key else ''}{label}", callback_data=f"lb_filter|{key}")
+    return InlineKeyboardMarkup([
+        [_b("grade", "🎒 Grade"), _b("school", "🏫 School")],
+        [_b("city", "🌆 City"), _b("country", "🌍 Country")],
+        [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
+         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
+    ])
+
+    
 def build_help_topic_text(key: str) -> str:
     topic = HELP_TOPICS.get(key)
     return topic[1] if topic else "⚠️ Topic not found."
@@ -1136,22 +1190,28 @@ def build_org_history_text(org: dict, log_rows: list) -> str:
     name = html.escape(org.get("org_name", "TEAM"))
     tag = org.get("org_tag", "")
     role_icon = {"creator": "👑", "admin": "🛡️", "member": "👤", "pending": "📥", "rejected": "🚫"}
-    role_label = {"creator": "Creator", "admin": "Admin", "member": "Member", "pending": "Pending Request", "rejected": "Rejected"}
-    lines = []
-    for r in log_rows:
-        icon = role_icon.get(r['org_role'], "•")
-        label = role_label.get(r['org_role'], r['org_role'].title())
-        name_str = format_public_name(r)
-        when = r['joined_at'].strftime('%b %d, %Y') if r.get('joined_at') else ""
-        lines.append(f" {icon} <b>{name_str}</b> — {label} <i>({when})</i>")
-    body = "\n".join(lines) if lines else "<i>No members or requests yet.</i>"
-    return (
-        f"👥 <b>MEMBERS &amp; REQUESTS — {name}</b> <code>#{tag}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<blockquote expandable>\n{body}\n</blockquote>\n\n"
-        f"<i>👑 Creator │ 🛡️ Admin │ 👤 Member │ 📥 Pending │ 🚫 Rejected (can re-request anytime)</i>"
-    )
 
+    active = [r for r in log_rows if r['org_role'] not in ("pending", "rejected")]
+    pending = [r for r in log_rows if r['org_role'] == "pending"]
+
+    def _table(rows):
+        body = ["<tr><td><b>Scholar</b></td><td><b>Role</b></td><td><b>Since</b></td></tr>"]
+        for r in rows:
+            icon = role_icon.get(r['org_role'], "•")
+            when = r['joined_at'].strftime('%b %d, %Y') if r.get('joined_at') else "—"
+            body.append(f"<tr><td>{html.escape(format_public_name(r))}</td><td>{icon} {r['org_role'].title()}</td><td>{when}</td></tr>")
+        return "<table>" + "".join(body) + "</table>"
+
+    pending_block = f"<h3>📥 Pending Requests ({len(pending)})</h3>\n{_table(pending)}\n<hr/>\n" if pending else ""
+    active_block = _table(active) if active else "<i>No members yet.</i>"
+
+    return (
+        f"<h2>👥 {name} — Members &amp; Requests</h2>\n"
+        f"<code>#{tag}</code>\n<hr/>\n"
+        f"{pending_block}"
+        f"<h3>👤 Roster</h3>\n{active_block}\n<hr/>\n"
+        f"<i>Only visible to team admins. 👑 Creator · 🛡️ Admin · 👤 Member</i>"
+    )
 
 def build_my_answers_subject_menu_text(summary: list) -> str:
     if not summary:

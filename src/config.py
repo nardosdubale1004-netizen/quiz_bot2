@@ -24,6 +24,8 @@ if os.path.exists("config.json"):
     except Exception:
         pass
 
+FSM_INPUT_HINT = "\n\n📝 <i>Type your message in the box below, then tap send.</i>"
+
 # Read configurations securely with local fallbacks
 CONFIG = {
     "token": os.getenv("BOT_TOKEN") or local_config.get("token"),

@@ -1999,14 +1999,14 @@ def db_find_similar_organizations(name: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_organization_roster(org_id: int):
-    """Active roster only — pending requests and rejected/past requests live
-    in the membership history view instead."""
+    """Active roster only (pending/rejected are admin-only, via db_get_org_membership_log)."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks, m.org_role, u.public_consent_granted
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks,
+                       m.org_role, m.joined_at, u.public_consent_granted
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
                 WHERE m.org_id = %s AND m.org_role NOT IN ('pending', 'rejected')
@@ -3177,6 +3177,25 @@ def db_delete_campaign(name: str) -> bool:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to delete campaign: {e}", flush=True)
         return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_org_admin_ids(org_id: int):
+    """Creator + promoted admins — everyone who should be notified of join requests."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id FROM org_memberships
+                WHERE org_id = %s AND org_role IN ('creator', 'admin');
+            """, (int(org_id),))
+            return [r['user_id'] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB-ORG-ERROR] Fetch admin ids failed: {e}", flush=True)
+        return []
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

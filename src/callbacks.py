@@ -35,7 +35,14 @@ from src.database import (
     db_get_user_feedback_list,
     db_count_user_feedback,
     db_add_feedback_message,
-    db_get_feedback_thread
+    db_get_feedback_thread,
+    db_get_question_by_id,
+    db_get_latest_track_for_question,
+    db_get_alliance_leaderboard,
+    db_get_city_leaderboard,
+    db_get_country_leaderboard,
+    db_approve_member_request,
+    db_get_org_membership_log,
 )
 from src.rendering.html_views import (
     build_profile_card_text,
@@ -125,14 +132,30 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         previous_grade = profile.get("grade") if profile else None
 
+        if previous_grade and grade < previous_grade:
+            await query.answer()
+            warn_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"⚠️ YES, SWITCH TO GRADE {grade}", callback_data=f"confirm_grade|{grade}")],
+                [InlineKeyboardButton("❌ CANCEL", callback_data="reselect_grade_panel|0")]
+            ])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=(
+                    f"⚠️ <b>Heads up before you switch</b>\n\n"
+                    f"You're moving from Grade <b>{previous_grade}</b> down to Grade <b>{grade}</b>.\n\n"
+                    f"Questions above your grade earn a ×1.5 challenge bonus, and below earn only ×0.3. "
+                    f"Dropping your grade means questions that used to be \"above your level\" (worth more) "
+                    f"now count as \"below your level\" (worth less) — your point-earning potential per question "
+                    f"can drop. Only switch if this reflects your actual academic level."
+                ),
+                reply_markup=warn_kb
+            )
+            return
+
         await asyncio.to_thread(db_set_user_grade, query.from_user.id, grade)
         await query.answer(f"Grade {grade} registered!")
-
-        if previous_grade and previous_grade != grade:
-            msg = f"✅ <b>Grade Updated:</b> {previous_grade} → <b>{grade}</b>\n\nYour challenge-bonus multiplier now compares against Grade {grade}."
-        else:
-            msg = f"✅ <b>Academic Level Registered: Grade {grade}</b>\n\nYour profile is complete."
-
+        msg = f"✅ <b>Academic Level Registered: Grade {grade}</b>\n\nYour profile is complete." if not previous_grade else \
+              f"✅ <b>Grade Updated:</b> {previous_grade} → <b>{grade}</b>\n\nYour challenge-bonus multiplier now compares against Grade {grade}."
         confirm_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 CHANGE GRADE AGAIN", callback_data="reselect_grade_panel|0")],
             [InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")]
@@ -140,7 +163,22 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=msg, reply_markup=confirm_kb)
         return
 
-    # --- SIMPLIFIED UNIFIED PROFILE PORTAL CALLBACK FLOWS ---
+    elif action == "confirm_grade":
+        grade = int(d_id)
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        previous_grade = profile.get("grade") if profile else None
+        await asyncio.to_thread(db_set_user_grade, query.from_user.id, grade)
+        await query.answer(f"Grade {grade} registered!")
+        confirm_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 CHANGE GRADE AGAIN", callback_data="reselect_grade_panel|0")],
+            [InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")]
+        ])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"✅ <b>Grade Updated:</b> {previous_grade} → <b>{grade}</b>",
+            reply_markup=confirm_kb
+        )
+        return
 
     elif action == "privacy_menu":
         await query.answer()
@@ -278,6 +316,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "Only matters if you're not on a school team — it powers the 🌆 City leaderboard for solo scholars.\n\n"
             "Please type the city you're studying in:\n"
             "<i>(Example: Addis Ababa)</i>",
+            + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -285,9 +324,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "view_org":
         await query.answer()
-        org_id = int(d_id)
-        
-        # Pull team details from DB
+        parts = d_id.split(":")
+        org_id = int(parts[0])
+        sort_field = parts[1] if len(parts) > 1 else "score"
+        sort_dir = parts[2] if len(parts) > 2 else "desc"
+
         conn = engine.get_db_connection()
         org_details = None
         try:
@@ -296,40 +337,74 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 org_details = cur.fetchone()
         finally:
             engine.release_connection(conn)
-            
+
         if not org_details:
             await query.edit_message_text("⚠️ Organization not found.", reply_markup=return_kb)
             return
-            
+
         roster = await asyncio.to_thread(db_get_organization_roster, org_id)
-        text = build_organization_card_text(org_details, roster)
-        
-        # Find user's role in this specific organization
+        text = build_organization_card_text(org_details, roster, sort_field, sort_dir)
+
         user_membership = next((m for m in roster if int(m['user_id']) == int(user_id)), None)
         user_role = user_membership.get("org_role") if user_membership else "member"
-        
-        buttons = [
-            [InlineKeyboardButton("📋 MEMBERS & REQUESTS", callback_data=f"org_history|{org_id}")],
-            [InlineKeyboardButton("🚪 LEAVE School TEAM", callback_data=f"leave_org_warn|{org_id}")]
-        ]
+        is_admin_here = user_role in ("creator", "admin")
+
+        def _sort_btn(field, label):
+            nxt = "asc" if (sort_field == field and sort_dir == "desc") else "desc"
+            arrow = ("↑" if nxt == "asc" else "↓") if sort_field == field else ""
+            return InlineKeyboardButton(f"{label} {arrow}".strip(), callback_data=f"view_org|{org_id}:{field}:{nxt}")
+
+        buttons = [[_sort_btn("score", "🏆"), _sort_btn("name", "🔤"), _sort_btn("date", "📅")]]
+        if is_admin_here:
+            buttons.append([InlineKeyboardButton("📋 MEMBERS & REQUESTS", callback_data=f"org_history|{org_id}")])
+        buttons.append([InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_warn|{org_id}")])
         if user_role == "creator":
-            buttons.append([InlineKeyboardButton("💥 DISSOLVE School TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
-        buttons.append([InlineKeyboardButton("🔗 GET TEAM INVITE LINK", callback_data=f"team_invite|{org_id}")])
+            buttons.append([InlineKeyboardButton("💥 DISSOLVE TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
+        buttons.append([InlineKeyboardButton("🔗 INVITE LINK", callback_data=f"team_invite|{org_id}")])
         buttons.append([
-            InlineKeyboardButton("🔙 TEAM LIST", callback_data="alliance_portal|0"),
+            InlineKeyboardButton("🔙 TEAMS", callback_data="alliance_portal|0"),
             InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")
         ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
+
     elif action == "leave_org_warn":
         await query.answer()
         org_id = int(d_id)
-        warn_text = "⚠️ <b>Leave this Study Alliance?</b>\n\nYour personal score is never affected, but you'll stop counting toward this team's total."
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if profile.get("org_role") == "creator":
+            warn_text = (
+                "👑 <b>You're the Creator — Leaving Needs a Handoff</b>\n\n"
+                "A team can't be left without an owner. If you leave, control will "
+                "automatically pass to your longest-standing admin (or member, if there's "
+                "no admin yet) so the team keeps running. This can't be undone."
+            )
+        else:
+            warn_text = "⚠️ <b>Leave this Study Alliance?</b>\n\nYour personal score is never affected, but you'll stop counting toward this team's total."
         warn_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_confirm|{org_id}")],
             [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
         ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=warn_text, reply_markup=warn_kb)
+        return
+
+    elif action == "leave_org_confirm":
+        await query.answer()
+        org_id = int(d_id)
+        result = await asyncio.to_thread(db_leave_organization, user_id, org_id)
+        if result and result.get("was_creator") and result.get("promoted_id"):
+            try:
+                await context.bot.send_message(
+                    chat_id=int(result["promoted_id"]),
+                    text="👑 <b>You're now the Creator of your Study Alliance!</b>\n\nThe previous creator left, and you were promoted automatically. Manage the roster from /profile → 🏫 MY TEAM.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            msg = "🚪 You left the team. Since you were the creator, leadership was automatically handed to your longest-standing admin/member."
+        else:
+            msg = "🚪 You successfully exited the school team. Alliance points reset."
+        await query.edit_message_text(msg, reply_markup=return_kb, parse_mode="HTML")
         return
 
     elif action == "dissolve_org_warn":
@@ -359,6 +434,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "⚠️ <b>Simple Rules:</b>\n"
             "├─ Max 20 characters\n"
             "└─ Spaces and underscores allowed",
+            + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -377,6 +453,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Please type the full formal name of your school or study academy team:\n"
             "<i>(Example: Abyssinia Academy)</i>",
+            + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
@@ -395,17 +472,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Please enter the short, uppercase Code Tag of the school team you want to join:\n"
             "<i>(Example: ABYSSINIA)</i>",
+            + FSM_INPUT_HINT,
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
         return
 
-    elif action == "leave_org_confirm":
-        await query.answer()
-        org_id = int(d_id)
-        await asyncio.to_thread(db_leave_organization, user_id, org_id)
-        await query.edit_message_text("🚪 You successfully exited the school team. Alliance points reset.", reply_markup=return_kb)
-        return
+    
 
     elif action == "dissolve_org_confirm":
         await query.answer()
@@ -419,38 +492,34 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Dashboard closed.")
         await query.delete_message()
         return
+    
     elif action == "menu_leaderboard":
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         if not profile or not profile.get("grade"):
             await query.answer("Please set your grade first via /start.", show_alert=True)
             return
-        from src.database import db_get_weekly_leaderboard
-        from src.rendering.html_views import format_public_name
-        from src.rendering import get_grade_mastery_title
-        grade = profile['grade']
-        user_marks = profile['total_marks']
-        mastery = get_grade_mastery_title(user_marks)
-        weekly_top = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
-        lines = [
-            f"🏆 <b>GRADE {grade} WEEKLY LEADERBOARD</b> 🏆\n",
-            f"🏅 <b>Your Rank Status:</b>",
-            f"├─ Display Handle: <b>{format_public_name(profile)}</b>",
-            f"├─ Mastery Level: <b>{mastery}</b>",
-            f"├─ Practice Score: <b>{user_marks} Marks</b>",
-            f"├─ Daily Streak: <b>🔥 {profile.get('current_streak', 0)} Days</b>",
-            f"└─ Accuracy: <b>{int((profile['correct']/profile['total'])*100) if profile['total'] > 0 else 0}%</b>\n",
-            "━━━━━━━━━━━━━━━━━━━━━━━━",
-            "🔥 <b>TOP 10 THIS WEEK:</b>"
-        ]
-        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-        for i, row in enumerate(weekly_top):
-            lines.append(f" {medals[i]} {format_public_name(row)} — <b>{row['total_score']} Marks</b>")
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
-            InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
-        ]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="\n".join(lines), reply_markup=kb)
+        rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
+        text = build_leaderboard_text("grade", rows, profile)
+        kb = build_leaderboard_keyboard("grade")
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "lb_filter":
+        await query.answer()
+        scope = d_id
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if scope == "grade":
+            rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile.get('grade')) if profile and profile.get('grade') else []
+        elif scope == "school":
+            rows = await asyncio.to_thread(db_get_alliance_leaderboard)
+        elif scope == "city":
+            rows = await asyncio.to_thread(db_get_city_leaderboard)
+        else:
+            rows = await asyncio.to_thread(db_get_country_leaderboard)
+        text = build_leaderboard_text(scope, rows, profile)
+        kb = build_leaderboard_keyboard(scope)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
     elif action == "menu_invite":
@@ -463,13 +532,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0"),
             InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")
         ]])
-        await edit_rich_message_safe(
+       await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=(
                 "🤝 <b>INVITE FRIENDS, EARN BONUS MARKS!</b>\n\n"
                 "Share your link. When a friend joins and answers correctly, you get "
                 "<b>+1 Mark</b> per correct answer — and a smaller share two levels deep too.\n\n"
-                f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>"
+                f"🔗 <b>Your link:</b>\n<code>{invite_link}</code>\n\n"
+                f"👆 <i>Tap the link above — Telegram copies it straight to your clipboard.</i>"
             ),
             reply_markup=kb
         )
@@ -561,16 +631,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         USER_PAYLOADS[user_id] = {"category": category, "edit_mid": query.message.message_id}
         label = FEEDBACK_CATEGORIES.get(category, category)
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_cancel|0")],
+            [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
             [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
         ])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=f"{label}\n\n✍ Describe it in your own words — as much detail helps:",
+            html_content=(
+                f"{label}\n\n"
+                f"✍️ Describe it in your own words — as much detail helps.\n\n"
+                f"📝 <i>Type your message in the box below, then tap send.</i>"
+            ),
             reply_markup=kb
         )
         return
-
     elif action == "fb_cancel":
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
@@ -646,7 +719,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         USER_PAYLOADS[user_id] = {"fb_id": fb_id, "target_user_id": fb['user_id'], "return_state": return_state, "edit_mid": query.message.message_id}
         thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data=f"fb_item|{fb_id}|{return_state or 'all:all:0'}")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"💬 <b>Type your reply:</b>\n\n{build_feedback_thread_text(fb, thread)}", reply_markup=kb)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"💬 <b>Type your reply:</b>\n\n{build_feedback_thread_text(fb, thread)}",
+         reply_markup=kb)
         return
 
     elif action == "fb_browse":
@@ -760,6 +834,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "fb_menu":
         await query.answer()
+        USER_STATES[user_id] = "IDLE"
+        USER_PAYLOADS.pop(user_id, None)
         from src.rendering.html_views import build_feedback_menu_text
         buttons = [[InlineKeyboardButton(label, callback_data=f"fb_cat|{key}")] for key, label in FEEDBACK_CATEGORIES.items()]
         buttons.append([InlineKeyboardButton("📋 MY FEEDBACK & REQUESTS", callback_data="my_feedback|0")])
@@ -833,7 +909,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
             [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
         ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text,+ FSM_INPUT_HINT, reply_markup=kb)
         return
 
     elif action == "fb_user_reply":
@@ -895,8 +971,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
 
     elif action == "org_history":
-        await query.answer()
         org_id = int(d_id)
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if profile.get("org_role") not in ("creator", "admin") or int(profile.get("org_id") or 0) != org_id:
+            await query.answer("Only team admins can view this.", show_alert=True)
+            return
+        await query.answer()
+
         conn = engine.get_db_connection()
         try:
             with conn.cursor() as cur:
@@ -907,12 +988,75 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         if not org_details:
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Team not found.", reply_markup=return_kb)
             return
+
         from src.database import db_get_org_membership_log
         from src.rendering.html_views import build_org_history_text
         log_rows = await asyncio.to_thread(db_get_org_membership_log, org_id)
         text = build_org_history_text(org_details, log_rows)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+
+        pending_rows = [r for r in log_rows if r['org_role'] == 'pending']
+        kb_rows = []
+        for r in pending_rows[:8]:
+            nm_short = format_public_name(r)[:16]
+            kb_rows.append([
+                InlineKeyboardButton(f"🟢 {nm_short}", callback_data=f"process_req|{org_id}|{r['user_id']}|1"),
+                InlineKeyboardButton("🔴 Reject", callback_data=f"process_req|{org_id}|{r['user_id']}|0")
+            ])
+        kb_rows.append([InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(kb_rows))
+        return
+
+    elif action == "process_req":
+        org_id, target_user_id, decision = int(d_id), data[2], data[3]
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if profile.get("org_role") not in ("creator", "admin") or int(profile.get("org_id") or 0) != org_id:
+            await query.answer("Only team admins can process requests.", show_alert=True)
+            return
+
+        approve = (decision == "1")
+        ok = await asyncio.to_thread(db_approve_member_request, target_user_id, org_id, approve)
+        await query.answer("Approved!" if approve else "Rejected.")
+
+        conn = engine.get_db_connection()
+        org_name = "your team"
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT org_name FROM organizations WHERE org_id = %s;", (org_id,))
+                row = cur.fetchone()
+                if row:
+                    org_name = row['org_name']
+        finally:
+            engine.release_connection(conn)
+
+        try:
+            status_line = f"\n\n{'✅ Approved' if approve else '🚫 Rejected'} — this request is now closed."
+            old_text = (query.message.text or query.message.caption or "") + status_line
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=None)
+        except Exception:
+            pass
+
+        if ok and approve:
+            join_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏫 GO TO TEAM", callback_data=f"view_org|{org_id}")],
+                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+            ])
+            try:
+                await context.bot.send_message(
+                    chat_id=int(target_user_id),
+                    text=f"✅ <b>You're in!</b>\n\nYour request to join <b>{html.escape(org_name)}</b> was approved. Every correct answer now also scores for your team!",
+                    parse_mode="HTML", reply_markup=join_kb
+                )
+            except Exception:
+                pass
+        elif ok and not approve:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(target_user_id),
+                    text=f"Your request to join <b>{html.escape(org_name)}</b> wasn't accepted this time. You're welcome to try another team.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
         return
 
     elif action == "my_answers_menu":
