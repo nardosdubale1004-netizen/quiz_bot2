@@ -960,7 +960,7 @@ async def leaderboard_command(update: Update, context):
 
     rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
     text = build_leaderboard_text("grade", rows, profile)
-    kb = build_leaderboard_keyboard("grade")
+    kb = build_leaderboard_keyboard("grade", profile['grade'])
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 
 async def invite_command(update: Update, context):
@@ -1280,7 +1280,7 @@ async def handle_fsm_message(update: Update, context):
 
             old_line = f"<b>{old_nick}</b>" if old_nick else "<i>none set</i>"
             confirm_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ CONFIRM CHANGE", callback_data="confirm_nick|1"),
+                [InlineKeyboardButton("✅ CONFIRM", callback_data="confirm_nick|1"),
                  InlineKeyboardButton("❌ CANCEL", callback_data="confirm_nick|0")]
             ])
             await _fsm_advance(
@@ -1347,9 +1347,9 @@ async def handle_fsm_message(update: Update, context):
                     await _regloc_finish(context, update.message.chat_id, edit_mid, user_id, school_msg=f"✅ Created and joined <b>{org_name}</b>!")
                 except Exception as e:
                     if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                        await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Error: <code>#{clean_tag}</code> is already taken. Enter a unique tag:", cancel_kb)
+                        await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ <code>#{clean_tag}</code> taken. Enter unique tag:", cancel_kb)
                     else:
-                        await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed due to a database exception.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
+                        await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed.", cancel_kb)
                 return
 
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
@@ -1587,7 +1587,7 @@ async def handle_fsm_message(update: Update, context):
         elif state == "AWAITING_REGLOC_CITY_TEXT":
             clean_city = re.sub(r'[^\w\s\-,]', '', text_input)[:60].strip().title()
             if not clean_city:
-                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid city/state name.\n\n<i>Try again.</i>", None)
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid name. Try again.", None)
                 return
             USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = clean_city
             USER_STATES[user_id] = "IDLE"
@@ -1601,13 +1601,13 @@ async def handle_fsm_message(update: Update, context):
             results = await asyncio.to_thread(db_search_schools, text_input, session.get("reg_city"), session.get("reg_country"), 8)
             USER_STATES[user_id] = "IDLE"
             if results:
-                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🏫 <b>Results for '{html.escape(text_input)}':</b>", _build_school_kb(results))
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🏫 <b>Results:</b>", _build_school_kb(results))
             else:
                 no_match_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✨ CREATE NEW SCHOOL", callback_data="regloc_school_create|0")],
-                    [InlineKeyboardButton("⏭ SKIP / NO SCHOOL", callback_data="regloc_school_skip|0")]
+                    [InlineKeyboardButton("✨ CREATE NEW", callback_data="regloc_school_create|0")],
+                    [InlineKeyboardButton("⏭ SKIP", callback_data="regloc_school_skip|0")]
                 ])
-                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🔍 No matches for '{html.escape(text_input)}'.", no_match_kb)
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "🔍 No matches.", no_match_kb)
 
     except Exception:
         traceback.print_exc()

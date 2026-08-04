@@ -81,18 +81,8 @@ class UIFactory(metaclass=UIFactoryMeta):
         repeat_badge = ""
         times_shown = q.get("times_shown") or 0
         if times_shown > 0:
-            first_dt = q.get("first_shown_at")
-            first_str = ""
-            if first_dt:
-                try:
-                    first_str = first_dt.strftime("%b %d, %Y")
-                except AttributeError:
-                    first_str = str(first_dt)[:10]
-            seen_label = f"Seen {times_shown + 1}× total"
-            first_label = f" · first asked {first_str}" if first_str else ""
             repeat_badge = (
-                f"\n<blockquote>🔁 <b>{seen_label}</b>{first_label} — "
-                f"didn't get to it last time? Here's another shot!</blockquote>"
+                f"\n<blockquote>🔁 <b>Repeat question</b> — good chance for another try.</blockquote>"
             )
 
         hashtag_list = [cls.sanitize_tag_to_hashtag(t) for t in q.get('tags', [])]

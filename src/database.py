@@ -14,6 +14,7 @@ import traceback
 from src.config import CONFIG, Style
 from src.perf import timed_sync
 from src.cache import track_question_cache
+from src.geo import get_timezone_for_country
 import asyncio as _asyncio
 from src.cache import TTLCache
 user_profile_cache = TTLCache(default_ttl=8.0)
@@ -1802,10 +1803,7 @@ def db_update_tournament_meta_field(key: str, value):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-# --- MANY-TO-MANY ROSTER RELATION ENGINE ---
-
 def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School", is_public: bool = True, city: str = "Addis Ababa", country: str = "Ethiopia") -> int:
-    """Inserts a new school or academy mapping and returns its assigned org_id."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -1815,19 +1813,16 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
                 VALUES (%s, UPPER(%s), %s, %s, %s, %s, %s, %s)
                 RETURNING org_id;
             """, (org_name, org_tag, str(creator_id), org_type, is_public, city, country, secrets.token_hex(16)))
-            row = cur.fetchone()
-            org_id = row['org_id']
-            
-            # Map dynamic relational membership to joining table
+            org_id = cur.fetchone()['org_id']
+
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
                 VALUES (%s, %s, 'creator')
                 ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
             """, (str(creator_id), org_id))
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
-            )
+
+            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(creator_id)))
+
             conn.commit()
             return org_id
     except Exception as e:
@@ -1838,16 +1833,17 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
 def db_join_organization(user_id, org_tag: str) -> dict:
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE org_tag = UPPER(%s);", (org_tag.strip(),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_tag = UPPER(%s);", (org_tag.strip(),))
             row = cur.fetchone()
             if not row:
                 return None
-            org_id, org_name, is_public, creator_id = row['org_id'], row['org_name'], row['is_public'], row['creator_id']
+            org_id, org_name, is_public, creator_id, country = row['org_id'], row['org_name'], row['is_public'], row['creator_id'], row['country']
 
             cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
             existing = cur.fetchone()
@@ -1864,15 +1860,7 @@ def db_join_organization(user_id, org_tag: str) -> dict:
                     org_role = EXCLUDED.org_role, joined_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), org_id, role))
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
-            )
-            from src.geo import get_timezone_for_country
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
-            )
+            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
             conn.commit()
             return {"org_id": org_id, "org_name": org_name, "role_assigned": role, "creator_id": creator_id}
     except Exception as e:
@@ -1889,7 +1877,7 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE org_id = %s;", (int(org_id),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_id = %s;", (int(org_id),))
             row = cur.fetchone()
             if not row:
                 return None
@@ -1909,20 +1897,7 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
                     org_role = EXCLUDED.org_role, joined_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), int(org_id), role))
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
-            )
-            from src.geo import get_timezone_for_country
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
-            )
-            from src.geo import get_timezone_for_country
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
-            )
+            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
     except Exception as e:
@@ -1939,7 +1914,7 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id FROM organizations WHERE join_token = %s;", (join_token,))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE join_token = %s;", (join_token,))
             row = cur.fetchone()
             if not row:
                 return None
@@ -1959,16 +1934,7 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
                     org_role = EXCLUDED.org_role, joined_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), row["org_id"], role))
-
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (__import__("src.geo", fromlist=["get_timezone_for_country"]).get_timezone_for_country(country), str(creator_id))
-            )
-            from src.geo import get_timezone_for_country
-            cur.execute(
-                "UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
-                (get_timezone_for_country(row["country"] if "country" in row else row.get("country")), str(user_id))
-            )
+            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
     except Exception as e:
@@ -1978,6 +1944,7 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
 def db_leave_organization(user_id, org_id: int):
     """Removes a member. If the creator leaves, the longest-standing admin (or, if none,
     the longest-standing member) is automatically promoted — a team can never be left
@@ -2123,6 +2090,24 @@ def db_get_org_membership_log(org_id: int, limit: int = 40):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_user_org_role(user_id, org_id: int):
+    """Role check scoped to ONE specific org — the old code read role from the user's
+    generic profile (which grabs an arbitrary org via LIMIT 1 if they're in multiple
+    teams), so admins of team B could get denied access when it returned their role
+    from team A instead. This queries the exact membership row."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            row = cur.fetchone()
+            return row['org_role'] if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user org role: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_user_subjects_summary(user_id):
     """Subject picker for /myanswers: total questions vs. how many this user answered."""
@@ -2526,25 +2511,7 @@ def db_update_user_location(user_id, city: str, country: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_get_user_timezone(user_id) -> str:
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT timezone FROM user_stats WHERE user_id = %s;", (str(user_id),))
-            row = cur.fetchone()
-            return row['timezone'] if row and row.get('timezone') else "UTC"
-    except Exception as e:
-        print(f"[DB ERROR] Failed to fetch user timezone: {e}", flush=True)
-        return "UTC"
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-
 def db_get_cities_for_country(country: str):
-    """Distinct cities already registered (personal profiles or teams) within a country —
-    powers the city picker so users select instead of misspelling a free-text entry."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -2567,10 +2534,7 @@ def db_get_cities_for_country(country: str):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 def db_search_schools(query: str = None, city: str = None, country: str = None, limit: int = 8):
-    """Searches registered schools (organizations), optionally scoped to city/country — powers
-    the school picker so a student selects an existing team instead of retyping/misspelling it."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -2602,6 +2566,21 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
+def db_get_user_timezone(user_id) -> str:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT timezone FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            return row['timezone'] if row and row.get('timezone') else "UTC"
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user timezone: {e}", flush=True)
+        return "UTC"
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
 def db_set_user_referrer(user_id, referrer_id):
     """
@@ -3397,6 +3376,123 @@ def db_get_org_admin_ids(org_id: int):
             return [r['user_id'] for r in cur.fetchall()]
     except Exception as e:
         print(f"[DB-ORG-ERROR] Fetch admin ids failed: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_active_grades():
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT grade FROM user_stats WHERE grade IS NOT NULL ORDER BY grade ASC;")
+            return [r['grade'] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch active grades: {e}", flush=True)
+        return [6, 8, 10, 12]
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_active_countries():
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT COALESCE(o.country, u.personal_country) AS country
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
+                ORDER BY country ASC
+                LIMIT 40;
+            """)
+            return [r['country'] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch active countries: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_active_cities(country: str = None):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if country:
+                cur.execute("""
+                    SELECT DISTINCT COALESCE(o.city, u.personal_city) AS city
+                    FROM user_stats u
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                    LEFT JOIN organizations o ON m.org_id = o.org_id
+                    WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                    ORDER BY city ASC
+                    LIMIT 40;
+                """, (country,))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT COALESCE(o.city, u.personal_city) AS city
+                    FROM user_stats u
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                    LEFT JOIN organizations o ON m.org_id = o.org_id
+                    WHERE COALESCE(o.city, u.personal_city) IS NOT NULL
+                    ORDER BY city ASC
+                    LIMIT 40;
+                """)
+            return [r['city'] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch active cities: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_top_users_by_city(city: str, limit: int = 10):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.city, u.personal_city) = %s
+                ORDER BY u.total_marks DESC
+                LIMIT %s;
+            """, (city, limit))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch top users by city: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_top_users_by_country(country: str, limit: int = 10):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.country, u.personal_country) = %s
+                ORDER BY u.total_marks DESC
+                LIMIT %s;
+            """, (country, limit))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch top users by country: {e}", flush=True)
         return []
     finally:
         if conn:

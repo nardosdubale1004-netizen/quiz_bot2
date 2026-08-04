@@ -609,8 +609,8 @@ def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeybo
         [InlineKeyboardButton(consent_label, callback_data=f"toggle_consent|{consent_target}")],
         [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
          InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
-        [InlineKeyboardButton("📍 COUNTRY / CITY / SCHOOL", callback_data="regloc_start|0")],
-        [InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")]
+        [InlineKeyboardButton("📍 LOCATION", callback_data="regloc_start|0")],
+        [InlineKeyboardButton("🔙 PROFILE", callback_data="privacy_menu|0")]
     ])
 
 def build_alliance_info_text() -> str:
@@ -884,7 +884,6 @@ HELP_TOPICS = {
 def build_help_menu_text() -> str:
     return "<b>🎓 QUIZ MASTER PRO — HELP</b>\nPick a topic below 👇"
 
-
 def build_help_menu_keyboard() -> InlineKeyboardMarkup:
     keys = list(HELP_TOPICS.keys())
     rows = []
@@ -899,21 +898,22 @@ def build_help_menu_keyboard() -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(rows)
 
-
 def build_help_topic_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 BACK TO HELP", callback_data="help_menu|0")],
         [InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")]
     ])
 
-def build_leaderboard_text(scope: str, rows: list, profile: dict = None) -> str:
+def build_leaderboard_text(scope: str, rows: list, profile: dict = None, label_override: str = None) -> str:
     scope_labels = {
-        "grade": f"🎒 Grade {profile.get('grade') if profile else '—'}",
-        "country": "🌍 Country", "city": "🌆 City", "school": "🏫 School Teams",
+        "grade": f"🎒 Grade {label_override or (profile.get('grade') if profile else '—')}",
+        "country": f"🌍 {label_override}" if label_override else "🌍 Countries (Top)",
+        "city": f"🌆 {label_override}" if label_override else "🌆 Cities (Top)",
+        "school": "🏫 School Teams",
     }
-    lines = [f"<h2>🏆 {scope_labels.get(scope, 'Leaderboard')} — This Week</h2>"]
+    lines = [f"<h2>🏆 {scope_labels.get(scope, 'Leaderboard')}</h2>"]
 
-    if profile and scope == "grade":
+    if profile and scope == "grade" and not label_override:
         mastery = get_grade_mastery_title(profile.get("total_marks", 0))
         acc = int((profile['correct']/profile['total'])*100) if profile.get('total') else 0
         lines.append(
@@ -932,29 +932,46 @@ def build_leaderboard_text(scope: str, rows: list, profile: dict = None) -> str:
         rank = medals[i] if i < 3 else str(i + 1)
         if scope == "school":
             nm, score = f"#{r['alliance_tag']}", r['total_score']
+        elif label_override and scope in ("city", "country"):
+            nm, score = format_public_name(r), r.get('total_marks', 0)
         else:
             nm, score = format_public_name(r), r.get('total_score', r.get('total_marks', 0))
         table_rows.append(f"<tr><td>{rank}</td><td>{html.escape(nm)}</td><td>{score}</td></tr>")
     lines.append("<table>" + "".join(table_rows) + "</table>")
     return "\n".join(lines)
 
-
-def build_leaderboard_keyboard(scope: str) -> InlineKeyboardMarkup:
+def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKeyboardMarkup:
     def _b(key, label):
         return InlineKeyboardButton(f"{'• ' if scope == key else ''}{label}", callback_data=f"lb_filter|{key}")
-    return InlineKeyboardMarkup([
-        [_b("grade", "🎒 Grade"), _b("school", "🏫 School")],
-        [_b("city", "🌆 City"), _b("country", "🌍 Country")],
-        [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
-         InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
-    ])
+    rows = [
+        [_b("grade", "🎒 GRADE"), _b("school", "🏫 SCHOOL")],
+        [_b("city", "🌆 CITY"), _b("country", "🌍 COUNTRY")],
+    ]
+    if scope == "grade":
+        grade_row = [
+            InlineKeyboardButton(f"{'• ' if active_grade == g else ''}{g}", callback_data=f"lb_grade|{g}")
+            for g in (6, 8, 10, 12)
+        ]
+        rows.append(grade_row)
+    rows.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
+                 InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
+    return InlineKeyboardMarkup(rows)
 
+def build_geo_picker_keyboard(items: list, scope: str) -> InlineKeyboardMarkup:
+    """Buttons to pick a specific city/country to see its leaderboard, 2 per row."""
+    rows, row = [], []
+    for name in items[:20]:
+        row.append(InlineKeyboardButton(name, callback_data=f"lb_{scope}_pick|{name}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("🔙 LEADERBOARD", callback_data="menu_leaderboard|0")])
+    return InlineKeyboardMarkup(rows)
 
 def build_help_topic_text(key: str) -> str:
     topic = HELP_TOPICS.get(key)
     return topic[1] if topic else "⚠️ Topic not found."
-
-
 
 def build_feedback_stats_text(stats: dict) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
@@ -1163,7 +1180,7 @@ def build_feedback_thread_text(fb: dict, thread: list, viewer_tz: str = "UTC") -
         f"<hr/>\n\n"
         f"{conversation}"
     )
-    
+
 
 def build_welcome_message_text() -> str:
     """The channel's pinned welcome/intro card — marketing tone, not technical.
@@ -1368,3 +1385,5 @@ def build_admin_questions_keyboard(subject: str, status_filter: str, offset: int
         rows.append(nav)
     rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
     return InlineKeyboardMarkup(rows)
+
+

@@ -41,6 +41,8 @@ from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message
 from src.rendering.html_views import format_public_name, build_champions_podium_html, build_round_completion_text, build_tournament_announcement_text, build_tournament_leaderboard_text
 
 _ACTIVE_COUNTDOWNS = {}
+_LAUNCH_FAIL_COUNTS = {}
+_MAX_LAUNCH_RETRIES = 3
 _FINALIZING_ROUNDS = set()
 _LAST_COUNTDOWN_TEXT = {}
 _LAST_WELCOME_RECONCILE = 0.0
@@ -428,7 +430,7 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
             normal_close_text = build_round_completion_text(
                 last_seq, total_users, accuracy_pct, podium_lines, alliance_lines,
                 round_number=current_round, total_rounds=total_rounds
-            ) + "\n\n" + tourney_board_text
+            )
 
             if ann_mid:
                 await _unpin_safe(app.bot, engine.config['channel'], ann_mid)
@@ -534,15 +536,13 @@ async def finalize_tournament_round(app, engine: QuizEngine, track: dict, interr
 
                     podium_meta = (queue.get('tournament_meta') or {}) if queue else {}
                     final_completed_text = build_champions_podium_html(podium_meta, ind_val, ind_score, sch_val, city_val, cnt_val)
-                    full_tourney_board = await asyncio.to_thread(db_get_tournament_leaderboard, run_id, 10)
-                    final_completed_text += "\n\n" + build_tournament_leaderboard_text(full_tourney_board, total_rounds, total_rounds)
 
                     bot_username = CONFIG.get("bot_username")
                     champ_kb = None
                     if bot_username and run_id:
                         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                         champ_kb = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("💬 VIEW FULL RESULTS IN DM", url=f"https://t.me/{bot_username}?start=tourney_{run_id}")
+                            InlineKeyboardButton("💬 FULL RESULTS IN DM", url=f"https://t.me/{bot_username}?start=tourney_{run_id}")
                         ]])
                     old_champions_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
                     if old_champions_mid:
@@ -851,6 +851,26 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                             except Exception as launch_err:
                                 dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
 
+                                fail_count = _LAUNCH_FAIL_COUNTS.get(next_qid, 0) + 1
+                                _LAUNCH_FAIL_COUNTS[next_qid] = fail_count
+
+                                if fail_count >= _MAX_LAUNCH_RETRIES:
+                                    dlog(f"[DEBUG-WATCHER-SKIP] q_id={next_qid} failed {fail_count}x. Skipping it — NOT re-queued.")
+                                    try:
+                                        await app.bot.send_message(
+                                            chat_id=engine.config['channel'],
+                                            text=(
+                                                f"⚠️ <b>Skipped question in round {current_round}/{total_rounds}</b>\n"
+                                                f"Question <code>{next_qid}</code> failed to launch {fail_count}× "
+                                                f"(<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>) "
+                                                f"and was skipped. Check its content for malformed formatting."
+                                            ),
+                                            parse_mode="HTML"
+                                        )
+                                    except Exception:
+                                        pass
+                                    continue
+
                                 rollback_conn = None
                                 try:
                                     dlog(f"[DEBUG-WATCHER-ROLLBACK] Attempting database queue recovery for popped question ID: {next_qid}")
@@ -866,21 +886,21 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                                                 rem.insert(0, next_qid)
                                             cur.execute("UPDATE tournament_queue SET remaining_ids = %s, last_seq = %s WHERE id = 1;", (Json(rem), row['last_seq'] - 1))
                                             rollback_conn.commit()
-                                            dlog(f"[DEBUG-WATCHER-ROLLBACK] Recovery confirmed! Successfully restored {next_qid} to queue. New remaining: {rem}")
+                                            dlog(f"[DEBUG-WATCHER-ROLLBACK] Recovery confirmed! Restored {next_qid}. New remaining: {rem}")
                                 except Exception as rollback_err:
                                     dlog_exception("Failed to rollback tournament queue after launch failure", rollback_err)
                                 finally:
                                     if rollback_conn:
                                         GLOBAL_ENGINE.release_connection(rollback_conn)
 
-                                # Surface the failure — this is what made a dropped round
-                                # look like "the question just never showed up".
                                 try:
                                     await app.bot.send_message(
                                         chat_id=engine.config['channel'],
                                         text=(
-                                            f"⚠️ <b>Failed to launch tournament round {current_round}/{total_rounds}.</b>\n"
-                                            f"It's been put back in the queue and will retry shortly."
+                                            f"⚠️ <b>Failed to launch round {current_round}/{total_rounds}</b> "
+                                            f"(attempt {fail_count}/{_MAX_LAUNCH_RETRIES}).\n"
+                                            f"<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>\n"
+                                            f"Retrying shortly."
                                         ),
                                         parse_mode="HTML"
                                     )
