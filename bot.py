@@ -65,6 +65,7 @@ from src.database import (
     db_add_feedback_message,
     db_get_feedback_thread,
     db_get_bot_state,
+    db_get_user_timezone,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
@@ -339,35 +340,57 @@ async def start_command(update: Update, context):
                 print(f"[TRACE-STEP 3] Active tournament round detected. Reading student history...", flush=True)
                 existing_response = await asyncio.to_thread(db_get_user_response, user_id, mid_key)
                 if existing_response:
-                    print(f" └─ Already Answered: User {user_id} has an existing response on file.", flush=True)
-                    lockout_kb = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],
-                        [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
-                    ])
-                    lockout_html = (
-                        f"✅ <b>Already Submitted</b>\n\n"
-                        f"You've already answered REF <code>{display_id}</code> — your original selection is safely saved. "
-                        f"No need to tap again; the full explanation lands here automatically once the round wraps up."
-                    )
-                    existing_pmid = existing_response.get('private_message_id')
-                    if existing_pmid:
-                        try:
-                            await edit_rich_message_safe(
-                                context.bot,
-                                chat_id=update.message.chat_id,
-                                message_id=existing_pmid,
-                                html_content=lockout_html,
-                                reply_markup=lockout_kb
-                            )
-                        except Exception as edit_err:
-                            print(f" └─ [LOCKOUT-EDIT-FALLBACK] Could not edit existing placeholder {existing_pmid}: {edit_err}", flush=True)
-                            m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=lockout_kb)
-                            if m:
-                                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
-                    else:
+                    from src.database import db_is_tournament_round_still_open, db_get_user_edit_stats
+                    still_open = await asyncio.to_thread(db_is_tournament_round_still_open, mid_key)
+                    old_opt = existing_response['selected_option']
+
+                    if not still_open or user_selection == old_opt:
+                        # Round is over, or they re-tapped the SAME option — nothing to change.
+                        letters = ["A", "B", "C", "D", "E"]
+                        lockout_kb = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],
+                            [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+                        ])
+                        lockout_html = (
+                            f"✅ <b>Already Submitted</b>\n\n"
+                            f"You answered <b>{letters[old_opt] if old_opt < len(letters) else '?'}</b> for REF <code>{display_id}</code>. "
+                            + ("The round has ended, so that's your final answer — the full explanation lands here shortly."
+                               if not still_open else
+                               "That's still your saved answer.")
+                        )
                         m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=lockout_html, reply_markup=lockout_kb)
                         if m:
                             await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                        return
+
+                    # Round still open and they picked a DIFFERENT option — offer to change it.
+                    stats = await asyncio.to_thread(db_get_user_edit_stats, user_id)
+                    total_edits = stats.get("answer_edits_total", 0)
+                    hint_line = ""
+                    if total_edits >= 3:
+                        helped_pct = int((stats.get("answer_edits_helped", 0) / total_edits) * 100)
+                        hurt_pct = int((stats.get("answer_edits_hurt", 0) / total_edits) * 100)
+                        hint_line = (
+                            f"\n\n📊 <i>Just for context: changing your mind has helped you {helped_pct}% of the time "
+                            f"and hurt you {hurt_pct}% of the time in the past. What matters now is this question — trust your read on it.</i>"
+                        )
+
+                    letters = ["A", "B", "C", "D", "E"]
+                    confirm_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"✅ CHANGE TO {letters[user_selection]}", callback_data=f"confirm_change|{display_id}|{user_selection}")],
+                        [InlineKeyboardButton("❌ KEEP MY ORIGINAL ANSWER", callback_data=f"cancel_change|{display_id}")]
+                    ])
+                    confirm_html = (
+                        f"🔁 <b>Change your answer?</b>\n\n"
+                        f"You currently have <b>{letters[old_opt]}</b> saved for REF <code>{display_id}</code>. "
+                        f"You just tapped <b>{letters[user_selection]}</b>.\n\n"
+                        f"⏳ <b>This only applies if you confirm before the round timer runs out.</b> "
+                        f"If time runs out before you confirm, your original answer (<b>{letters[old_opt]}</b>) stays locked in."
+                        f"{hint_line}"
+                    )
+                    m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=confirm_html, reply_markup=confirm_kb)
+                    if m:
+                        await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
                     return
 
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
@@ -868,11 +891,20 @@ async def school_command(update: Update, context):
         return
 
     if join_data.get("already_pending"):
+        from src.geo import format_local_time
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        last_req = format_local_time(join_data.get("last_requested_at"), viewer_tz) if join_data.get("last_requested_at") else "recently"
+        resend_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔁 SEND AGAIN", callback_data=f"resend_join|{join_data['org_id']}")],
+            [InlineKeyboardButton("❌ DON'T SEND", callback_data="privacy_menu|0")]
+        ])
         await _open_utility_view(
             context, user_id, update.message.chat_id,
-            f"📥 <b>Request already pending.</b>\n\nYour join request for <b>{join_data['org_name']}</b> "
-            f"(<code>#{tag.upper()}</code>) is still waiting on admin approval.",
-            nav_kb
+            f"📥 <b>Request already pending.</b>\n\n"
+            f"You requested to join <b>{join_data['org_name']}</b> (<code>#{tag.upper()}</code>) "
+            f"{join_data.get('request_count', 1)}× — last on {last_req}. Still waiting on admin approval.\n\n"
+            f"Want to nudge the admins again?",
+            resend_kb
         )
         return
 
@@ -1534,7 +1566,6 @@ async def handle_fsm_message(update: Update, context):
 
             from src.rendering.html_views import build_feedback_thread_text
             from src.callbacks import _build_feedback_detail_keyboard
-            from src.database import db_get_user_timezone
             fb = await asyncio.to_thread(db_get_feedback_by_id, target_fb_id)
             thread = await asyncio.to_thread(db_get_feedback_thread, target_fb_id)
             viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)

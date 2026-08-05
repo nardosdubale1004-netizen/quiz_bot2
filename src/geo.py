@@ -66,6 +66,7 @@ COUNTRY_TZ_MAP = {
     "Vietnam": "Asia/Ho_Chi_Minh", "Yemen": "Asia/Aden", "Zambia": "Africa/Lusaka", "Zimbabwe": "Africa/Harare",
 }
 
+COUNTRY_NAMES = sorted(COUNTRY_TZ_MAP.keys())
 
 def get_timezone_for_country(country: str) -> str:
     return COUNTRY_TZ_MAP.get((country or "").strip(), "UTC")

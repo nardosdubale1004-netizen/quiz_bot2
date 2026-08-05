@@ -64,6 +64,7 @@ DECLARE
     v_referrer_t2 text;
     v_t1_bonus int;
     v_t2_bonus int;
+    v_potential_marks int;
 BEGIN
     SELECT ur.marks_awarded INTO v_existing_marks
       FROM user_responses ur
@@ -98,51 +99,43 @@ BEGIN
             v_streak_mult := 1.0;
         END IF;
 
-        IF p_is_correct THEN
-            SELECT q.difficulty, q.subject, q.tags::text
-              INTO v_difficulty, v_subject, v_q_grade_raw
-              FROM questions q WHERE q.id = p_q_id;
+        SELECT q.difficulty, q.subject, q.tags::text
+          INTO v_difficulty, v_subject, v_q_grade_raw
+          FROM questions q WHERE q.id = p_q_id;
 
-            v_base_marks := CASE lower(COALESCE(v_difficulty, 'medium'))
-                WHEN 'easy' THEN 3
-                WHEN 'weak' THEN 3
-                WHEN 'hard' THEN 12
-                ELSE 6
-            END;
+        v_base_marks := CASE lower(COALESCE(v_difficulty, 'medium'))
+            WHEN 'easy' THEN 3
+            WHEN 'weak' THEN 3
+            WHEN 'hard' THEN 12
+            ELSE 6
+        END;
 
-            SELECT st.sent_at INTO v_sent_at FROM sent_tracks st WHERE st.message_id = p_message_id;
-            v_seconds_since_sent := EXTRACT(EPOCH FROM (NOW() - COALESCE(v_sent_at, NOW())));
+        SELECT st.sent_at INTO v_sent_at FROM sent_tracks st WHERE st.message_id = p_message_id;
+        v_seconds_since_sent := EXTRACT(EPOCH FROM (NOW() - COALESCE(v_sent_at, NOW())));
 
-            IF v_seconds_since_sent <= 60 THEN
-                v_speed_mult := 1.5; v_speed_tier := 'lightning';
-            ELSIF v_seconds_since_sent <= 300 THEN
-                v_speed_mult := 1.2; v_speed_tier := 'fast';
-            ELSE
-                v_speed_mult := 1.0; v_speed_tier := 'standard';
-            END IF;
-
-            IF v_q_grade_raw LIKE '%grade6%' THEN v_question_grade := 6;
-            ELSIF v_q_grade_raw LIKE '%grade8%' THEN v_question_grade := 8;
-            ELSIF v_q_grade_raw LIKE '%grade10%' THEN v_question_grade := 10;
-            ELSIF v_q_grade_raw LIKE '%grade12%' THEN v_question_grade := 12;
-            ELSE v_question_grade := COALESCE(v_user_grade, 12);
-            END IF;
-
-            IF v_user_grade IS NULL THEN
-                v_grade_mult := 1.0;
-            ELSIF v_user_grade < v_question_grade THEN
-                v_grade_mult := 1.5;
-            ELSIF v_user_grade > v_question_grade THEN
-                v_grade_mult := 0.3;
-            ELSE
-                v_grade_mult := 1.0;
-            END IF;
-
-            v_marks := GREATEST(1, FLOOR(v_base_marks * v_speed_mult * v_grade_mult * v_streak_mult)::int);
+        IF v_seconds_since_sent <= 60 THEN
+            v_speed_mult := 1.5; v_speed_tier := 'lightning';
+        ELSIF v_seconds_since_sent <= 300 THEN
+            v_speed_mult := 1.2; v_speed_tier := 'fast';
         ELSE
-            v_marks := 0;
-            v_speed_tier := NULL;
+            v_speed_mult := 1.0; v_speed_tier := 'standard';
         END IF;
+
+        IF v_q_grade_raw LIKE '%grade6%' THEN v_question_grade := 6;
+        ELSIF v_q_grade_raw LIKE '%grade8%' THEN v_question_grade := 8;
+        ELSIF v_q_grade_raw LIKE '%grade10%' THEN v_question_grade := 10;
+        ELSIF v_q_grade_raw LIKE '%grade12%' THEN v_question_grade := 12;
+        ELSE v_question_grade := COALESCE(v_user_grade, 12);
+        END IF;
+
+        IF v_user_grade IS NULL THEN v_grade_mult := 1.0;
+        ELSIF v_user_grade < v_question_grade THEN v_grade_mult := 1.5;
+        ELSIF v_user_grade > v_question_grade THEN v_grade_mult := 0.3;
+        ELSE v_grade_mult := 1.0;
+        END IF;
+
+        v_potential_marks := GREATEST(1, FLOOR(v_base_marks * v_speed_mult * v_grade_mult * v_streak_mult)::int);
+        v_marks := CASE WHEN p_is_correct THEN v_potential_marks ELSE 0 END;
 
         BEGIN
             INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
@@ -158,13 +151,13 @@ BEGIN
                 current_streak = v_streak,
                 last_active_at = NOW();
 
-            INSERT INTO user_responses (
+           INSERT INTO user_responses (
                 user_id, message_id, q_id, is_correct, marks_awarded,
-                selected_option, private_message_id, show_derivation, show_perf
+                selected_option, private_message_id, show_derivation, show_perf, potential_marks
             )
             VALUES (
                 p_user_id, p_message_id, p_q_id, p_is_correct, v_marks,
-                p_selected_option, p_private_message_id, p_show_derivation, p_show_perf
+                p_selected_option, p_private_message_id, p_show_derivation, p_show_perf, v_potential_marks
             );
 
             IF p_is_correct AND v_marks > 0 AND v_subject IS NOT NULL THEN
@@ -202,6 +195,68 @@ BEGIN
      WHERE us.user_id = p_user_id;
 END;
 $$ LANGUAGE plpgsql;
+"""
+
+_FN_EDIT_USER_ANSWER_SQL = """
+CREATE OR REPLACE FUNCTION fn_edit_user_answer(
+    p_user_id text, p_message_id text, p_new_option int, p_new_is_correct boolean
+) RETURNS TABLE (o_total_marks int, o_marks_awarded int, o_edit_count int, o_result_flip text) AS $$
+DECLARE
+    v_row RECORD;
+    v_potential int; v_old_marks int; v_new_marks int; v_delta int;
+    v_first_correct boolean; v_flip text;
+    v_referrer_t1 text; v_referrer_t2 text; v_delta_t1 int; v_delta_t2 int;
+BEGIN
+    SELECT * INTO v_row FROM user_responses WHERE user_id = p_user_id AND message_id = p_message_id FOR UPDATE;
+    IF NOT FOUND THEN RETURN; END IF;
+
+    v_potential := COALESCE(v_row.potential_marks, v_row.marks_awarded, 0);
+    v_old_marks := COALESCE(v_row.marks_awarded, 0);
+    v_new_marks := CASE WHEN p_new_is_correct THEN v_potential ELSE 0 END;
+    v_delta := v_new_marks - v_old_marks;
+    v_first_correct := COALESCE(v_row.first_is_correct, v_row.is_correct);
+
+    v_flip := CASE
+        WHEN v_first_correct AND NOT p_new_is_correct THEN 'hurt'
+        WHEN NOT v_first_correct AND p_new_is_correct THEN 'helped'
+        ELSE 'neutral' END;
+
+    UPDATE user_responses SET
+        selected_option = p_new_option, is_correct = p_new_is_correct, marks_awarded = v_new_marks,
+        edit_count = COALESCE(edit_count, 0) + 1,
+        first_selected_option = COALESCE(first_selected_option, v_row.selected_option),
+        first_is_correct = COALESCE(first_is_correct, v_row.is_correct)
+    WHERE user_id = p_user_id AND message_id = p_message_id;
+
+    UPDATE user_stats SET
+        total_marks = COALESCE(total_marks, 0) + v_delta,
+        correct = COALESCE(correct, 0) + (CASE WHEN p_new_is_correct AND NOT v_row.is_correct THEN 1
+                                                WHEN NOT p_new_is_correct AND v_row.is_correct THEN -1 ELSE 0 END),
+        answer_edits_total = COALESCE(answer_edits_total, 0) + 1,
+        answer_edits_helped = COALESCE(answer_edits_helped, 0) + (CASE WHEN v_flip = 'helped' THEN 1 ELSE 0 END),
+        answer_edits_hurt = COALESCE(answer_edits_hurt, 0) + (CASE WHEN v_flip = 'hurt' THEN 1 ELSE 0 END)
+    WHERE user_id = p_user_id;
+
+    IF v_delta != 0 THEN
+        UPDATE user_subject_marks usm SET marks = usm.marks + v_delta
+        FROM questions q WHERE q.id = v_row.q_id AND lower(q.subject) = usm.subject AND usm.user_id = p_user_id;
+    END IF;
+
+    SELECT referred_by INTO v_referrer_t1 FROM user_stats WHERE user_id = p_user_id;
+    IF v_referrer_t1 IS NOT NULL AND v_delta != 0 THEN
+        v_delta_t1 := CEIL(v_delta * 0.05);
+        UPDATE user_stats SET total_marks = COALESCE(total_marks,0) + v_delta_t1 WHERE user_id = v_referrer_t1;
+        SELECT referred_by INTO v_referrer_t2 FROM user_stats WHERE user_id = v_referrer_t1;
+        IF v_referrer_t2 IS NOT NULL THEN
+            v_delta_t2 := CEIL(v_delta * 0.025);
+            UPDATE user_stats SET total_marks = COALESCE(total_marks,0) + v_delta_t2 WHERE user_id = v_referrer_t2;
+        END IF;
+    END IF;
+
+    RETURN QUERY SELECT us.total_marks, v_new_marks, ur.edit_count, v_flip
+        FROM user_stats us JOIN user_responses ur ON ur.user_id = us.user_id
+        WHERE us.user_id = p_user_id AND ur.message_id = p_message_id;
+END; $$ LANGUAGE plpgsql;
 """
 
 class QuizEngine:
@@ -258,6 +313,7 @@ class QuizEngine:
                 cur.execute("DROP FUNCTION IF EXISTS fn_process_user_score(text, text, text, boolean, integer, integer, boolean, boolean);")
 
                 cur.execute(_FN_PROCESS_USER_SCORE_SQL)
+                cur.execute(_FN_EDIT_USER_ANSWER_SQL)
                 conn.commit()
             QuizEngine._fn_ensured = True
             print(f"{Style.GREEN}[DATABASE] fn_process_user_score ensured.{Style.RESET}")
@@ -374,6 +430,13 @@ class QuizEngine:
                     cur.execute("UPDATE user_stats SET referral_token = %s WHERE user_id = %s;", (secrets.token_hex(16), row["user_id"]))
 
                 cur.execute("ALTER TABLE user_responses DROP CONSTRAINT IF EXISTS user_responses_message_id_fkey;")
+                cur.execute("ALTER TABLE user_responses ADD COLUMN IF NOT EXISTS edit_count INT DEFAULT 0;")
+                cur.execute("ALTER TABLE user_responses ADD COLUMN IF NOT EXISTS first_selected_option INT;")
+                cur.execute("ALTER TABLE user_responses ADD COLUMN IF NOT EXISTS first_is_correct BOOLEAN;")
+                cur.execute("ALTER TABLE user_responses ADD COLUMN IF NOT EXISTS potential_marks INT;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS answer_edits_total INT DEFAULT 0;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS answer_edits_helped INT DEFAULT 0;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS answer_edits_hurt INT DEFAULT 0;")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS feedback (
                         id SERIAL PRIMARY KEY,
@@ -408,6 +471,11 @@ class QuizEngine:
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS last_shown_at TIMESTAMPTZ;")
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS times_shown INT DEFAULT 0;")
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS first_shown_at TIMESTAMPTZ;")
+                cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS request_count INT DEFAULT 1;")
+                cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS last_requested_at TIMESTAMPTZ DEFAULT NOW();")
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
+                cur.execute("ALTER TABLE channel_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
+                cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
                 # One-time backfill: earliest send per question becomes its first_shown_at
                 cur.execute("""
                     UPDATE questions q SET first_shown_at = sub.min_sent
@@ -1984,7 +2052,10 @@ def db_leave_organization(user_id, org_id: int):
             row = cur.fetchone()
             was_creator = bool(row and row['org_role'] == 'creator')
 
-            cur.execute("DELETE FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            cur.execute(
+                "UPDATE org_memberships SET org_role = 'left', deleted_at = NOW() WHERE user_id = %s AND org_id = %s;",
+                (str(user_id), int(org_id))
+            )
 
             promoted_id = None
             if was_creator:
@@ -2350,18 +2421,18 @@ def db_update_organization_profile(org_id: int, new_name: str = None, new_tag: s
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_dissolve_organization(org_id: int) -> bool:
-    """Completely dissolves an organization and wipes associated user role mappings."""
+    """Soft-deletes an organization — never hard-deletes. Memberships are left intact
+    for historical/audit purposes; the org simply stops appearing in active queries."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM org_memberships WHERE org_id = %s;", (int(org_id),))
-            cur.execute("DELETE FROM organizations WHERE org_id = %s;", (int(org_id),))
+            cur.execute("UPDATE organizations SET deleted_at = NOW() WHERE org_id = %s;", (int(org_id),))
             conn.commit()
             return True
     except Exception as e:
         if conn: conn.rollback()
-        print(f"[DB-ORG-ERROR] Dissolution failed: {e}", flush=True)
+        print(f"[DB-ORG-ERROR] Soft-dissolution failed: {e}", flush=True)
         return False
     finally:
         if conn:
@@ -3378,12 +3449,12 @@ def db_delete_campaign(name: str) -> bool:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM channel_campaigns WHERE name = %s;", (name.strip(),))
+            cur.execute("UPDATE channel_campaigns SET deleted_at = NOW() WHERE name = %s;", (name.strip(),))
             conn.commit()
             return True
     except Exception as e:
         if conn: conn.rollback()
-        print(f"[DB ERROR] Failed to delete campaign: {e}", flush=True)
+        print(f"[DB ERROR] Failed to soft-delete campaign: {e}", flush=True)
         return False
     finally:
         if conn:
@@ -3521,6 +3592,70 @@ def db_get_top_users_by_country(country: str, limit: int = 10):
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch top users by country: {e}", flush=True)
         return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_edit_tournament_answer(user_id, message_id, new_option: int, new_is_correct: bool):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM fn_edit_user_answer(%s::text, %s::text, %s::int, %s::boolean);",
+                (str(user_id), str(message_id), int(new_option), bool(new_is_correct))
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return dict(row) if row else None
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to edit tournament answer: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_edit_stats(user_id):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT answer_edits_total, answer_edits_helped, answer_edits_hurt FROM user_stats WHERE user_id = %s;",
+                (str(user_id),)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else {"answer_edits_total": 0, "answer_edits_helped": 0, "answer_edits_hurt": 0}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch edit stats: {e}", flush=True)
+        return {"answer_edits_total": 0, "answer_edits_helped": 0, "answer_edits_hurt": 0}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_is_tournament_round_still_open(message_id) -> bool:
+    """True only if the round for this message is still tournament_active and its deadline hasn't passed."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status, EXTRACT(EPOCH FROM round_deadline) AS deadline_epoch, "
+                "EXTRACT(EPOCH FROM NOW()) AS now_epoch FROM sent_tracks WHERE message_id = %s;",
+                (str(message_id),)
+            )
+            row = cur.fetchone()
+            if not row or row['status'] != 'tournament_active':
+                return False
+            if row['deadline_epoch'] is None:
+                return False
+            return float(row['deadline_epoch']) > float(row['now_epoch'])
+    except Exception as e:
+        print(f"[DB ERROR] Failed to check round open state: {e}", flush=True)
+        return False
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

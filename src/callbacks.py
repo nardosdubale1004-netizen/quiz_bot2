@@ -200,6 +200,48 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         except Exception:
             pass
 
+async def _notify_org_admins_pending_request(context, org_id, org_name, requester):
+    from src.database import db_get_org_admin_ids, db_get_pending_org_requests
+    admin_ids = await asyncio.to_thread(db_get_org_admin_ids, org_id)
+    if not admin_ids:
+        return
+
+    conn = engine_ref = None
+    request_count, last_requested_at = 1, None
+    from src.database import GLOBAL_ENGINE
+    conn = GLOBAL_ENGINE.get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(requester.id), int(org_id)))
+            row = cur.fetchone()
+            if row:
+                request_count = row['request_count'] or 1
+                last_requested_at = row['last_requested_at']
+    finally:
+        GLOBAL_ENGINE.release_connection(conn)
+
+    from src.geo import format_local_time
+    last_req_str = format_local_time(last_requested_at) if last_requested_at else "just now"
+    req_name = html.escape(requester.first_name or requester.username or "A student")
+
+    approve_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🟢 APPROVE", callback_data=f"process_req|{org_id}|{requester.id}|1"),
+        InlineKeyboardButton("🔴 REJECT", callback_data=f"process_req|{org_id}|{requester.id}|0")
+    ], [
+        InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"process_req|{org_id}|{requester.id}|-1")
+    ]])
+
+    repeat_note = f"\n📈 Requested <b>{request_count}×</b>, last on {last_req_str}." if request_count > 1 else ""
+
+    for admin_id in admin_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=int(admin_id),
+                text=f"📥 <b>NEW JOIN REQUEST</b>\n\n<b>{req_name}</b> wants to join <b>{html.escape(org_name)}</b>.{repeat_note}",
+                reply_markup=approve_kb, parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
@@ -317,6 +359,40 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "toggle_consent":
         consent_state = (d_id == "1")
+        warn_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ CONFIRM", callback_data=f"confirm_consent|{d_id}"),
+             InlineKeyboardButton("❌ CANCEL", callback_data="settings_menu|0")]
+        ])
+        if consent_state:
+            explain = (
+                "<h3>🟢 Going Public</h3>\n"
+                "<blockquote>"
+                "This shows your <b>real Telegram username or first name</b> — the exact one people "
+                "see when they message you day-to-day — on round podiums and grade leaderboards.\n\n"
+                "If you've set a custom <b>nickname</b>, that nickname is shown instead, and your real "
+                "Telegram identity stays hidden either way."
+                "</blockquote>\n"
+                "Confirm to make your Telegram identity (or nickname, if set) visible to other students?"
+            )
+        else:
+            explain = (
+                "<h3>🔴 Going Private</h3>\n"
+                "<blockquote>"
+                "Your name disappears from public leaderboards and round podiums entirely. "
+                "Other students will only see an anonymous ID like <code>Scholar ...4821</code>.\n\n"
+                "Your scores and rank still count — only your identity is hidden."
+                "</blockquote>\n"
+                "Confirm to go private?"
+            )
+        await query.answer()
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=explain, reply_markup=warn_kb
+        )
+        return
+
+    elif action == "confirm_consent":
+        consent_state = (d_id == "1")
         await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
         await query.answer("Visibility updated!")
         kb = build_profile_settings_keyboard(consent_state)
@@ -347,6 +423,60 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content="🎒 <b>SELECT ACADEMIC GRADE LEVEL</b>\n<hr/>\nChanging this recalculates your challenge-bonus multiplier going forward.",
             reply_markup=grade_keyboard
+        )
+        return
+
+    elif action == "confirm_change":
+        display_id, new_opt = int(d_id), int(data[2])
+        from src.database import db_is_tournament_round_still_open, db_edit_tournament_answer
+        track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
+        if not track or not question_data:
+            await query.answer("This round is no longer available.", show_alert=True)
+            return
+
+        still_open = await asyncio.to_thread(db_is_tournament_round_still_open, track['message_id'])
+        if not still_open:
+            await query.answer("⏳ Time's up! Your original answer has been locked in.", show_alert=True)
+            letters = ["A", "B", "C", "D", "E"]
+            existing_response = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
+            old_opt = existing_response['selected_option'] if existing_response else new_opt
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⏳ <b>Too late!</b> The round ended before you confirmed. Your original answer (<b>{letters[old_opt]}</b>) is what's saved.",
+                reply_markup=nav_kb
+            )
+            return
+
+        is_correct = (new_opt == question_data['correct_option'])
+        result = await asyncio.to_thread(db_edit_tournament_answer, user_id, track['message_id'], new_opt, is_correct)
+        await query.answer("✅ Answer changed!")
+
+        letters = ["A", "B", "C", "D", "E"]
+        flip_note = {
+            "helped": "🎉 Good call — that flipped you from wrong to right!",
+            "hurt": "😬 Ouch — that flipped you from right to wrong.",
+            "neutral": "Noted — your correctness didn't change."
+        }.get(result.get("o_result_flip") if result else "neutral", "")
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=(
+                f"✅ <b>Answer updated to {letters[new_opt]}</b> for REF <code>{display_id}</code>.\n\n"
+                f"{flip_note}\n\n"
+                f"The full explanation lands here automatically once the round wraps up."
+            ),
+            reply_markup=nav_kb
+        )
+        return
+
+    elif action == "cancel_change":
+        await query.answer("Kept your original answer.")
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="✅ No change made — your original answer stays as submitted.",
+            reply_markup=nav_kb
         )
         return
 
@@ -614,12 +744,50 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "dissolve_org_warn":
         await query.answer()
         org_id = int(d_id)
-        warn_text = "💥 <b>Dissolve this team?</b>\n\nPermanently deletes it. Cannot be undone."
+        warn_text = (
+            "⚠️ <b>What do you want to do with this team?</b>\n\n"
+            "<blockquote>"
+            "🚪 <b>Leave Team</b> — you step down as creator; leadership passes to your longest-standing "
+            "admin or member automatically. The team keeps running.\n\n"
+            "💥 <b>Delete Entire Team</b> — the team is closed for everyone. Members lose their team "
+            "membership and it disappears from leaderboards. This cannot be undone by you (only an admin "
+            "can restore it)."
+            "</blockquote>"
+        )
         warn_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💥 DISSOLVE", callback_data=f"dissolve_org_confirm|{org_id}")],
+            [InlineKeyboardButton("🚪 LEAVE TEAM (HAND OVER)", callback_data=f"leave_org_warn|{org_id}")],
+            [InlineKeyboardButton("💥 DELETE ENTIRE TEAM", callback_data=f"dissolve_org_final_warn|{org_id}")],
             [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
         ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=warn_text, reply_markup=warn_kb)
+        return
+
+    elif action == "dissolve_org_final_warn":
+        await query.answer()
+        org_id = int(d_id)
+        final_text = (
+            "💥 <b>Final confirmation — delete this team?</b>\n\n"
+            "<blockquote>This closes the team for every member and removes it from all leaderboards. "
+            "It is not fully erased from our records, but it will no longer be usable or visible. "
+            "This cannot be reversed from your side.</blockquote>"
+        )
+        final_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💥 YES, DELETE PERMANENTLY", callback_data=f"dissolve_org_confirm|{org_id}")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data=f"view_org|{org_id}")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=final_text, reply_markup=final_kb)
+        return
+
+    elif action == "dissolve_org_confirm":
+        await query.answer()
+        org_id = int(d_id)
+        await asyncio.to_thread(db_dissolve_organization, org_id)
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="💥 Team deleted. All student mappings for it are now inactive.",
+            reply_markup=nav_kb
+        )
         return
 
     elif action == "set_nick_fsm":
@@ -721,16 +889,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=fsm_cancel_kb,
             parse_mode="HTML"
         )
-        return
-
-    
-
-    elif action == "dissolve_org_confirm":
-        await query.answer()
-        org_id = int(d_id)
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        await asyncio.to_thread(db_dissolve_organization, org_id)
-        await query.edit_message_text("💥 School team dissolved. All student mappings have been cleared.", reply_markup=return_kb)
         return
 
     elif action == "close_portal":
@@ -1277,7 +1435,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             LAST_UTILITY_MID[user_id] = m.message_id
         return
 
-
     elif action == "org_history":
         org_id = int(d_id)
         from src.database import db_get_user_org_role
@@ -1323,6 +1480,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Only team admins can process requests.", show_alert=True)
             return
 
+        if decision == "-1":
+            await query.answer("Left pending — no action taken.")
+            return
+
         approve = (decision == "1")
         ok = await asyncio.to_thread(db_approve_member_request, target_user_id, org_id, approve)
         await query.answer("Approved!" if approve else "Rejected.")
@@ -1341,7 +1502,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         try:
             status_line = f"\n\n{'✅ Approved' if approve else '🚫 Rejected'} — this request is now closed."
             old_text = (query.message.text or query.message.caption or "") + status_line
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=None)
+            closed_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0")]])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=closed_nav_kb)
         except Exception:
             pass
 
@@ -1359,11 +1521,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             except Exception:
                 pass
         elif ok and not approve:
+            reject_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 RETURN TO PROFILE", callback_data="privacy_menu|0")]])
             try:
                 await context.bot.send_message(
                     chat_id=int(target_user_id),
                     text=f"Your request to join <b>{html.escape(org_name)}</b> wasn't accepted this time. You're welcome to try another team.",
-                    parse_mode="HTML"
+                    parse_mode="HTML", reply_markup=reject_kb
                 )
             except Exception:
                 pass
@@ -1487,12 +1650,34 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
+    elif action == "resend_join":
+        org_id = int(d_id)
+        from src.database import db_resend_join_request
+        ok = await asyncio.to_thread(db_resend_join_request, user_id, org_id)
+        await query.answer("Sent again!" if ok else "Couldn't resend — try again.")
+        if ok:
+            conn = engine.get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT org_name FROM organizations WHERE org_id = %s;", (org_id,))
+                    row = cur.fetchone()
+            finally:
+                engine.release_connection(conn)
+            await _notify_org_admins_pending_request(context, org_id, row['org_name'] if row else "the team", query.from_user)
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🔁 <b>Request re-sent!</b> The team's admins have been notified again.",
+            reply_markup=nav_kb
+        )
+        return
 
 
 
 
 
-    if action not in ("ans", "toggle", "toggle_photo"):
+
+    if action not in ("ans", "toggle", "toggle_photo", "confirm_change", "cancel_change"):
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)

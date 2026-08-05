@@ -833,7 +833,7 @@ async def admin_panel(app, engine: QuizEngine):
                         print(f"{Style.GREEN}✅ First round launched and confirmed in queue (advanced={advanced}).{Style.RESET}")
                     except Exception as launch_err:
                         print(f"{Style.RED}⚠️ First round launch failed: {launch_err}{Style.RESET}")
-                                    print(f"{Style.YELLOW}Queue left fully intact — the background watcher will retry it automatically.{Style.RESET}")
+                        print(f"{Style.YELLOW}Queue left fully intact — the background watcher will retry it automatically.{Style.RESET}")
 
                 verification = await asyncio.to_thread(db_get_tournament_queue)
                 print(f"\n{Style.YELLOW}[DATABASE-VERIFICATION] Stored Row in 'tournament_queue':{Style.RESET}")
