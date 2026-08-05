@@ -969,7 +969,7 @@ def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKe
         [_b("school_branch", "🏢 BRANCHES"), _b("city", "🌆 CITY")],   # NEW: branch view
         [_b("country", "🌍 COUNTRY"), _b("city_overall", "🌆 TOP CITIES")],
         [_b("country_overall", "🌍 TOP COUNTRIES")],
-        InlineKeyboardButton("🌍 EXPLORE RANKINGS", callback_data="wr|world|all")
+        [InlineKeyboardButton("🌍 EXPLORE RANKINGS", callback_data="wr|world|all")],
         [InlineKeyboardButton("🗺️ EXPLORE COUNTRIES", callback_data="geo_country_list|0"),
          InlineKeyboardButton("🎒 GRADE RANKS", callback_data="geo_grade_list|0")],
     ]

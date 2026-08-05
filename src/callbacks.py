@@ -1144,11 +1144,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
     
     elif action == "menu_leaderboard":
-        await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         if not profile or not profile.get("grade"):
             await query.answer("Please set your grade first via /start.", show_alert=True)
             return
+        await query.answer()
         rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
         text = build_leaderboard_text("grade", rows, profile)
         kb = build_leaderboard_keyboard("grade")
@@ -2039,7 +2039,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
 
 
-
+    elif action == "...":
+        await query.answer()
+        ...
+        if some_condition:
+            await query.answer("...", show_alert=True)
+            return
 
 
 
