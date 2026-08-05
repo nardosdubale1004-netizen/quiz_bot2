@@ -1245,26 +1245,25 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         scope = d_id
         ftype = data[2] if len(data) > 2 else "none"
-        fval = data[3] if len(data) > 3 else "_"
-        soff = int(data[4]) if len(data) > 4 else 0
+        fval = data[3] if len(data) > 3 else "__open__"
+    mode = data[4] if len(data) > 4 else "total"
+    soff = int(data[5]) if len(data) > 5 else 0
 
-        from src.database import db_get_rank_matrix, db_get_all_subjects
-        from src.rendering.html_views import build_world_rank_text, build_world_rank_keyboard
+    from src.database import db_get_rank_matrix, db_get_all_subjects, db_get_world_summary_counts
 
-        grade = fval if ftype == "grade" else None
-        difficulty = fval if ftype == "difficulty" else None
-        subject = fval if ftype == "subject" else None
+    grade = fval if ftype == "grade" and fval not in (None, "total", "__open__") else None
+    difficulty = fval if ftype == "difficulty" and fval != "__open__" else None
+    subject = fval if ftype == "subject" and fval != "__open__" else None
 
-        rows = await asyncio.to_thread(db_get_rank_matrix, scope, grade, difficulty, subject, 10)
+    matrix = await asyncio.to_thread(db_get_rank_matrix, scope, grade, difficulty, subject, mode, 10)
+    summary = await asyncio.to_thread(db_get_world_summary_counts, int(grade) if grade else None)
 
-        subjects_list = []
-        if ftype == "subject":
-            subjects_list = await asyncio.to_thread(db_get_all_subjects)
+    subjects_list = await asyncio.to_thread(db_get_all_subjects) if ftype == "subject" else []
 
-        text = build_world_rank_text(scope, ftype, fval, rows)
-        kb = build_world_rank_keyboard(scope, ftype, fval, subjects_list, soff)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
+    text = build_world_rank_text(scope, ftype, fval, mode, matrix, summary)
+    kb = build_world_rank_keyboard(scope, ftype, fval, mode, subjects_list, soff)
+    await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+    return
 
     elif action == "geo_grade_list":
         await query.answer()
