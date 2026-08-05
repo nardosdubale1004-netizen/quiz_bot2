@@ -639,7 +639,7 @@ def build_alliance_info_text() -> str:
     )
 
 
-def build_organization_card_text(org: dict, roster: list, sort_field: str = "score", sort_dir: str = "desc") -> str:
+def build_organization_card_text(org: dict, roster: list, sort_field: str = "score", sort_dir: str = "desc", branches: list = None) -> str:
     name = html.escape(org.get("org_name", "UNKNOWN"))
     tag = org.get("org_tag", "UNKNOWN")
     org_type = html.escape(str(org.get("org_type", "School")))
@@ -666,6 +666,18 @@ def build_organization_card_text(org: dict, roster: list, sort_field: str = "sco
         table_rows.append(f"<tr><td>{i+1}</td><td>{nm}</td><td>{r.get('total_marks', 0)}</td></tr>")
     roster_table = "<table>" + "".join(table_rows) + "</table>" if rows else "<i>No active scholars registered yet.</i>"
 
+    branch_block = ""
+    if branches:
+        b_rows = ["<tr><td><b>Branch</b></td><td><b>City</b></td><td><b>Members</b></td><td><b>Score</b></td></tr>"]
+        for b in branches:
+            b_rows.append(
+                f"<tr><td>{html.escape(b['branch_name'])}</td>"
+                f"<td>{html.escape(b.get('city') or '—')}</td>"
+                f"<td>{b.get('member_count', 0)}</td>"
+                f"<td>{b.get('branch_score', 0)}</td></tr>"
+            )
+        branch_block = f"\n<h3>🏢 Branches</h3>\n<table>{''.join(b_rows)}</table>"
+
     return (
         f"<h2>🏫 {name}</h2>\n"
         f"<code>#{tag}</code> · {org_type} · {privacy}\n"
@@ -675,6 +687,7 @@ def build_organization_card_text(org: dict, roster: list, sort_field: str = "sco
         f"<hr/>\n"
         f"<h3>🏆 Roster</h3>\n"
         f"{roster_table}"
+        f"{branch_block}"
     )
 
 

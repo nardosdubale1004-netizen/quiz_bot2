@@ -241,10 +241,13 @@ async def push_dm_update(bot, u_id, p_mid, sel_opt, is_correct, message_id, q, l
                 print(f"[DEBUG-DM-DELIVERY-ERROR] DM fallback delivery also failed: {fallback_err}", flush=True)
 
 
-async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: int, round_seconds: int = 60, current_round: int = 1, total_rounds: int = 1):
-    """Sends the live tournament challenge to the main channel using pre-emptive database locking."""
+async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: int, round_seconds: int = 60, current_round: int = 1, total_rounds: int = 1, skip_grace: bool = False):
+    """
+    Sends the live tournament challenge to the main channel.
+    skip_grace=True for Round 1 (it already waited during scheduling).
+    """
     placeholder_mid = f"launching_{last_seq}"
-    print(f"{Style.CYAN}[DEBUG-LAUNCH] launch_tournament_round called. display_id: {last_seq}, question: {q['id']}, round: {current_round}/{total_rounds}.{Style.RESET}", flush=True)
+    print(f"{Style.CYAN}[DEBUG-LAUNCH] launch_tournament_round called. display_id: {last_seq}, question: {q['id']}, round: {current_round}/{total_rounds}, skip_grace={skip_grace}.{Style.RESET}", flush=True)
 
     try:
         queue = await asyncio.to_thread(db_get_tournament_queue)
@@ -255,17 +258,13 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
             round_seconds, current_round, total_rounds, run_id
         )
         if not claimed:
-            print(f"{Style.YELLOW}[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}, q_id={q['id']}.{Style.RESET}", flush=True)
+            print(f"{Style.YELLOW}[DEBUG-LAUNCH-ABORT] Round already active elsewhere — aborting duplicate launch for REF {last_seq}.{Style.RESET}", flush=True)
             return
 
-        # A previous tournament's "series complete" champions podium must not linger while
-        # a NEW series runs — clear it right now instead of waiting until this new series
-        # finishes (which is what used to happen, leaving stale results pinned for the
-        # whole duration of the new tournament).
+        # Clear old champions podium only on round 1
         if current_round == 1:
             old_champions_mid = await asyncio.to_thread(db_get_bot_state, "champions_podium_mid", None)
             if old_champions_mid:
-                print(f"[DEBUG-LAUNCH] New series starting — clearing previous champions podium (mid={old_champions_mid}).", flush=True)
                 await _unpin_safe(app.bot, engine.config['channel'], old_champions_mid)
                 try:
                     await app.bot.delete_message(chat_id=engine.config['channel'], message_id=int(old_champions_mid))
@@ -277,7 +276,9 @@ async def launch_tournament_round(app, engine: QuizEngine, q: dict, last_seq: in
         ann_msg = await app.bot.send_message(chat_id=engine.config['channel'], text=announcement_text, parse_mode="HTML")
         await _pin_safe(app.bot, engine.config['channel'], ann_msg.message_id)
 
-        await asyncio.sleep(1.5)
+        # Only show grace period for Round 2+ (Round 1 already had scheduling wait)
+        if not skip_grace and current_round > 1:
+            await asyncio.sleep(3)
 
         countdown_task = asyncio.create_task(
             run_round_countdown(app, engine, ann_msg.message_id, last_seq, round_seconds, current_round, total_rounds)
@@ -738,8 +739,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                         ann_mid = queue.get('announcement_mid')
                         if ann_mid:
                             meta = queue.get('tournament_meta') or {}
-                            text = build_tournament_announcement_text(meta, remaining_delay)
-
+                            text = _render_scheduling_announcement(meta, remaining_delay)
                             update_interval = 10 if remaining_delay > 30 else 2
                             if remaining_delay % update_interval == 0 or _LAST_DELAY_VAL == -1:
                                 if _LAST_DELAY_VAL != remaining_delay:
@@ -813,94 +813,112 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                 async with _LAUNCH_LOCK:
                     fresh_active = await asyncio.to_thread(db_get_active_tournament_rounds)
                     if fresh_active:
-                        dlog(f"[DEBUG-WATCHER] fresh_active check found a live round already ({len(fresh_active)}). Skipping this tick's launch.")
+                        dlog(f"[DEBUG-WATCHER] fresh_active check found a live round already. Skipping.")
                         continue
 
                     fresh_queue = await asyncio.to_thread(db_get_tournament_queue)
                     if not fresh_queue or not fresh_queue.get('remaining_ids'):
-                        dlog("[DEBUG-WATCHER] fresh_queue has no remaining_ids. Clearing tournament_queue.")
+                        dlog("[DEBUG-WATCHER] fresh_queue has no remaining_ids. Clearing.")
                         await asyncio.to_thread(db_clear_tournament_queue)
                         continue
 
-                    dlog(f"[DEBUG-PEEK-ATTEMPT] Watcher peeking next question. remaining_ids={fresh_queue.get('remaining_ids')}")
                     next_qid, next_seq = await asyncio.to_thread(db_peek_tournament_question)
-                    dlog(f"[DEBUG-WATCHER] db_peek_tournament_question returned next_qid={next_qid}, next_seq={next_seq} (queue NOT yet mutated)")
                     if next_qid:
-                        q = await asyncio.to_thread(db_get_question_by_id, next_qid)
-                        if q:
-                            total_rounds = fresh_queue['total_count']
+                        q_obj = await asyncio.to_thread(db_get_question_by_id, next_qid)
+                        if q_obj:
+                            total_rounds_val = fresh_queue['total_count']
                             remaining_count = len(fresh_queue['remaining_ids']) - 1
-                            current_round = total_rounds - remaining_count
+                            current_round_val = total_rounds_val - remaining_count
 
-                            grace_msg = None
-                            try:
-                                grace_msg = await app.bot.send_message(
-                                    chat_id=engine.config['channel'],
-                                    text=f"🚀 <b>Get ready! Round {current_round}/{total_rounds} starts in 3 seconds...</b>",
-                                    parse_mode="HTML"
-                                )
-                            except Exception as grace_err:
-                                dlog_exception("tournament_watcher_loop grace message send", grace_err)
-                            await asyncio.sleep(3)
-                            if grace_msg:
+                            # Round 1 skips the grace period — already waited during scheduling
+                            is_first_round = (current_round_val == 1)
+
+                            if not is_first_round:
+                                grace_msg = None
                                 try:
-                                    await app.bot.delete_message(chat_id=engine.config['channel'], message_id=grace_msg.message_id)
-                                except Exception:
-                                    pass
-
-                            dlog(f"[DEBUG-WATCHER] Launching round {current_round}/{total_rounds} for q_id={next_qid}, display_id={next_seq}...")
-                            try:
-                                await launch_tournament_round(app, engine, q, next_seq, fresh_queue.get('round_seconds', 60), current_round, total_rounds)
-                                dlog(f"[DEBUG-WATCHER] launch_tournament_round CONFIRMED success for display_id={next_seq}. Advancing queue now...")
-                                advanced = await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
-                                dlog(f"[DEBUG-WATCHER] db_advance_tournament_queue('{next_qid}') -> {advanced}")
-                                _LAUNCH_FAIL_COUNTS.pop(next_qid, None)
-                            except Exception as launch_err:
-                                # Nothing was ever removed from the DB queue — next_qid is STILL
-                                # sitting at the front of remaining_ids, so no rollback/reinsertion
-                                # logic is needed. We just retry (or give up after N tries) without
-                                # ever having lost the question from the database.
-                                dlog_exception(f"tournament_watcher_loop launch_tournament_round (display_id={next_seq}, q_id={next_qid})", launch_err)
-
-                                fail_count = _LAUNCH_FAIL_COUNTS.get(next_qid, 0) + 1
-                                _LAUNCH_FAIL_COUNTS[next_qid] = fail_count
-
-                                if fail_count >= _MAX_LAUNCH_RETRIES:
-                                    dlog(f"[DEBUG-WATCHER-SKIP] q_id={next_qid} failed {fail_count}x. Skipping it — advancing queue past it WITHOUT relaunching.")
-                                    await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
-                                    try:
-                                        await app.bot.send_message(
-                                            chat_id=engine.config['channel'],
-                                            text=(
-                                                f"⚠️ <b>Skipped question in round {current_round}/{total_rounds}</b>\n"
-                                                f"Question <code>{next_qid}</code> failed to launch {fail_count}× "
-                                                f"(<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>) "
-                                                f"and was skipped. Check its content for malformed formatting."
-                                            ),
-                                            parse_mode="HTML"
-                                        )
-                                    except Exception:
-                                        pass
-                                    continue
-
-                                try:
-                                    await app.bot.send_message(
+                                    grace_msg = await app.bot.send_message(
                                         chat_id=engine.config['channel'],
-                                        text=(
-                                            f"⚠️ <b>Failed to launch round {current_round}/{total_rounds}</b> "
-                                            f"(attempt {fail_count}/{_MAX_LAUNCH_RETRIES}).\n"
-                                            f"<code>{type(launch_err).__name__}: {html.escape(str(launch_err)[:200])}</code>\n"
-                                            f"Retrying shortly — question is still safely queued."
-                                        ),
+                                        text=f"🚀 <b>Get ready! Round {current_round_val}/{total_rounds_val} starts in 3 seconds...</b>",
                                         parse_mode="HTML"
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as grace_err:
+                                    dlog_exception("grace message send", grace_err)
+                                await asyncio.sleep(3)
+                                if grace_msg:
+                                    try:
+                                        await app.bot.delete_message(chat_id=engine.config['channel'], message_id=grace_msg.message_id)
+                                    except Exception:
+                                        pass
+
+                            # Retry loop for launch
+                            launch_succeeded = False
+                            for launch_attempt in range(1, _MAX_LAUNCH_RETRIES + 1):
+                                try:
+                                    await launch_tournament_round(
+                                        app, engine, q_obj, next_seq,
+                                        fresh_queue.get('round_seconds', 60),
+                                        current_round_val, total_rounds_val,
+                                        skip_grace=is_first_round
+                                    )
+                                    advanced = await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
+                                    dlog(f"[DEBUG-WATCHER] Launch confirmed. db_advance -> {advanced}")
+                                    _LAUNCH_FAIL_COUNTS.pop(next_qid, None)
+                                    launch_succeeded = True
+                                    break
+                                except Exception as launch_err:
+                                    dlog_exception(f"launch attempt {launch_attempt}/{_MAX_LAUNCH_RETRIES}", launch_err)
+
+                                    if launch_attempt < _MAX_LAUNCH_RETRIES:
+                                        # Pause countdown, show retry notice, wait and retry
+                                        # Cancel any stale countdown tasks for this round
+                                        for ann_mid_key, task in list(_ACTIVE_COUNTDOWNS.items()):
+                                            task.cancel()
+                                            try:
+                                                await task
+                                            except Exception:
+                                                pass
+                                        _ACTIVE_COUNTDOWNS.clear()
+
+                                        retry_msg = None
+                                        try:
+                                            retry_msg = await app.bot.send_message(
+                                                chat_id=engine.config['channel'],
+                                                text=(
+                                                    f"⏳ <b>Preparing Round {current_round_val}/{total_rounds_val}...</b>\n\n"
+                                                    f"<i>One moment — loading the next challenge. Hold tight!</i>"
+                                                ),
+                                                parse_mode="HTML"
+                                            )
+                                        except Exception:
+                                            pass
+
+                                        await asyncio.sleep(5)
+
+                                        if retry_msg:
+                                            try:
+                                                await app.bot.delete_message(chat_id=engine.config['channel'], message_id=retry_msg.message_id)
+                                            except Exception:
+                                                pass
+                                    else:
+                                        # All retries exhausted — skip this question
+                                        dlog(f"[DEBUG-WATCHER-SKIP] Exhausted retries for q_id={next_qid}. Skipping.")
+                                        await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
+                                        try:
+                                            await app.bot.send_message(
+                                                chat_id=engine.config['channel'],
+                                                text=(
+                                                    f"⚡ <b>Round {current_round_val}/{total_rounds_val} skipped</b> — a technical issue prevented it from loading. "
+                                                    f"Moving to the next challenge!"
+                                                ),
+                                                parse_mode="HTML"
+                                            )
+                                        except Exception:
+                                            pass
                         else:
-                            dlog(f"[DEBUG-WATCHER-ERROR] Question {next_qid} not found in DB. Advancing past it (it can never launch).")
+                            dlog(f"[DEBUG-WATCHER-ERROR] Question {next_qid} not found. Advancing past it.")
                             await asyncio.to_thread(db_advance_tournament_queue, next_qid, next_seq)
                     else:
-                        dlog("[DEBUG-WATCHER] db_peek_tournament_question returned None (queue genuinely empty). Nothing to launch.")
+                        dlog("[DEBUG-WATCHER] db_peek returned None. Queue genuinely empty.")
 
         except Exception as e:
             traceback.print_exc()
@@ -1104,3 +1122,40 @@ async def reconcile_deleted_track_messages(app, engine: QuizEngine, batch_size: 
                 await asyncio.to_thread(engine.db_update_track_status, mid, "deleted")
     except Exception as e:
         dlog_exception("reconcile_deleted_track_messages", e)
+
+
+def _render_scheduling_announcement(meta: dict, remaining_delay: int) -> str:
+    """New tournament waiting announcement - exciting but NOT confusing with SHUTDOWN."""
+    subject = meta.get("subject", "GENERAL").upper()
+    total_count = meta.get("total_count", 0)
+    diff_summary = meta.get("difficulty_summary", "Mixed")
+    topics = meta.get("topics", [])
+    topics_str = ", ".join(str(t) for t in topics[:3]) or "General Mix"
+    if len(topics) > 3:
+        topics_str += f" +{len(topics)-3} more"
+
+    if remaining_delay > 0:
+        mins, secs = divmod(remaining_delay, 60)
+        hrs, mins = divmod(mins, 60)
+        if hrs:
+            timer_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+        else:
+            timer_str = f"{mins:02d}:{secs:02d}"
+        timer_block = (
+            f"<b>⏳ STARTS IN</b>\n"
+            f"<code>{timer_str}</code>"
+        )
+    else:
+        timer_block = "<b>🚀 STARTING NOW...</b>"
+
+    return (
+        f"<b>🏆 TOURNAMENT INCOMING</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{timer_block}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>📚 Subject:</b> {html.escape(subject)}\n"
+        f"<b>🏷️ Topics:</b> {html.escape(topics_str)}\n"
+        f"<b>📈 Difficulty:</b> {html.escape(str(diff_summary))}\n"
+        f"<b>🔢 Rounds:</b> {total_count}\n\n"
+        f"<i>Get ready — the arena opens shortly. Speed and accuracy both earn bonus marks!</i>"
+    )

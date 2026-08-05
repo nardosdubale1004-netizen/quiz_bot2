@@ -98,6 +98,18 @@ def check_message_has_lockout(user_id, message) -> bool:
     return any(kw in current_text_lower for kw in ["lockout active", "already answered", "securely locked"])
 
 
+def _build_school_branch_leaderboard_text(schools: list) -> str:
+    if not schools:
+        return "<h2>🏢 SCHOOL & BRANCH RANKINGS</h2>\n<i>No data yet.</i>"
+    lines = ["<h2>🏢 SCHOOL &amp; BRANCH RANKINGS</h2>", "<hr/>"]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, s in enumerate(schools):
+        rank = medals[i] if i < 3 else str(i+1)
+        lines.append(f"{rank} <b>{html.escape(s['org_name'])}</b> — {s['total_score']} marks ({s['member_count']} members)")
+        for b in s.get('branches', []):
+            lines.append(f"   🏢 {html.escape(b['branch_name'])} ({html.escape(b.get('city') or '—')}) — {b.get('branch_score', 0)} marks")
+    return "\n".join(lines)
+    
 
 def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKeyboardMarkup:
     rs = return_state or "all:all:0"
@@ -520,9 +532,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             existing_response = await asyncio.to_thread(db_get_user_response, user_id, track['message_id'])
             old_opt = existing_response['selected_option'] if existing_response else new_opt
             nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
-            await edit_rich_message_safe(
-                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=f"⏳ <b>Too late!</b> The round ended before you confirmed. Your original answer (<b>{letters[old_opt]}</b>) is what's saved.",
+            try:
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+            except Exception:
+                pass
+            await send_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id,
+                html_content=(
+                    f"✅ <b>Answer updated to {letters[new_opt]}</b> for REF <code>{display_id}</code>.\n\n"
+                    f"{flip_note}\n\n"
+                    f"The full explanation lands here automatically once the round wraps up."
+                ),
                 reply_markup=nav_kb
             )
             return
@@ -1158,11 +1178,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             countries = await asyncio.to_thread(db_get_active_countries)
             text = "🌍 <b>PICK A COUNTRY</b>"
             kb = build_geo_picker_keyboard(countries, "country") if countries else build_leaderboard_keyboard(scope)
+
         elif scope == "country_overall":
             from src.database import db_get_country_leaderboard
             rows = await asyncio.to_thread(db_get_country_leaderboard)
             text = build_leaderboard_text(scope, rows, profile)
             kb = build_leaderboard_keyboard(scope)
+
+        elif scope == "school_branch":
+            from src.database import db_get_school_with_branches_leaderboard
+            schools_with_branches = await asyncio.to_thread(db_get_school_with_branches_leaderboard, 10)
+            text = _build_school_branch_leaderboard_text(schools_with_branches)
+            kb = build_leaderboard_keyboard(scope)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            return
+
         else:  # city_overall
             from src.database import db_get_city_leaderboard
             rows = await asyncio.to_thread(db_get_city_leaderboard)

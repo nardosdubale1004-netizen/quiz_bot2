@@ -550,6 +550,20 @@ class QuizEngine:
                         PRIMARY KEY (user_id, q_id)
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS school_branches (
+                        branch_id SERIAL PRIMARY KEY,
+                        org_id INTEGER NOT NULL REFERENCES organizations(org_id) ON DELETE CASCADE,
+                        branch_name VARCHAR(80) NOT NULL,
+                        city VARCHAR(50),
+                        country VARCHAR(50),
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        deleted_at TIMESTAMPTZ,
+                        UNIQUE (org_id, branch_name)
+                    );
+                """)
+                cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -1278,6 +1292,39 @@ def db_clear_tournament_queue():
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_reset_tournament_scores(run_id: str = None):
+    """
+    Called immediately when a new tournament is SCHEDULED (not when Round 1 starts).
+    Clears the tournament_run_id association from any previous tournament's tracks
+    so the new run_id starts with a clean slate. The user_responses rows are kept
+    (they count toward lifetime scores) — only the run_id tag that groups them into
+    a tournament leaderboard is cleared.
+    """
+    if not run_id:
+        return
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # Mark any lingering 'tournament_active' tracks from a crashed prior run
+            cur.execute("""
+                UPDATE sent_tracks
+                SET tournament_run_id = NULL
+                WHERE tournament_run_id != %s
+                  AND status IN ('tournament_active', 'closed', 'tournament_closed');
+            """, (run_id,))
+            conn.commit()
+        print(f"[DB] Tournament scores reset for new run_id={run_id}", flush=True)
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"[DB ERROR] db_reset_tournament_scores: {e}", flush=True)
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
 
 def db_get_question_by_id(q_id):
     conn = None
@@ -4254,6 +4301,162 @@ def db_get_user_snapshot(user_id) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_team_geo_ownership(org_id: int) -> dict:
+
+def db_get_branch_leaderboard(branch_id: int, limit: int = 10):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name,
+                       u.public_consent_granted, u.total_marks
+                FROM user_stats u
+                WHERE u.branch_id = %s
+                ORDER BY u.total_marks DESC
+                LIMIT %s;
+            """, (int(branch_id), limit))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_branch_leaderboard: {e}", flush=True)
+        return []
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_school_with_branches_leaderboard(limit: int = 10):
+    """
+    Returns schools ranked by total marks, including branch breakdowns.
+    Each row has: org_id, org_name, total_score, branches (list).
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # School totals
+            cur.execute("""
+                SELECT o.org_id, o.org_name, o.org_tag, o.city, o.country,
+                       SUM(u.total_marks) AS total_score,
+                       COUNT(DISTINCT m.user_id) AS member_count
+                FROM organizations o
+                JOIN org_memberships m ON o.org_id = m.org_id
+                  AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN user_stats u ON m.user_id = u.user_id
+                WHERE o.deleted_at IS NULL
+                GROUP BY o.org_id, o.org_name, o.org_tag, o.city, o.country
+                ORDER BY total_score DESC
+                LIMIT %s;
+            """, (limit,))
+            schools = [dict(r) for r in cur.fetchall()]
+
+            # Branch totals per school
+            for s in schools:
+                cur.execute("""
+                    SELECT b.branch_id, b.branch_name, b.city, b.country,
+                           SUM(u.total_marks) AS branch_score,
+                           COUNT(DISTINCT m.user_id) AS member_count
+                    FROM school_branches b
+                    JOIN org_memberships m ON m.branch_id = b.branch_id
+                      AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON m.user_id = u.user_id
+                    WHERE b.org_id = %s AND b.deleted_at IS NULL
+                    GROUP BY b.branch_id, b.branch_name, b.city, b.country
+                    ORDER BY branch_score DESC;
+                """, (s['org_id'],))
+                s['branches'] = [dict(r) for r in cur.fetchall()]
+
+            return schools
+    except Exception as e:
+        print(f"[DB ERROR] db_get_school_with_branches_leaderboard: {e}", flush=True)
+        return []
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None, limit: int = 10):
+    """
+    scope: 'world' | 'country' | 'city' | 'school'
+    Only includes teams where ALL members share the same scope_value.
+    Uses db_get_team_geo_ownership logic inline via SQL.
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # Subquery: for each org, get all unique resolved countries and cities
+            base_sql = """
+                WITH team_geo AS (
+                    SELECT
+                        m.org_id,
+                        COUNT(DISTINCT m.user_id) AS member_count,
+                        COUNT(DISTINCT COALESCE(b.country, o.country, u.personal_country)) AS country_count,
+                        COUNT(DISTINCT COALESCE(b.city, o.city, u.personal_city)) AS city_count,
+                        MIN(COALESCE(b.country, o.country, u.personal_country)) AS solo_country,
+                        MIN(COALESCE(b.city, o.city, u.personal_city)) AS solo_city
+                    FROM org_memberships m
+                    JOIN user_stats u ON u.user_id = m.user_id
+                    JOIN organizations o ON o.org_id = m.org_id
+                    LEFT JOIN school_branches b ON b.branch_id = m.branch_id
+                    WHERE m.org_role NOT IN ('pending','rejected','left')
+                      AND o.deleted_at IS NULL
+                    GROUP BY m.org_id
+                ),
+                ranked_teams AS (
+                    SELECT
+                        tg.org_id,
+                        o.org_name,
+                        o.org_tag,
+                        SUM(u.total_marks) AS total_score,
+                        tg.member_count,
+                        tg.solo_country,
+                        tg.solo_city,
+                        tg.country_count,
+                        tg.city_count
+                    FROM team_geo tg
+                    JOIN organizations o ON o.org_id = tg.org_id
+                    JOIN org_memberships m ON m.org_id = tg.org_id
+                      AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON u.user_id = m.user_id
+                    GROUP BY tg.org_id, o.org_name, o.org_tag,
+                             tg.member_count, tg.solo_country, tg.solo_city,
+                             tg.country_count, tg.city_count
+                )
+            """
+
+            if scope == "country" and scope_value:
+                cur.execute(base_sql + """
+                    SELECT * FROM ranked_teams
+                    WHERE country_count = 1 AND solo_country = %s
+                    ORDER BY total_score DESC LIMIT %s;
+                """, (scope_value, limit))
+            elif scope == "city" and scope_value:
+                cur.execute(base_sql + """
+                    SELECT * FROM ranked_teams
+                    WHERE city_count = 1 AND solo_city = %s
+                    ORDER BY total_score DESC LIMIT %s;
+                """, (scope_value, limit))
+            elif scope == "school" and scope_value:
+                cur.execute(base_sql + """
+                    SELECT rt.* FROM ranked_teams rt
+                    JOIN team_geo tg ON tg.org_id = rt.org_id
+                    WHERE rt.org_id = %s
+                    ORDER BY rt.total_score DESC LIMIT %s;
+                """, (int(scope_value), limit))
+            else:
+                # World — all teams qualify
+                cur.execute(base_sql + """
+                    SELECT * FROM ranked_teams
+                    ORDER BY total_score DESC LIMIT %s;
+                """, (limit,))
+
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_smart_team_leaderboard({scope}): {e}", flush=True)
+        return []
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+        
+
 def db_set_show_real_identity(user_id, show: bool) -> bool:
     conn = None
     try:
@@ -4380,3 +4583,119 @@ def db_get_org_grade_breakdown(org_id: int):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_create_school_branch(org_id: int, branch_name: str, city: str, country: str) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO school_branches (org_id, branch_name, city, country)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (org_id, branch_name) DO UPDATE SET city = EXCLUDED.city, country = EXCLUDED.country
+                RETURNING branch_id;
+            """, (int(org_id), branch_name.strip(), city, country))
+            row = cur.fetchone()
+            conn.commit()
+            return row['branch_id'] if row else None
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-BRANCH-ERROR] Create branch failed: {e}", flush=True)
+        return None
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_school_branches(org_id: int):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT b.*, COUNT(m.user_id) AS member_count
+                FROM school_branches b
+                LEFT JOIN org_memberships m ON m.branch_id = b.branch_id
+                WHERE b.org_id = %s AND b.deleted_at IS NULL
+                GROUP BY b.branch_id
+                ORDER BY b.branch_name ASC;
+            """, (int(org_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB-BRANCH-ERROR] Get branches failed: {e}", flush=True)
+        return []
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_join_branch(user_id, branch_id: int) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE org_memberships SET branch_id = %s
+                WHERE user_id = %s
+                  AND org_id = (SELECT org_id FROM school_branches WHERE branch_id = %s);
+            """, (int(branch_id), str(user_id), int(branch_id)))
+            cur.execute("UPDATE user_stats SET branch_id = %s WHERE user_id = %s;", (int(branch_id), str(user_id)))
+            user_profile_cache.invalidate(f"profile:{user_id}")
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-BRANCH-ERROR] Join branch failed: {e}", flush=True)
+        return False
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+    """
+    Determines whether a team's members are homogenous enough to be attributed
+    to a specific school/branch/city/country for leaderboard purposes.
+    Rules:
+      - school: ALL active members belong to the same org_id
+      - branch: ALL active members belong to the same branch_id
+      - city: ALL members resolve to the same city (via branch > org > personal)
+      - country: ALL members resolve to the same country
+    Returns dict with keys: school_id, branch_id, city, country (None if mixed).
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    m.user_id,
+                    m.org_id,
+                    m.branch_id,
+                    COALESCE(b.city, o.city, u.personal_city) AS resolved_city,
+                    COALESCE(b.country, o.country, u.personal_country) AS resolved_country
+                FROM org_memberships m
+                JOIN user_stats u ON u.user_id = m.user_id
+                JOIN organizations o ON o.org_id = m.org_id
+                LEFT JOIN school_branches b ON b.branch_id = m.branch_id
+                WHERE m.org_id = %s
+                  AND m.org_role NOT IN ('pending', 'rejected', 'left')
+                  AND o.deleted_at IS NULL;
+            """, (int(org_id),))
+            rows = cur.fetchall()
+
+        if not rows:
+            return {"school_id": None, "branch_id": None, "city": None, "country": None}
+
+        org_ids = set(r['org_id'] for r in rows)
+        branch_ids = set(r['branch_id'] for r in rows if r['branch_id'])
+        cities = set(r['resolved_city'] for r in rows if r['resolved_city'])
+        countries = set(r['resolved_country'] for r in rows if r['resolved_country'])
+
+        return {
+            "school_id": int(list(org_ids)[0]) if len(org_ids) == 1 else None,
+            "branch_id": int(list(branch_ids)[0]) if len(branch_ids) == 1 and len(rows) == len([r for r in rows if r['branch_id']]) else None,
+            "city": list(cities)[0] if len(cities) == 1 else None,
+            "country": list(countries)[0] if len(countries) == 1 else None,
+        }
+    except Exception as e:
+        print(f"[DB ERROR] db_get_team_geo_ownership: {e}", flush=True)
+        return {"school_id": None, "branch_id": None, "city": None, "country": None}
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)

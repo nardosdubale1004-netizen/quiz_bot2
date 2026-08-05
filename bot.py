@@ -494,6 +494,16 @@ async def start_command(update: Update, context):
                 print(f" ├─ History found. Selected Option: {existing_response.get('selected_option')} | Is Correct: {existing_response.get('is_correct')}", flush=True)
                 original_selection = existing_response['selected_option']
                 old_private_mid = existing_response.get('private_message_id')
+                if old_private_mid:
+                    try:
+                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
+                    except Exception:
+                        pass
+
+                m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=confirm_html, reply_markup=confirm_kb)
+                if m:
+                    await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                return
 
                 show_derivation = existing_response.get('show_derivation', False)
                 show_perf = existing_response.get('show_perf', False)

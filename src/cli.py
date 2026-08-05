@@ -752,8 +752,8 @@ async def admin_panel(app, engine: QuizEngine):
                 "run_id": uuid.uuid4().hex,
             }
 
-            from src.rendering.html_views import build_tournament_announcement_text
-            proposed_ann_text = build_tournament_announcement_text(meta_payload, delay_seconds)
+            from src.tournament import _render_scheduling_announcement
+            proposed_ann_text = _render_scheduling_announcement(meta_payload, delay_seconds)
 
             print(f"\n{Style.YELLOW}{Style.BOLD}⚔️  PROPOSED TOURNAMENT CAMPAIGN SHEET:{Style.RESET}")
             print(convert_to_legacy_html(proposed_ann_text))
@@ -798,6 +798,9 @@ async def admin_panel(app, engine: QuizEngine):
                     merged_total = (existing_queue['total_count'] if existing_queue else 0) + total_count
                     merged_last_seq = max(existing_queue['last_seq'] if existing_queue else last_seq, last_seq)
 
+                    # Reset tournament-only scores immediately on scheduling
+                    await asyncio.to_thread(db_reset_tournament_scores, meta_payload.get('run_id'))
+
                     await asyncio.to_thread(
                         db_save_tournament_queue,
                         merged_ids,
@@ -816,8 +819,8 @@ async def admin_panel(app, engine: QuizEngine):
                 else:
                     await asyncio.to_thread(
                         db_save_tournament_queue,
-                        q_ids,          # FULL list including the first question — nothing
-                        last_seq,       # is popped from the DB until it actually launches
+                        q_ids,
+                        last_seq,
                         round_seconds,
                         total_count,
                         scheduled_start.isoformat() if scheduled_start else None,
@@ -826,8 +829,6 @@ async def admin_panel(app, engine: QuizEngine):
                         meta_payload
                     )
                     if scheduled_start:
-                        # Delay requested: leave the queue for the watcher loop to launch once
-                        # the scheduled time actually arrives — never launch synchronously here.
                         print(f"{Style.GREEN}✅ Tournament scheduled for {scheduled_start.isoformat()} — the background watcher will launch it automatically.{Style.RESET}")
                     else:
                         first_id = q_ids[0]
