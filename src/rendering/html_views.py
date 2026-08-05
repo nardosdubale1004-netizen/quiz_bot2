@@ -969,7 +969,7 @@ def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKe
         [_b("school_branch", "🏢 BRANCHES"), _b("city", "🌆 CITY")],   # NEW: branch view
         [_b("country", "🌍 COUNTRY"), _b("city_overall", "🌆 TOP CITIES")],
         [_b("country_overall", "🌍 TOP COUNTRIES")],
-        [InlineKeyboardButton("🌍 EXPLORE RANKINGS", callback_data="wr|world|none|_|0")],
+        InlineKeyboardButton("🌍 EXPLORE RANKINGS", callback_data="wr|world|all")
         [InlineKeyboardButton("🗺️ EXPLORE COUNTRIES", callback_data="geo_country_list|0"),
          InlineKeyboardButton("🎒 GRADE RANKS", callback_data="geo_grade_list|0")],
     ]
@@ -1614,31 +1614,20 @@ def build_organization_grade_breakdown_text(grade_rows: list) -> str:
     lines.append("</table>")
     return "\n".join(lines)
 
-def build_world_rank_text(scope: str, ftype: str, fval: str, mode: str, matrix: dict, summary: dict = None) -> str:
+def build_world_rank_text(scope: str, grade: str, matrix: dict, summary: dict = None) -> str:
     scope_labels = {"world": "🌍 WORLD", "country": "🌎 COUNTRY", "city": "🌆 CITY", "school": "🏫 SCHOOL"}
-    mode_label = "Average" if mode == "average" else "Total"
-
     lines = [f"<h2>{scope_labels.get(scope, 'World')} RANKINGS</h2>"]
 
-    if summary:
-        lines.append(
-            f"👥 {summary.get('student_count', 0)} students · 🏫 {summary.get('school_count', 0)} schools · "
-            f"🏢 {summary.get('team_count', 0)} teams · 🌆 {summary.get('city_count', 0)} cities · "
-            f"🌍 {summary.get('country_count', 0)} countries"
-        )
-        lines.append(f"<b>{summary.get('total_marks', 0)}</b> total marks · <b>{int(summary.get('avg_marks', 0))}</b> average")
-
-    filter_label = ""
-    if ftype == "grade" and fval not in (None, "total", "__open__"):
-        filter_label = f"Grade {fval}"
-    elif ftype == "difficulty" and fval not in (None, "__open__"):
-        filter_label = f"{fval.title()} only"
-    elif ftype == "subject" and fval not in (None, "__open__"):
-        filter_label = fval.title()
-    lines.append(f"<i>{filter_label or 'All grades · All subjects'} · Ranked by {mode_label}</i>")
+    s = summary or {}
+    lines.append(
+        f"👥 {s.get('student_count', 0)} students · 🏫 {s.get('school_count', 0)} schools · "
+        f"🏢 {s.get('team_count', 0)} teams · 🌆 {s.get('city_count', 0)} cities · "
+        f"🌍 {s.get('country_count', 0)} countries"
+    )
+    lines.append(f"<b>{s.get('total_marks', 0)}</b> total marks · <b>{int(s.get('avg_marks', 0))}</b> average")
+    lines.append(f"<i>{'All grades' if grade in (None, 'all') else f'Grade {grade}'}</i>")
     lines.append("<hr/>")
 
-    medals = ["🥇", "🥈", "🥉"]
     cols = {
         "world": [("students", "Students"), ("teams", "Teams"), ("schools", "Schools"), ("cities", "Cities"), ("countries", "Countries")],
         "country": [("students", "Students"), ("teams", "Teams"), ("schools", "Schools"), ("cities", "Cities")],
@@ -1646,10 +1635,12 @@ def build_world_rank_text(scope: str, ftype: str, fval: str, mode: str, matrix: 
         "school": [("students", "Students"), ("teams", "Teams")],
     }.get(scope, [("students", "Students")])
 
+    medals = ["🥇", "🥈", "🥉"]
     header_row = "<tr><td><b>#</b></td>" + "".join(f"<td><b>{label}</b></td>" for _, label in cols) + "</tr>"
+
+    # Always render 10 rows — skeleton dashes for any column/rank with no data yet.
     body_rows = []
-    max_len = max((len(matrix.get(key, [])) for key, _ in cols), default=0)
-    for i in range(min(max_len, 10)):
+    for i in range(10):
         rank = medals[i] if i < 3 else str(i + 1)
         cells = []
         for key, _ in cols:
@@ -1660,17 +1651,12 @@ def build_world_rank_text(scope: str, ftype: str, fval: str, mode: str, matrix: 
                 cells.append("<td>—</td>")
         body_rows.append(f"<tr><td>{rank}</td>{''.join(cells)}</tr>")
 
-    if not body_rows:
-        lines.append("<i>No scores yet for this filter.</i>")
-    else:
-        lines.append("<table>" + header_row + "".join(body_rows) + "</table>")
-
+    lines.append("<table>" + header_row + "".join(body_rows) + "</table>")
     return "\n".join(lines)
 
-
-def build_world_rank_keyboard(scope: str, ftype: str, fval: str, mode: str, subjects: list = None, soff: int = 0) -> InlineKeyboardMarkup:
-    def _cb(s=None, ft=None, fv=None, m=None, so=None):
-        return f"wr|{s or scope}|{ft if ft is not None else ftype}|{fv if fv is not None else fval}|{m or mode}|{so if so is not None else soff}"
+def build_world_rank_keyboard(scope: str, grade: str) -> InlineKeyboardMarkup:
+    def _cb(s=None, g=None):
+        return f"wr|{s or scope}|{g if g is not None else grade}"
 
     def _scope_btn(s, label):
         return InlineKeyboardButton(("• " if scope == s else "") + label, callback_data=_cb(s=s))
@@ -1680,36 +1666,11 @@ def build_world_rank_keyboard(scope: str, ftype: str, fval: str, mode: str, subj
         [_scope_btn("city", "🌆 City"), _scope_btn("school", "🏫 School")],
     ]
 
-    def _cat_btn(c, label):
-        default_val = {"grade": "total", "difficulty": "__open__", "subject": "__open__"}[c]
-        return InlineKeyboardButton(("• " if ftype == c else "") + label, callback_data=_cb(ft=c, fv=default_val, so=0))
-
-    rows.append([_cat_btn("grade", "🎒 Grade"), _cat_btn("difficulty", "📈 Difficulty"), _cat_btn("subject", "📚 Subject")])
-
-    if ftype == "grade":
-        vals = [("total", "All"), ("12", "12"), ("10", "10"), ("8", "8"), ("6", "6")]
-        rows.append([InlineKeyboardButton(("• " if fval == v else "") + label, callback_data=_cb(fv=v)) for v, label in vals])
-    elif ftype == "difficulty":
-        vals = [("easy", "🟢 Easy"), ("medium", "🟡 Mid"), ("hard", "🔴 Hard")]
-        rows.append([InlineKeyboardButton(("• " if fval == v else "") + label, callback_data=_cb(fv=v)) for v, label in vals])
-    elif ftype == "subject":
-        subjects = subjects or []
-        page = subjects[soff:soff + 12]
-        for i in range(0, len(page), 4):
-            chunk = page[i:i + 4]
-            rows.append([InlineKeyboardButton(("• " if fval == s else "") + s.title()[:12], callback_data=_cb(fv=s)) for s in chunk])
-        nav = []
-        if soff > 0:
-            nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=_cb(so=max(0, soff - 12))))
-        if soff + 12 < len(subjects):
-            nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=_cb(so=soff + 12)))
-        if nav:
-            rows.append(nav)
-
-    mode_label = "📊 SWITCH TO AVERAGE" if mode == "total" else "📊 SWITCH TO TOTAL"
-    next_mode = "average" if mode == "total" else "total"
-    rows.append([InlineKeyboardButton(mode_label, callback_data=_cb(m=next_mode))])
+    grade_vals = [("all", "All"), ("12", "12"), ("10", "10"), ("8", "8"), ("6", "6")]
+    rows.append([InlineKeyboardButton(("• " if grade == v else "") + label, callback_data=_cb(g=v)) for v, label in grade_vals])
 
     rows.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
                  InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
     return InlineKeyboardMarkup(rows)
+
+

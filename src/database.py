@@ -4319,70 +4319,40 @@ def db_get_all_subjects():
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_get_rank_matrix(scope: str = "world", grade=None, difficulty=None, subject=None, mode: str = "total", limit: int = 10):
-    """
-    Unified matrix for World/Country/City/School tabs.
-    - grade/difficulty/subject: at most ONE active (mirrors the UI's mutually-exclusive filter row)
-    - mode: 'total' (SUM) or 'average' (AVG) — toggle for team/school/city/country comparison
-    Returns dict: {"students": [...], "teams": [...], "schools": [...], "cities": [...], "countries": [...]}
-    Each list item: {"name": str, "score": int|float}
-    """
+def db_get_rank_matrix(scope: str = "world", grade=None, limit: int = 10):
+    """Unified matrix for World/Country/City/School — always SUM(total_marks), grade optional."""
     from src.rendering.html_views import format_public_name
-    agg = "AVG" if mode == "average" else "SUM"
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            grade_val = None if grade in (None, "total", "__open__") else int(grade)
+            grade_val = None if grade in (None, "all") else int(grade)
 
-            if subject and subject != "__open__":
-                score_join, indiv_expr, group_expr, params = (
-                    "JOIN user_subject_marks sm ON sm.user_id = u.user_id AND sm.subject = %s",
-                    "sm.marks", f"{agg}(sm.marks)::int", [subject.lower()]
-                )
-            elif difficulty and difficulty != "__open__":
-                score_join, indiv_expr, group_expr, params = (
-                    "JOIN user_difficulty_marks dm ON dm.user_id = u.user_id AND dm.difficulty = %s",
-                    "dm.marks", f"{agg}(dm.marks)::int", [difficulty.lower()]
-                )
-            else:
-                score_join, indiv_expr, group_expr, params = "", "u.total_marks", f"{agg}(u.total_marks)::int", []
-
-            # Students (individual — always u.total_marks-based unless subj/diff filtered)
-            cur.execute(f"""
-                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted,
-                       {indiv_expr} AS score
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks AS score
                 FROM user_stats u
-                {score_join}
                 WHERE (%s::int IS NULL OR u.grade = %s)
-                ORDER BY score DESC LIMIT %s;
-            """, tuple(params) + (grade_val, grade_val, limit))
+                ORDER BY u.total_marks DESC LIMIT %s;
+            """, (grade_val, grade_val, limit))
             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
 
-            if scope == "world" and mode != "average":
-                # Only students needed for the pure "world, total" view — rest of matrix below
-                pass
-
-            def _group(label_col, org_join, require_org=False):
-                join_clause = org_join
+            def _group(label_col, join_clause, require_org=False):
                 cur.execute(f"""
-                    SELECT {label_col} AS name, {group_expr} AS score
+                    SELECT {label_col} AS name, SUM(u.total_marks)::int AS score
                     FROM user_stats u
                     {join_clause}
-                    {score_join}
                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
-                    GROUP BY name
-                    ORDER BY score DESC LIMIT %s;
-                """, tuple(params) + (grade_val, grade_val, limit))
+                    GROUP BY name ORDER BY score DESC LIMIT %s;
+                """, (grade_val, grade_val, limit))
                 return [dict(r) for r in cur.fetchall()]
 
             org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
                         "LEFT JOIN organizations o ON m.org_id = o.org_id")
-            org_join_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
-                            "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
+            org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+                       "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
 
-            teams = _group("o.org_name", org_join_req) if scope in ("school", "world") else []
-            schools = _group("o.org_name", org_join_req)
+            teams = _group("o.org_name", org_req)
+            schools = _group("o.org_name", org_req)
             cities = _group("COALESCE(o.city, u.personal_city)", org_left)
             countries = _group("COALESCE(o.country, u.personal_country)", org_left)
 
@@ -4393,7 +4363,7 @@ def db_get_rank_matrix(scope: str = "world", grade=None, difficulty=None, subjec
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+                      
 def db_edit_tournament_answer(user_id, message_id, new_option: int, new_is_correct: bool):
     conn = None
     try:
