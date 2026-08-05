@@ -39,6 +39,7 @@ from src.database import (
     db_get_feedback_thread,
     db_get_question_by_id,
     db_get_latest_track_for_question,
+    db_hide_question_for_user,
     db_get_alliance_leaderboard,
     db_get_city_leaderboard,
     db_get_country_leaderboard,
@@ -344,9 +345,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         prev_mid = LAST_UTILITY_MID.get(user_id)
         if prev_mid and prev_mid != query.message.message_id:
             try:
-                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=prev_mid)
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
             except Exception:
                 pass
+            await send_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id,
+                html_content=(
+                    f"✅ <b>Answer updated to {letters[new_opt]}</b> for REF <code>{display_id}</code>.\n\n"
+                    f"{flip_note}\n\n"
+                    f"The full explanation lands here automatically once the round wraps up."
+                ),
+                reply_markup=nav_kb
+            )
+            return
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
@@ -527,8 +538,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "neutral": "Noted — your correctness didn't change."
         }.get(result.get("o_result_flip") if result else "neutral", "")
         nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+        try:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+        except Exception:
+            pass
+        await send_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id,
             html_content=(
                 f"✅ <b>Answer updated to {letters[new_opt]}</b> for REF <code>{display_id}</code>.\n\n"
                 f"{flip_note}\n\n"
@@ -541,8 +556,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "cancel_change":
         await query.answer("Kept your original answer.")
         nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+        try:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+        except Exception:
+            pass
+        await send_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id,
             html_content="✅ No change made — your original answer stays as submitted.",
             reply_markup=nav_kb
         )
@@ -757,7 +776,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         roster = await asyncio.to_thread(db_get_organization_roster, org_id)
+        from src.database import db_get_org_rank_summary
+        rank_summary = await asyncio.to_thread(db_get_org_rank_summary, org_id)
         text = build_organization_card_text(org_details, roster, sort_field, sort_dir)
+        rank_bits = []
+        if rank_summary.get("city_rank"):
+            rank_bits.append(f"🌆 City #{rank_summary['city_rank']}")
+        if rank_summary.get("country_rank"):
+            rank_bits.append(f"🌍 Country #{rank_summary['country_rank']}")
+        if rank_summary.get("world_rank"):
+            rank_bits.append(f"🏆 World #{rank_summary['world_rank']}")
+        if rank_bits:
+            text = text.replace("<hr/>\n<b>", f"{' · '.join(rank_bits)}\n<hr/>\n<b>", 1)
 
         user_membership = next((m for m in roster if int(m['user_id']) == int(user_id)), None)
         user_role = user_membership.get("org_role") if user_membership else "member"
@@ -803,7 +833,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "leave_org_confirm":
         await query.answer()
         org_id = int(d_id)
+
+        # Snapshot who was leaving + who the admins are BEFORE the leave, since
+        # db_leave_organization marks their membership row 'left' immediately.
+        leaver_profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        leaver_name = format_public_name(leaver_profile) if leaver_profile else "A student"
+        from src.database import db_get_org_admin_ids
+        admin_ids_before = await asyncio.to_thread(db_get_org_admin_ids, org_id)
+
         result = await asyncio.to_thread(db_leave_organization, user_id, org_id)
+
         if result and result.get("was_creator") and result.get("promoted_id"):
             try:
                 await context.bot.send_message(
@@ -816,6 +855,20 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             msg = "🚪 You left the team. Since you were the creator, leadership was automatically handed to your longest-standing admin/member."
         else:
             msg = "🚪 You successfully exited the school team. Alliance points reset."
+            # Non-creator leave — notify the remaining admins/creator, since they'd
+            # otherwise have no way of knowing their roster shrank.
+            for admin_id in admin_ids_before:
+                if str(admin_id) == str(user_id):
+                    continue
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(admin_id),
+                        text=f"🚪 <b>{leaver_name}</b> has left your team.",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
         await query.edit_message_text(msg, reply_markup=return_kb, parse_mode="HTML")
         return
 
@@ -1141,6 +1194,78 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
+    elif action == "geo_country_list":
+        await query.answer()
+        offset = int(d_id)
+        from src.database import db_get_countries_ranked, db_count_countries_ranked
+        from src.rendering.html_views import build_geo_country_list_text, build_geo_country_list_keyboard
+        rows = await asyncio.to_thread(db_get_countries_ranked, 15, offset)
+        total = await asyncio.to_thread(db_count_countries_ranked)
+        text = build_geo_country_list_text(rows, offset, total)
+        kb = build_geo_country_list_keyboard(rows, offset, total)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "geo_grade_list":
+        await query.answer()
+        from src.database import db_get_grade_world_ranked
+        from src.rendering.html_views import build_geo_grade_list_text, build_geo_grade_list_keyboard
+        rows = await asyncio.to_thread(db_get_grade_world_ranked, 10, 0)
+        text = build_geo_grade_list_text(rows)
+        kb = build_geo_grade_list_keyboard(rows)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "geo_grade_detail":
+        await query.answer()
+        grade = int(d_id)
+        from src.database import db_get_grade_detail
+        from src.rendering.html_views import build_geo_grade_detail_text, build_geo_grade_detail_keyboard
+        detail = await asyncio.to_thread(db_get_grade_detail, grade)
+        text = build_geo_grade_detail_text(grade, detail)
+        kb = build_geo_grade_detail_keyboard()
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "geo_country_detail":
+        await query.answer()
+        country = d_id
+        from src.database import db_get_country_detail
+        from src.rendering.html_views import build_geo_country_detail_text, build_geo_country_detail_keyboard
+        detail = await asyncio.to_thread(db_get_country_detail, country)
+        text = build_geo_country_detail_text(country, detail)
+        kb = build_geo_country_detail_keyboard(country, detail)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "geo_city_detail":
+        await query.answer()
+        city = d_id
+        country = data[2] if len(data) > 2 else None
+        from src.database import db_get_city_detail
+        from src.rendering.html_views import build_geo_city_detail_text, build_geo_city_detail_keyboard
+        detail = await asyncio.to_thread(db_get_city_detail, city, country)
+        text = build_geo_city_detail_text(city, country, detail)
+        kb = build_geo_city_detail_keyboard(city, country, detail)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "geo_school_list":
+        await query.answer()
+        city = d_id
+        country = data[2] if len(data) > 2 else "all"
+        offset = int(data[3]) if len(data) > 3 else 0
+        city_arg = None if city == "all" else city
+        country_arg = None if country == "all" else country
+        from src.database import db_get_schools_ranked, db_count_schools_ranked
+        from src.rendering.html_views import build_geo_school_list_text, build_geo_school_list_keyboard
+        rows = await asyncio.to_thread(db_get_schools_ranked, city_arg, country_arg, 15, offset)
+        total = await asyncio.to_thread(db_count_schools_ranked, city_arg, country_arg)
+        text = build_geo_school_list_text(rows, city, country, offset, total)
+        kb = build_geo_school_list_keyboard(rows, city, country, offset, total)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
     elif action == "menu_invite":
         await query.answer()
         from src.database import db_get_or_create_referral_token
@@ -1208,26 +1333,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         else:
             text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=return_kb)
-        return
-
-    elif action == "team_invite":
-        await query.answer()
-        org_id = int(d_id)
-        conn = engine.get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT join_token, org_name FROM organizations WHERE org_id = %s;", (org_id,))
-                row = cur.fetchone()
-        finally:
-            engine.release_connection(conn)
-        if not row:
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Team not found.", reply_markup=return_kb)
-            return
-        bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
-        invite_link = f"https://t.me/{bot_username}?start=join_{row['join_token']}"
-        invite_text = f"🔗 <b>INVITE LINK FOR {row['org_name']}</b>\n\nShare this link — anyone who opens it joins (or requests to join) your team automatically:\n\n<code>{invite_link}</code>"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=invite_text, reply_markup=kb)
         return
 
     elif action == "team_invite":
@@ -1427,8 +1532,24 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
              InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
-            [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")]
+            [InlineKeyboardButton("🗂️ FEEDBACK KANBAN", callback_data="fb_kanban|0")],
+            [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")],
+            [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
         ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "fb_kanban":
+        from src.database import db_is_admin, db_get_feedback_recent_by_status
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+        stats = await asyncio.to_thread(db_get_feedback_stats)
+        recent_by_status = await asyncio.to_thread(db_get_feedback_recent_by_status, 3)
+        from src.rendering.html_views import build_feedback_kanban_text, build_feedback_kanban_keyboard
+        text = build_feedback_kanban_text(stats, recent_by_status)
+        kb = build_feedback_kanban_keyboard()
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -1522,22 +1643,25 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb)
         return
 
-    elif action == "my_feedback":
+    elif action == "fb_view":
+        fb_id = int(d_id)
+        return_offset = data[2] if len(data) > 2 else "0"
+        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+        if not fb or str(fb.get("user_id")) != str(user_id):
+            await query.answer("Not found.", show_alert=True)
+            return
         await query.answer()
-        offset = int(d_id)
-        items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, offset)
-        total = await asyncio.to_thread(db_count_user_feedback, user_id)
-        text = build_user_feedback_list_text(items, total)
-
-        nav_row = []
-        if offset > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_feedback|{max(0, offset - 5)}"))
-        if offset + 5 < total:
-            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_feedback|{offset + 5}"))
-        buttons = [nav_row] if nav_row else []
-        buttons.append([InlineKeyboardButton("✍️ SUBMIT NEW FEEDBACK", callback_data="fb_menu|0")])
-        buttons.append([InlineKeyboardButton("🔙 BACK", callback_data="fb_menu|0")])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+        thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
+            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
+            [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
+        ])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb
+        )
         return
 
     elif action == "fb_user_reply":
@@ -1555,20 +1679,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="✍️ <b>Type your reply below:</b>", reply_markup=kb)
         except Exception as e:
             print(f"[FB-REPLY-ERROR] Failed to open reply box for feedback #{fb_id}: {e}", flush=True)
-        return
-
-    elif action == "fb_user_reply":
-        await query.answer()
-        fb_id = int(d_id)
-        return_offset = data[2] if len(data) > 2 else "0"
-        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
-        if not fb or str(fb.get("user_id")) != str(user_id):
-            await query.answer("Not found.", show_alert=True)
-            return
-        USER_STATES[user_id] = "AWAITING_USER_FEEDBACK_REPLY"
-        USER_PAYLOADS[user_id] = {"fb_id": fb_id, "return_offset": return_offset, "edit_mid": query.message.message_id}
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data=f"fb_view|{fb_id}|{return_offset}")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="✍️ <b>Type your reply below:</b>", reply_markup=kb)
         return
 
     elif action == "fsm_cancel":
@@ -1781,7 +1891,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             ) + removed_note + diagram_note
 
             channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
-            diag_kb_rows = [[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]]
+            diag_kb_rows = [
+                [InlineKeyboardButton("🙈 REMOVE FROM MY LIST", callback_data=f"my_ans_hide|{q_id}|{subject}|{filter_mode}|{offset}|{sort_code}|{dir_code}")],
+                [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]
+            ]
             if has_real_diagram(q):
                 diag_kb_rows.insert(0, [InlineKeyboardButton("📣 OPEN IN CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")])
             try:
@@ -1802,12 +1915,34 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         channel_username = CONFIG.get("channel", "QuizOva").lstrip('@')
         open_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📣 OPEN IN CHANNEL", url=f"https://t.me/{channel_username}/{track['message_id']}")],
+            [InlineKeyboardButton("🙈 REMOVE FROM MY LIST", callback_data=f"my_ans_hide|{q_id}|{subject}|{filter_mode}|{offset}|{sort_code}|{dir_code}")],
             [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]
         ])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=f"⬜ <b>{q['topic']}</b>\n\nYou haven't answered this one yet — tap below to open it in the channel.",
             reply_markup=open_kb
+        )
+        return
+
+    elif action == "my_ans_hide":
+        await query.answer()
+        q_id_hide, subject, filter_mode, offset = data[1], data[2], data[3], data[4]
+        sort_code = data[5] if len(data) > 5 else "t"
+        dir_code = data[6] if len(data) > 6 else "a"
+        back_cb = f"my_ans_subj|{subject}|{filter_mode}|{offset}|{sort_code}|{dir_code}"
+
+        await asyncio.to_thread(db_hide_question_for_user, user_id, q_id_hide)
+
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=back_cb)]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=(
+                "🙈 <b>Removed from your list.</b>\n\n"
+                "This only affects your personal view — the question, your saved score, "
+                "and the channel post are all untouched."
+            ),
+            reply_markup=nav_kb
         )
         return
 
@@ -1858,7 +1993,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
 
 
-    if action not in ("ans", "toggle", "toggle_photo", "confirm_change", "cancel_change"):
+    if action not in ("ans", "toggle", "toggle_photo", "confirm_change", "cancel_change", "fb_view", "my_ans_hide"):
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)

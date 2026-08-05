@@ -542,6 +542,14 @@ class QuizEngine:
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_hidden_questions (
+                        user_id VARCHAR(20) NOT NULL,
+                        q_id TEXT NOT NULL,
+                        hidden_at TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (user_id, q_id)
+                    );
+                """)
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -2288,7 +2296,10 @@ def db_get_user_subjects_summary(user_id):
 def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", limit: int = 8, offset: int = 0, sort_field: str = "topic", sort_dir: str = "asc"):
     """Every question (optionally scoped to a subject) tagged with whether THIS user
     answered it, plus the date they first answered (if any). filter_mode: 'all' | 'answered' | 'unanswered'.
-    sort_field: 'topic' | 'date' | 'tags' | 'difficulty'. sort_dir: 'asc' | 'desc'."""
+    sort_field: 'topic' | 'date' | 'tags' | 'difficulty'. sort_dir: 'asc' | 'desc'.
+    Questions this user personally hid (user_hidden_questions) never appear here — this
+    is a purely personal, non-destructive hide; the record and every other user's view
+    are untouched."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -2309,6 +2320,10 @@ def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str =
                     LEFT JOIN sent_tracks st ON st.q_id = q.id
                     LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
                     WHERE (%s::text IS NULL OR lower(q.subject) = lower(%s))
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_hidden_questions h
+                          WHERE h.user_id = %s AND h.q_id = q.id
+                      )
                     ORDER BY q.id, st.sent_at DESC NULLS LAST
                 )
                 SELECT * FROM latest
@@ -2319,7 +2334,7 @@ def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str =
                       END
                 ORDER BY subject ASC, {sort_col} {direction} NULLS LAST, q_id ASC
                 LIMIT %s OFFSET %s;
-            """, (str(user_id), subject, subject, filter_mode, filter_mode, limit, offset))
+            """, (str(user_id), subject, subject, str(user_id), filter_mode, filter_mode, limit, offset))
             return cur.fetchall()
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch user question matrix: {e}", flush=True)
@@ -2341,6 +2356,10 @@ def db_count_user_question_matrix(user_id, subject: str = None, filter_mode: str
                     LEFT JOIN sent_tracks st ON st.q_id = q.id
                     LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
                     WHERE (%s::text IS NULL OR lower(q.subject) = lower(%s))
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_hidden_questions h
+                          WHERE h.user_id = %s AND h.q_id = q.id
+                      )
                     ORDER BY q.id, st.sent_at DESC NULLS LAST
                 )
                 SELECT COUNT(*) AS cnt FROM latest
@@ -2349,7 +2368,7 @@ def db_count_user_question_matrix(user_id, subject: str = None, filter_mode: str
                         WHEN %s = 'unanswered' THEN is_correct IS NULL
                         ELSE TRUE
                       END;
-            """, (str(user_id), subject, subject, filter_mode, filter_mode))
+            """, (str(user_id), subject, subject, str(user_id), filter_mode, filter_mode))
             row = cur.fetchone()
             return int(row['cnt']) if row else 0
     except Exception as e:
@@ -2584,7 +2603,6 @@ def db_promote_member(user_id, org_id: int, promote: bool) -> bool:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
 # --- DYNAMIC GEOGRAPHIC LEAGUE ANALYTICS ---
 
 def db_get_city_leaderboard():
@@ -2633,6 +2651,322 @@ def db_get_country_leaderboard():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+# --- HIERARCHICAL DRILL-DOWN: World -> Country -> City -> School -> Grade ---
+
+def db_get_countries_ranked(limit: int = 15, offset: int = 0):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COALESCE(o.country, u.personal_country) AS country,
+                       SUM(u.total_marks) AS total_score, COUNT(DISTINCT u.user_id) AS student_count
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
+                GROUP BY country
+                ORDER BY total_score DESC
+                LIMIT %s OFFSET %s;
+            """, (limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch countries ranked: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_count_countries_ranked() -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS cnt
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL;
+            """)
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count countries: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_country_detail(country: str):
+    """Returns this country's world rank/score plus every city within it, ranked."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH ranked AS (
+                    SELECT COALESCE(o.country, u.personal_country) AS country,
+                           SUM(u.total_marks) AS total_score,
+                           RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS world_rank
+                    FROM user_stats u
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    LEFT JOIN organizations o ON m.org_id = o.org_id
+                    WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
+                    GROUP BY country
+                )
+                SELECT * FROM ranked WHERE country = %s;
+            """, (country,))
+            summary = cur.fetchone()
+
+            cur.execute("""
+                SELECT COALESCE(o.city, u.personal_city) AS city,
+                       SUM(u.total_marks) AS total_score, COUNT(DISTINCT u.user_id) AS student_count
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.country, u.personal_country) = %s
+                  AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                GROUP BY city
+                ORDER BY total_score DESC
+                LIMIT 15;
+            """, (country,))
+            cities = cur.fetchall()
+            return {"summary": dict(summary) if summary else {"total_score": 0, "world_rank": None}, "cities": cities}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch country detail: {e}", flush=True)
+        return {"summary": {"total_score": 0, "world_rank": None}, "cities": []}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_city_detail(city: str, country: str = None):
+    """Returns this city's world + country rank/score plus every school within it, ranked."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH ranked AS (
+                    SELECT COALESCE(o.city, u.personal_city) AS city,
+                           COALESCE(o.country, u.personal_country) AS country,
+                           SUM(u.total_marks) AS total_score,
+                           RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS world_rank
+                    FROM user_stats u
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    LEFT JOIN organizations o ON m.org_id = o.org_id
+                    WHERE COALESCE(o.city, u.personal_city) IS NOT NULL
+                    GROUP BY city, country
+                )
+                SELECT * FROM ranked WHERE city = %s AND (%s::text IS NULL OR country = %s);
+            """, (city, country, country))
+            summary = cur.fetchone()
+
+            country_rank = None
+            if country:
+                cur.execute("""
+                    WITH ranked AS (
+                        SELECT COALESCE(o.city, u.personal_city) AS city,
+                               SUM(u.total_marks) AS total_score,
+                               RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS country_rank
+                        FROM user_stats u
+                        LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                        LEFT JOIN organizations o ON m.org_id = o.org_id
+                        WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                        GROUP BY city
+                    )
+                    SELECT country_rank FROM ranked WHERE city = %s;
+                """, (country, city))
+                r = cur.fetchone()
+                country_rank = r['country_rank'] if r else None
+
+            cur.execute("""
+                SELECT o.org_id, o.org_name, o.org_tag, SUM(u.total_marks) AS total_score, COUNT(DISTINCT u.user_id) AS student_count
+                FROM organizations o
+                JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN user_stats u ON m.user_id = u.user_id
+                WHERE o.city = %s AND o.deleted_at IS NULL
+                GROUP BY o.org_id, o.org_name, o.org_tag
+                ORDER BY total_score DESC
+                LIMIT 15;
+            """, (city,))
+            schools = cur.fetchall()
+            summary_dict = dict(summary) if summary else {"total_score": 0, "world_rank": None}
+            summary_dict["country_rank"] = country_rank
+            return {"summary": summary_dict, "schools": schools}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch city detail: {e}", flush=True)
+        return {"summary": {"total_score": 0, "world_rank": None, "country_rank": None}, "schools": []}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_schools_ranked(city: str = None, country: str = None, limit: int = 15, offset: int = 0):
+    """Alphabetical school listing, optionally scoped to a city or country."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT o.org_id, o.org_name, o.org_tag, o.city, o.country,
+                       COALESCE(SUM(u.total_marks), 0) AS total_score
+                FROM organizations o
+                LEFT JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN user_stats u ON m.user_id = u.user_id
+                WHERE o.deleted_at IS NULL
+                  AND (%s::text IS NULL OR o.city = %s)
+                  AND (%s::text IS NULL OR o.country = %s)
+                GROUP BY o.org_id, o.org_name, o.org_tag, o.city, o.country
+                ORDER BY o.org_name ASC
+                LIMIT %s OFFSET %s;
+            """, (city, city, country, country, limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch schools ranked: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_count_schools_ranked(city: str = None, country: str = None) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) AS cnt FROM organizations o
+                WHERE o.deleted_at IS NULL
+                  AND (%s::text IS NULL OR o.city = %s)
+                  AND (%s::text IS NULL OR o.country = %s);
+            """, (city, city, country, country))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count schools ranked: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_org_rank_summary(org_id: int):
+    """Returns this school's rank within its own city, its own country, and the whole world."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT city, country FROM organizations WHERE org_id = %s;", (int(org_id),))
+            org = cur.fetchone()
+            if not org:
+                return {"city_rank": None, "country_rank": None, "world_rank": None}
+
+            def _rank(scope_clause, scope_params):
+                cur.execute(f"""
+                    WITH ranked AS (
+                        SELECT o.org_id, SUM(u.total_marks) AS total_score,
+                               RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS rnk
+                        FROM organizations o
+                        JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                        JOIN user_stats u ON m.user_id = u.user_id
+                        WHERE o.deleted_at IS NULL {scope_clause}
+                        GROUP BY o.org_id
+                    )
+                    SELECT rnk FROM ranked WHERE org_id = %s;
+                """, (*scope_params, int(org_id)))
+                r = cur.fetchone()
+                return r['rnk'] if r else None
+
+            world_rank = _rank("", ())
+            city_rank = _rank("AND o.city = %s", (org['city'],)) if org.get('city') else None
+            country_rank = _rank("AND o.country = %s", (org['country'],)) if org.get('country') else None
+            return {"city_rank": city_rank, "country_rank": country_rank, "world_rank": world_rank}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch org rank summary: {e}", flush=True)
+        return {"city_rank": None, "country_rank": None, "world_rank": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_grade_world_ranked(limit: int = 10, offset: int = 0):
+    """All registered grades, ranked by combined student marks — the entry list for the
+    grade drill-down, mirroring db_get_countries_ranked."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT grade, SUM(total_marks) AS total_score, COUNT(*) AS student_count
+                FROM user_stats
+                WHERE grade IS NOT NULL
+                GROUP BY grade
+                ORDER BY total_score DESC
+                LIMIT %s OFFSET %s;
+            """, (limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch grade world ranking: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_grade_detail(grade: int):
+    """This grade's world rank/score, plus which countries and cities are strongest
+    specifically AT this grade — the 'compare with city/country' requirement. Every
+    total here is scoped to this one grade, not the country/city's overall score."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH ranked AS (
+                    SELECT grade, SUM(total_marks) AS total_score,
+                           RANK() OVER (ORDER BY SUM(total_marks) DESC) AS world_rank
+                    FROM user_stats WHERE grade IS NOT NULL GROUP BY grade
+                )
+                SELECT * FROM ranked WHERE grade = %s;
+            """, (int(grade),))
+            summary = cur.fetchone()
+
+            cur.execute("""
+                SELECT COALESCE(o.country, u.personal_country) AS country,
+                       SUM(u.total_marks) AS total_score, COUNT(*) AS student_count
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE u.grade = %s AND COALESCE(o.country, u.personal_country) IS NOT NULL
+                GROUP BY country
+                ORDER BY total_score DESC
+                LIMIT 5;
+            """, (int(grade),))
+            top_countries = cur.fetchall()
+
+            cur.execute("""
+                SELECT COALESCE(o.city, u.personal_city) AS city,
+                       SUM(u.total_marks) AS total_score, COUNT(*) AS student_count
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE u.grade = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                GROUP BY city
+                ORDER BY total_score DESC
+                LIMIT 5;
+            """, (int(grade),))
+            top_cities = cur.fetchall()
+
+            return {
+                "summary": dict(summary) if summary else {"total_score": 0, "world_rank": None},
+                "top_countries": top_countries,
+                "top_cities": top_cities,
+            }
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch grade detail: {e}", flush=True)
+        return {"summary": {"total_score": 0, "world_rank": None}, "top_countries": [], "top_cities": []}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_update_user_location(user_id, city: str, country: str):
     """Sets the student's personal city/country AND auto-derives their timezone from the
     country (used for city/country leaderboards while unlinked from a team, and to render
@@ -2661,7 +2995,6 @@ def db_update_user_location(user_id, city: str, country: str):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_get_cities_for_country(country: str):
     conn = None
@@ -2934,6 +3267,34 @@ def db_get_feedback_stats():
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch feedback stats: {e}", flush=True)
         return {"by_category": {}, "by_status": {}, "total": 0}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_feedback_recent_by_status(limit_per_status: int = 3):
+    """Returns up to `limit_per_status` most-recently-updated items per status column —
+    powers the admin Kanban board in a single query instead of one per column."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, category, message, status, updated_at, user_id
+                FROM (
+                    SELECT f.*, ROW_NUMBER() OVER (PARTITION BY f.status ORDER BY f.updated_at DESC) AS rn
+                    FROM feedback f
+                ) ranked
+                WHERE rn <= %s
+                ORDER BY status, updated_at DESC;
+            """, (limit_per_status,))
+            rows = cur.fetchall()
+            by_status = {}
+            for r in rows:
+                by_status.setdefault(r['status'], []).append(r)
+            return by_status
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch feedback kanban rows: {e}", flush=True)
+        return {}
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
@@ -3909,6 +4270,46 @@ def db_set_show_real_identity(user_id, show: bool) -> bool:
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to set show_real_identity: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_hide_question_for_user(user_id, q_id: str) -> bool:
+    """Personal-only hide — never touches `questions` or `sent_tracks`. The question stays
+    fully intact for everyone else; only this user's /myanswers list stops showing it."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_hidden_questions (user_id, q_id)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, q_id) DO NOTHING;
+            """, (str(user_id), q_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to hide question for user: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_unhide_question_for_user(user_id, q_id: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_hidden_questions WHERE user_id = %s AND q_id = %s;", (str(user_id), q_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to unhide question for user: {e}", flush=True)
         return False
     finally:
         if conn:

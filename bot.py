@@ -377,6 +377,7 @@ async def start_command(update: Update, context):
 
                     letters = ["A", "B", "C", "D", "E"]
                     confirm_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📣 RE-CHECK THE QUESTION", url=f"https://t.me/{channel_username}/{track['message_id']}")],
                         [InlineKeyboardButton(f"✅ CHANGE TO {letters[user_selection]}", callback_data=f"confirm_change|{display_id}|{user_selection}")],
                         [InlineKeyboardButton("❌ KEEP MY ORIGINAL ANSWER", callback_data=f"cancel_change|{display_id}")]
                     ])
@@ -772,6 +773,13 @@ async def start_command(update: Update, context):
 
     if args and args[0].startswith("join_"):
         join_token = args[0][5:].strip()
+
+        # Snapshot BEFORE the join call — this is the only reliable way to know
+        # whether this person was a genuinely brand-new bot user (referral-eligible)
+        # or already had an account (no referral credit, since they weren't "brought in").
+        pre_existing_profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        is_new_to_bot = pre_existing_profile is None
+
         join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
         if not join_data:
             msg = "⚠️ This team invite link is invalid or the team no longer exists."
@@ -783,6 +791,33 @@ async def start_command(update: Update, context):
             msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
         else:
             msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+
+        # Team admin referral credit — ONLY if this person had never used the bot before.
+        # A user who already has an account wasn't "brought in" by this link, so crediting
+        # here would let a team admin farm points by re-sharing links to existing users.
+        creator_id = join_data.get("creator_id") if join_data else None
+        if is_new_to_bot and creator_id and str(creator_id) != str(user_id):
+            linked = await asyncio.to_thread(db_set_user_referrer, user_id, creator_id)
+            if linked:
+                try:
+                    ref_count = await asyncio.to_thread(db_count_referrals, creator_id)
+                    new_name = html.escape(user.first_name or user.username or "A student")
+                    should_notify = (ref_count <= 10) or (ref_count % 5 == 0)
+                    if should_notify:
+                        referral_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0")]])
+                        await context.bot.send_message(
+                            chat_id=int(creator_id),
+                            text=(
+                                f"🤝 <b>{new_name}</b> joined the bot through your team's invite link!\n"
+                                f"You'll earn bonus marks from their correct answers.\n\n"
+                                f"📊 Total referrals so far: <b>{ref_count}</b>"
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=referral_nav_kb
+                        )
+                except Exception:
+                    pass
+
         await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=msg)
     
     if args and args[0].startswith("tourney_"):

@@ -744,7 +744,7 @@ async def tournament_watcher_loop(app, engine: QuizEngine, poll_seconds: int = 2
                             if remaining_delay % update_interval == 0 or _LAST_DELAY_VAL == -1:
                                 if _LAST_DELAY_VAL != remaining_delay:
                                     try:
-                                        await app.bot.edit_message_text(chat_id=engine.config['channel'], message_id=int(ann_mid), text=text, parse_mode="HTML")
+                                        await edit_rich_message_safe(app.bot, chat_id=engine.config['channel'], message_id=int(ann_mid), html_content=text)
                                         _LAST_DELAY_VAL = remaining_delay
                                     except Exception:
                                         pass

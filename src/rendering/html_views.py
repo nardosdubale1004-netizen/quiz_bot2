@@ -504,7 +504,9 @@ def generate_poll_hint(q):
 
 def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) -> str:
     """
-    Builds a highly structured HTML card for upcoming tournament showdowns.
+    Rich-text (table/blockquote) pre-tournament announcement — rendered via the app's
+    sendRichMessage pipeline for a native Telegram table instead of a hand-drawn ├─ tree,
+    with a graceful legacy-HTML fallback baked into send/edit_rich_message_safe.
     """
     subject = meta.get("subject", "GENERAL").upper()
     topics = meta.get("topics", [])
@@ -512,41 +514,39 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
     total_count = meta.get("total_count", 0)
     round_seconds = meta.get("round_seconds", 60)
     cooldown_seconds = meta.get("cooldown_seconds", 15)
-    
+
     time_utc = meta.get("target_time_utc", "N/A")
     time_eat = meta.get("target_time_eat", "N/A")
-    
-    topics_formatted = " │ ".join([f"<code>{t}</code>" for t in topics[:4]])
+
+    shown_topics = topics[:4]
+    topics_str = ", ".join(html.escape(str(t)) for t in shown_topics) or "General mix"
     if len(topics) > 4:
-        topics_formatted += f" and {len(topics) - 4} more"
+        topics_str += f" +{len(topics) - 4} more"
 
     if remaining_delay is not None and remaining_delay > 0:
         mins, secs = divmod(remaining_delay, 60)
-        countdown_lbl = f"⏳ <b>COUNTDOWN:</b> <code>{mins}m {secs:02d}s remaining</code>"
+        status_line = f"⏳ <b>Starts in {mins}m {secs:02d}s</b>"
     else:
-        countdown_lbl = "⚔️ <b>STATUS:</b> <code>Match starting now...</code>"
+        status_line = "⚔️ <b>Starting now...</b>"
 
-    text = (
-        f"📢 <b>LIVE TOURNAMENT SHOWDOWN ALERT</b> ⚔️\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Scholars, prepare yourself! A live synchronized quiz tournament series is about to begin. "
-        f"Compete in real-time with other active peers.\n\n"
-        f"📋 <b>EXAMINATION CANVAS SCOPE:</b>\n"
-        f" ├─ 📚 <b>Subject:</b> <b>{subject}</b>\n"
-        f" ├─ 🏷️  <b>Topics Covered:</b> {topics_formatted}\n"
-        f" ├─ 📈 <b>Difficulty Curve:</b> <code>{diff_summary}</code>\n"
-        f" └─ 🔢 <b>Total Questions:</b> <code>{total_count} exercises</code>\n\n"
-        f"⏱️ <b>ROUND METRICS & TIMING:</b>\n"
-        f" ├─ ⏳ <b>Active Round Timer:</b> <code>{round_seconds} seconds</code>\n"
-        f" └─ ❄️ <b>Rest/Interval Cooldown:</b> <code>{cooldown_seconds} seconds</code>\n\n"
-        f"📅 <b>SYNCHRONIZED GLOBAL START TIME:</b>\n"
-        f" ├─ 🌍 <b>Universal Time:</b> <code>{time_utc}</code>\n"
-        f" ├─ 🇪🇹 <b>East African Time:</b> <code>{time_eat}</code>\n"
-        f" └─ {countdown_lbl}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 <i>Tip: Set your notifications ON! Correct and rapid answers earn speed-bonus leaderboard marks.</i>"
+    return (
+        f"<h2>⚔️ LIVE TOURNAMENT SHOWDOWN</h2>\n"
+        f"Scholars, get ready — everyone answers the same question on the same clock. Fastest correct answers climb the round podium.\n\n"
+        f"<table>"
+        f"<tr><td>📚 Subject</td><td><b>{html.escape(subject)}</b></td></tr>"
+        f"<tr><td>🏷️ Topics</td><td>{topics_str}</td></tr>"
+        f"<tr><td>📈 Difficulty</td><td>{html.escape(str(diff_summary))}</td></tr>"
+        f"<tr><td>🔢 Questions</td><td>{total_count}</td></tr>"
+        f"<tr><td>⏱️ Round timer</td><td>{round_seconds}s</td></tr>"
+        f"<tr><td>❄️ Cooldown</td><td>{cooldown_seconds}s</td></tr>"
+        f"</table>\n"
+        f"<blockquote>"
+        f"🌍 {html.escape(str(time_utc))}\n"
+        f"🇪🇹 {html.escape(str(time_eat))}\n"
+        f"{status_line}"
+        f"</blockquote>\n"
+        f"💡 <i>Turn notifications on — speed and accuracy both earn bonus marks.</i>"
     )
-    return text
 
 
 def build_profile_card_text(profile: dict, roster: list = None, subject_marks: list = None) -> str:
@@ -955,6 +955,8 @@ def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKe
         [_b("grade", "🎒 GRADE"), _b("school", "🏫 SCHOOL")],
         [_b("city", "🌆 CITY"), _b("country", "🌍 COUNTRY")],
         [_b("city_overall", "🌆 TOP CITIES"), _b("country_overall", "🌍 TOP COUNTRIES")],
+        [InlineKeyboardButton("🗺️ EXPLORE WORLD RANKS", callback_data="geo_country_list|0"),
+         InlineKeyboardButton("🎒 GRADE RANKS", callback_data="geo_grade_list|0")],
     ]
     if scope == "grade":
         grade_row = [
@@ -992,6 +994,36 @@ def build_feedback_stats_text(stats: dict) -> str:
         f"<b>By Category</b>\n" + "\n".join(cat_lines) + "\n\n"
         f"<b>By Status</b>\n" + "\n".join(status_lines)
     )
+
+def build_feedback_kanban_text(stats: dict, recent_by_status: dict) -> str:
+    """Kanban-style board: one column per status, each showing its count and its most
+    recently-updated items with a REF and a relative date, so admins can see where
+    everything sits before drilling into a specific queue."""
+    from src.config import FEEDBACK_STATUS_LABELS
+    lines = ["<h2>🗂️ FEEDBACK KANBAN BOARD</h2>", f"<i>{stats.get('total', 0)} total submissions</i>", "<hr/>"]
+    for status_key in ["open", "in_progress", "planned", "resolved", "wontfix"]:
+        label = FEEDBACK_STATUS_LABELS.get(status_key, status_key)
+        count = stats.get("by_status", {}).get(status_key, 0)
+        lines.append(f"<h3>{label} ({count})</h3>")
+        items = recent_by_status.get(status_key, [])
+        if not items:
+            lines.append("<i>Empty</i>")
+        else:
+            for fb in items:
+                when = fb['updated_at'].strftime('%b %d') if fb.get('updated_at') else "—"
+                snippet = html.escape(fb['message'][:45] + ("…" if len(fb['message']) > 45 else ""))
+                lines.append(f" • <code>#{fb['id']}</code> {snippet} <i>({when})</i>")
+    return "\n".join(lines)
+
+
+def build_feedback_kanban_keyboard() -> InlineKeyboardMarkup:
+    from src.config import FEEDBACK_STATUS_LABELS
+    rows = []
+    for status_key in ["open", "in_progress", "planned", "resolved", "wontfix"]:
+        rows.append([InlineKeyboardButton(f"📂 {FEEDBACK_STATUS_LABELS.get(status_key, status_key)}", callback_data=f"fb_browse|all|{status_key}:0")])
+    rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+    return InlineKeyboardMarkup(rows)
+
 
 def build_admin_dashboard_text(stats: dict) -> str:
     """Rich-text admin dashboard overview — sent via send_rich_message_safe so <table> renders
@@ -1396,3 +1428,161 @@ def build_admin_questions_keyboard(subject: str, status_filter: str, offset: int
     return InlineKeyboardMarkup(rows)
 
 
+# --- HIERARCHICAL DRILL-DOWN VIEWS: World -> Country -> City -> School ---
+
+def _medal_or_num(i: int) -> str:
+    medals = ["🥇", "🥈", "🥉"]
+    return medals[i] if i < 3 else str(i + 1)
+
+
+def build_geo_country_list_text(rows: list, offset: int, total: int) -> str:
+    lines = [f"<h2>🌍 WORLD RANKINGS — Countries</h2>", f"<i>{offset+1}-{offset+len(rows)} of {total}</i>", "<hr/>"]
+    if not rows:
+        lines.append("<i>No country data yet.</i>")
+        return "\n".join(lines)
+    table = ["<tr><td><b>#</b></td><td><b>Country</b></td><td><b>Marks</b></td><td><b>Students</b></td></tr>"]
+    for i, r in enumerate(rows):
+        table.append(f"<tr><td>{_medal_or_num(offset+i)}</td><td>{html.escape(str(r['country']))}</td><td>{r['total_score']}</td><td>{r['student_count']}</td></tr>")
+    lines.append("<table>" + "".join(table) + "</table>")
+    return "\n".join(lines)
+
+
+def build_geo_country_list_keyboard(rows: list, offset: int, total: int) -> InlineKeyboardMarkup:
+    kb = [[InlineKeyboardButton(f"🌍 {r['country']}", callback_data=f"geo_country_detail|{r['country']}")] for r in rows]
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"geo_country_list|{max(0, offset-15)}"))
+    if offset + 15 < total:
+        nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"geo_country_list|{offset+15}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"), InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
+    return InlineKeyboardMarkup(kb)
+
+
+def build_geo_country_detail_text(country: str, detail: dict) -> str:
+    s = detail["summary"]
+    rank_line = f"🥇 World Rank: <b>#{s['world_rank']}</b>" if s.get('world_rank') else "<i>Not yet ranked</i>"
+    lines = [
+        f"<h2>🌍 {html.escape(country)}</h2>",
+        f"{rank_line} · <b>{s.get('total_score', 0)}</b> total marks",
+        "<hr/>", "<h3>🌆 Top Cities</h3>"
+    ]
+    if not detail["cities"]:
+        lines.append("<i>No city data registered for this country yet.</i>")
+    else:
+        table = ["<tr><td><b>#</b></td><td><b>City</b></td><td><b>Marks</b></td></tr>"]
+        for i, c in enumerate(detail["cities"]):
+            table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(str(c['city']))}</td><td>{c['total_score']}</td></tr>")
+        lines.append("<table>" + "".join(table) + "</table>")
+    return "\n".join(lines)
+
+
+def build_geo_country_detail_keyboard(country: str, detail: dict) -> InlineKeyboardMarkup:
+    kb = [[InlineKeyboardButton(f"🌆 {c['city']}", callback_data=f"geo_city_detail|{c['city']}|{country}")] for c in detail["cities"]]
+    kb.append([InlineKeyboardButton("🏫 ALL SCHOOLS HERE", callback_data=f"geo_school_list|all|{country}|0")])
+    kb.append([InlineKeyboardButton("🔙 COUNTRIES", callback_data="geo_country_list|0")])
+    return InlineKeyboardMarkup(kb)
+
+
+def build_geo_city_detail_text(city: str, country: str, detail: dict) -> str:
+    s = detail["summary"]
+    rank_bits = []
+    if s.get("world_rank"):
+        rank_bits.append(f"🌍 World #{s['world_rank']}")
+    if s.get("country_rank"):
+        rank_bits.append(f"🌆 Country #{s['country_rank']}")
+    rank_line = " · ".join(rank_bits) if rank_bits else "<i>Not yet ranked</i>"
+    lines = [
+        f"<h2>🌆 {html.escape(city)}</h2>",
+        f"<i>{html.escape(country or '')}</i>",
+        f"{rank_line} · <b>{s.get('total_score', 0)}</b> total marks",
+        "<hr/>", "<h3>🏫 Schools</h3>"
+    ]
+    if not detail["schools"]:
+        lines.append("<i>No school teams registered in this city yet.</i>")
+    else:
+        table = ["<tr><td><b>#</b></td><td><b>School</b></td><td><b>Marks</b></td></tr>"]
+        for i, sc in enumerate(detail["schools"]):
+            table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(sc['org_name'])}</td><td>{sc['total_score']}</td></tr>")
+        lines.append("<table>" + "".join(table) + "</table>")
+    return "\n".join(lines)
+
+
+def build_geo_city_detail_keyboard(city: str, country: str, detail: dict) -> InlineKeyboardMarkup:
+    kb = [[InlineKeyboardButton(f"🏫 {sc['org_name']}", callback_data=f"view_org|{sc['org_id']}")] for sc in detail["schools"]]
+    back_cb = f"geo_country_detail|{country}" if country else "geo_country_list|0"
+    kb.append([InlineKeyboardButton("🔙 BACK", callback_data=back_cb)])
+    return InlineKeyboardMarkup(kb)
+
+
+def build_geo_school_list_text(rows: list, city: str, country: str, offset: int, total: int) -> str:
+    scope = html.escape(city) if city and city != "all" else (html.escape(country) if country and country != "all" else "World")
+    lines = [f"<h2>🏫 SCHOOLS — {scope}</h2>", f"<i>{offset+1}-{offset+len(rows)} of {total} · A-Z</i>", "<hr/>"]
+    if not rows:
+        lines.append("<i>No schools found.</i>")
+    return "\n".join(lines)
+
+
+def build_geo_school_list_keyboard(rows: list, city: str, country: str, offset: int, total: int) -> InlineKeyboardMarkup:
+    kb = [[InlineKeyboardButton(f"🏫 {r['org_name']} — {r['total_score']} marks", callback_data=f"view_org|{r['org_id']}")] for r in rows]
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"geo_school_list|{city}|{country}|{max(0, offset-15)}"))
+    if offset + 15 < total:
+        nav.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"geo_school_list|{city}|{country}|{offset+15}"))
+    if nav:
+        kb.append(nav)
+    back_cb = f"geo_country_detail|{country}" if country and country != "all" else "geo_country_list|0"
+    kb.append([InlineKeyboardButton("🔙 BACK", callback_data=back_cb)])
+    return InlineKeyboardMarkup(kb)
+
+def build_geo_grade_list_text(rows: list) -> str:
+    lines = ["<h2>🎒 WORLD RANKINGS — Grades</h2>", "<hr/>"]
+    if not rows:
+        lines.append("<i>No grade data yet.</i>")
+        return "\n".join(lines)
+    table = ["<tr><td><b>#</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Students</b></td></tr>"]
+    for i, r in enumerate(rows):
+        table.append(f"<tr><td>{_medal_or_num(i)}</td><td>Grade {r['grade']}</td><td>{r['total_score']}</td><td>{r['student_count']}</td></tr>")
+    lines.append("<table>" + "".join(table) + "</table>")
+    return "\n".join(lines)
+
+
+def build_geo_grade_list_keyboard(rows: list) -> InlineKeyboardMarkup:
+    kb = [[InlineKeyboardButton(f"🎒 Grade {r['grade']}", callback_data=f"geo_grade_detail|{r['grade']}")] for r in rows]
+    kb.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"), InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
+    return InlineKeyboardMarkup(kb)
+
+
+def build_geo_grade_detail_text(grade: int, detail: dict) -> str:
+    s = detail["summary"]
+    rank_line = f"🥇 World Rank: <b>#{s['world_rank']}</b>" if s.get('world_rank') else "<i>Not yet ranked</i>"
+    lines = [
+        f"<h2>🎒 Grade {grade}</h2>",
+        f"{rank_line} · <b>{s.get('total_score', 0)}</b> total marks (this grade, worldwide)",
+        "<hr/>", "<h3>🌍 Top Countries AT this grade</h3>"
+    ]
+    if not detail["top_countries"]:
+        lines.append("<i>No country data yet.</i>")
+    else:
+        table = ["<tr><td><b>#</b></td><td><b>Country</b></td><td><b>Marks</b></td></tr>"]
+        for i, c in enumerate(detail["top_countries"]):
+            table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(str(c['country']))}</td><td>{c['total_score']}</td></tr>")
+        lines.append("<table>" + "".join(table) + "</table>")
+
+    lines.append("<h3>🌆 Top Cities AT this grade</h3>")
+    if not detail["top_cities"]:
+        lines.append("<i>No city data yet.</i>")
+    else:
+        table = ["<tr><td><b>#</b></td><td><b>City</b></td><td><b>Marks</b></td></tr>"]
+        for i, c in enumerate(detail["top_cities"]):
+            table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(str(c['city']))}</td><td>{c['total_score']}</td></tr>")
+        lines.append("<table>" + "".join(table) + "</table>")
+
+    lines.append("<i>Rankings here compare only students in this grade — not each place's overall score.</i>")
+    return "\n".join(lines)
+
+
+def build_geo_grade_detail_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 GRADES", callback_data="geo_grade_list|0")]])

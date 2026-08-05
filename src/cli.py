@@ -772,7 +772,7 @@ async def admin_panel(app, engine: QuizEngine):
             if delay_seconds > 0:
                 try:
                     channel_id = engine.config['channel']
-                    ann_msg = await app.bot.send_message(chat_id=channel_id, text=proposed_ann_text, parse_mode="HTML")
+                    ann_msg = await send_rich_message_safe(app.bot, chat_id=channel_id, html_content=proposed_ann_text)
                     announcement_mid = ann_msg.message_id
                     from src.tournament import _pin_safe
                     await _pin_safe(app.bot, channel_id, announcement_mid)
@@ -820,20 +820,25 @@ async def admin_panel(app, engine: QuizEngine):
                         last_seq,       # is popped from the DB until it actually launches
                         round_seconds,
                         total_count,
-                        None,
-                        None,
+                        scheduled_start.isoformat() if scheduled_start else None,
+                        announcement_mid,
                         cooldown_seconds,
                         meta_payload
                     )
-                    first_id = q_ids[0]
-                    first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
-                    try:
-                        await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=round_seconds, current_round=1, total_rounds=total_count)
-                        advanced = await asyncio.to_thread(db_advance_tournament_queue, first_id, last_seq + 1)
-                        print(f"{Style.GREEN}✅ First round launched and confirmed in queue (advanced={advanced}).{Style.RESET}")
-                    except Exception as launch_err:
-                        print(f"{Style.RED}⚠️ First round launch failed: {launch_err}{Style.RESET}")
-                        print(f"{Style.YELLOW}Queue left fully intact — the background watcher will retry it automatically.{Style.RESET}")
+                    if scheduled_start:
+                        # Delay requested: leave the queue for the watcher loop to launch once
+                        # the scheduled time actually arrives — never launch synchronously here.
+                        print(f"{Style.GREEN}✅ Tournament scheduled for {scheduled_start.isoformat()} — the background watcher will launch it automatically.{Style.RESET}")
+                    else:
+                        first_id = q_ids[0]
+                        first_q = await asyncio.to_thread(db_get_question_by_id, first_id) or tournament_qs[0]
+                        try:
+                            await launch_tournament_round(app, engine, first_q, last_seq + 1, round_seconds=round_seconds, current_round=1, total_rounds=total_count)
+                            advanced = await asyncio.to_thread(db_advance_tournament_queue, first_id, last_seq + 1)
+                            print(f"{Style.GREEN}✅ First round launched and confirmed in queue (advanced={advanced}).{Style.RESET}")
+                        except Exception as launch_err:
+                            print(f"{Style.RED}⚠️ First round launch failed: {launch_err}{Style.RESET}")
+                            print(f"{Style.YELLOW}Queue left fully intact — the background watcher will retry it automatically.{Style.RESET}")
 
                 verification = await asyncio.to_thread(db_get_tournament_queue)
                 print(f"\n{Style.YELLOW}[DATABASE-VERIFICATION] Stored Row in 'tournament_queue':{Style.RESET}")

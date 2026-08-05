@@ -76,40 +76,32 @@ def convert_to_legacy_html(rich_html: str) -> str:
     return text.strip()
 
 
-async def send_rich_message_safe(bot: Bot, chat_id, html_content: str, reply_markup=None, reply_to_message_id=None, media_bytes=None, file_id=None, **kwargs) -> Message:
-    # In a private DM, chat_id == user_id (Telegram convention), which is exactly the key
-    # LAST_UTILITY_MID is tracked under. Any time we're about to deliver a NEW message to
-    # this chat — a question card, an answer/explanation card, a tournament DM push, or
-    # even another utility panel — first remove whatever profile/settings/leaderboard
-    # utility panel is still sitting there. Without this, a utility panel opened via
-    # /profile, /leaderboard, etc. gets left behind and ends up sandwiched between two
-    # unrelated question/answer cards the next time the student answers something.
-    # For channel sends (chat_id is the channel's string/negative id) this is a harmless
-    # no-op lookup miss.
-    try:
-        from src.config import LAST_UTILITY_MID, NO_ANSWER_NUDGE_MIDS
-        stale_utility_mid = LAST_UTILITY_MID.pop(chat_id, None)
-        if stale_utility_mid:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=stale_utility_mid)
-            except Exception:
-                pass
-
-        # "No answer on file yet" nudges only ever cleaned themselves up via TTL or a
-        # re-tap on the SAME question's link. If a DIFFERENT question's answer card lands
-        # in this DM first, the nudge stays stranded between two unrelated cards. Since
-        # NO_ANSWER_NUDGE_MIDS is keyed by (user_id, display_id), sweep every entry for
-        # this chat (== user_id in a private DM) before sending anything new here.
-        stale_nudge_keys = [k for k in NO_ANSWER_NUDGE_MIDS if isinstance(k, tuple) and k[0] == chat_id]
-        for k in stale_nudge_keys:
-            nudge_mid = NO_ANSWER_NUDGE_MIDS.pop(k, None)
-            if nudge_mid:
+async def send_rich_message_safe(bot, chat_id, html_content, reply_markup=None, reply_to_message_id=None, media_bytes=None, file_id=None, preserve_utility=False, **kwargs) -> Message:
+    if not preserve_utility:
+        try:
+            from src.config import LAST_UTILITY_MID, NO_ANSWER_NUDGE_MIDS
+            stale_utility_mid = LAST_UTILITY_MID.pop(chat_id, None)
+            if stale_utility_mid:
                 try:
-                    await bot.delete_message(chat_id=chat_id, message_id=nudge_mid)
+                    await bot.delete_message(chat_id=chat_id, message_id=stale_utility_mid)
                 except Exception:
                     pass
-    except Exception:
-        pass
+
+            # "No answer on file yet" nudges only ever cleaned themselves up via TTL or a
+            # re-tap on the SAME question's link. If a DIFFERENT question's answer card lands
+            # in this DM first, the nudge stays stranded between two unrelated cards. Since
+            # NO_ANSWER_NUDGE_MIDS is keyed by (user_id, display_id), sweep every entry for
+            # this chat (== user_id in a private DM) before sending anything new here.
+            stale_nudge_keys = [k for k in NO_ANSWER_NUDGE_MIDS if isinstance(k, tuple) and k[0] == chat_id]
+            for k in stale_nudge_keys:
+                nudge_mid = NO_ANSWER_NUDGE_MIDS.pop(k, None)
+                if nudge_mid:
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=nudge_mid)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     normalized_content = html_content.replace("\r\n", "\n").replace("\r", "\n")
     has_media = (media_bytes is not None) or (file_id is not None)
