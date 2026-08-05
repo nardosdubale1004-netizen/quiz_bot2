@@ -1586,3 +1586,15 @@ def build_geo_grade_detail_text(grade: int, detail: dict) -> str:
 
 def build_geo_grade_detail_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 GRADES", callback_data="geo_grade_list|0")]])
+
+def build_organization_grade_breakdown_text(grade_rows: list) -> str:
+    if not grade_rows:
+        return ""
+    lines = [
+        "<h3>🎒 School Ranks by Grade</h3>",
+        "<table><tr><td><b>Grade</b></td><td><b>Marks</b></td><td><b>City</b></td><td><b>Country</b></td><td><b>World</b></td></tr>"
+    ]
+    for r in grade_rows:
+        lines.append(f"<tr><td>Grade {r['grade']}</td><td>{r['school_grade_score']}</td><td>#{r['city_rank']}</td><td>#{r['country_rank']}</td><td>#{r['world_rank']}</td></tr>")
+    lines.append("</table>")
+    return "\n".join(lines)

@@ -776,9 +776,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         roster = await asyncio.to_thread(db_get_organization_roster, org_id)
-        from src.database import db_get_org_rank_summary
+        from src.database import db_get_org_rank_summary, db_get_org_grade_breakdown
         rank_summary = await asyncio.to_thread(db_get_org_rank_summary, org_id)
+        grade_rows = await asyncio.to_thread(db_get_org_grade_breakdown, org_id)
         text = build_organization_card_text(org_details, roster, sort_field, sort_dir)
+        from src.rendering.html_views import build_organization_grade_breakdown_text
+        grade_text = build_organization_grade_breakdown_text(grade_rows)
+        if grade_text:
+            text += f"\n{grade_text}"
         rank_bits = []
         if rank_summary.get("city_rank"):
             rank_bits.append(f"🌆 City #{rank_summary['city_rank']}")

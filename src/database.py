@@ -4314,3 +4314,69 @@ def db_unhide_question_for_user(user_id, q_id: str) -> bool:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_org_grade_breakdown(org_id: int):
+    """Returns score summaries per grade for a specific school, including the school's rank
+    for each grade on city, country, and world scales."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT city, country FROM organizations WHERE org_id = %s;", (int(org_id),))
+            org = cur.fetchone()
+            if not org:
+                return []
+            city, country = org.get('city'), org.get('country')
+
+            cur.execute("""
+                WITH school_grades AS (
+                    SELECT u.grade, SUM(u.total_marks) AS school_grade_score
+                    FROM user_stats u
+                    JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    WHERE m.org_id = %s AND u.grade IS NOT NULL
+                    GROUP BY u.grade
+                ),
+                world_grade_ranks AS (
+                    SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
+                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as world_rank
+                    FROM organizations o
+                    JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON m.user_id = u.user_id
+                    WHERE o.deleted_at IS NULL AND u.grade IS NOT NULL
+                    GROUP BY o.org_id, u.grade
+                ),
+                country_grade_ranks AS (
+                    SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
+                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as country_rank
+                    FROM organizations o
+                    JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON m.user_id = u.user_id
+                    WHERE o.deleted_at IS NULL AND o.country = %s AND u.grade IS NOT NULL
+                    GROUP BY o.org_id, u.grade
+                ),
+                city_grade_ranks AS (
+                    SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
+                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as city_rank
+                    FROM organizations o
+                    JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON m.user_id = u.user_id
+                    WHERE o.deleted_at IS NULL AND o.city = %s AND u.grade IS NOT NULL
+                    GROUP BY o.org_id, u.grade
+                )
+                SELECT sg.grade, sg.school_grade_score,
+                       wgr.world_rank,
+                       coalesce(cgr.country_rank, 1) as country_rank,
+                       coalesce(ctgr.city_rank, 1) as city_rank
+                FROM school_grades sg
+                LEFT JOIN world_grade_ranks wgr ON wgr.org_id = %s AND wgr.grade = sg.grade
+                LEFT JOIN country_grade_ranks cgr ON cgr.org_id = %s AND cgr.grade = sg.grade
+                LEFT JOIN city_grade_ranks ctgr ON ctgr.org_id = %s AND ctgr.grade = sg.grade
+                ORDER BY sg.grade ASC;
+            """, (int(org_id), country, city, int(org_id), int(org_id), int(org_id)))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch school grade breakdown: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

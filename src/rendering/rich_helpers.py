@@ -350,7 +350,7 @@ async def open_utility_view(bot, last_utility_mid: dict, locks: dict, user_id, c
                 await bot.delete_message(chat_id=chat_id, message_id=prev_mid)
             except Exception:
                 pass
-        m = await send_rich_message_safe(bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
+        m = await send_rich_message_safe(bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup, preserve_utility=True)
         if m:
             last_utility_mid[user_id] = m.message_id
         return m
