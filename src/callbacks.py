@@ -1241,19 +1241,28 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
-    elif action == "world_rank":
+    elif action == "wr":
         await query.answer()
-        grade_raw = d_id  # "total" or "6"/"8"/"10"/"12"
-        mode = data[2] if len(data) > 2 else "total"
-        grade_val = None if grade_raw == "total" else int(grade_raw)
+        scope = d_id
+        ftype = data[2] if len(data) > 2 else "none"
+        fval = data[3] if len(data) > 3 else "_"
+        soff = int(data[4]) if len(data) > 4 else 0
 
-        from src.database import db_get_world_summary_counts, db_get_world_rank_matrix
+        from src.database import db_get_rank_matrix, db_get_all_subjects
         from src.rendering.html_views import build_world_rank_text, build_world_rank_keyboard
 
-        summary = await asyncio.to_thread(db_get_world_summary_counts, grade_val)
-        matrix = await asyncio.to_thread(db_get_world_rank_matrix, grade_val, mode, 10)
-        text = build_world_rank_text(summary, matrix, grade_raw, mode)
-        kb = build_world_rank_keyboard(grade_raw, mode)
+        grade = fval if ftype == "grade" else None
+        difficulty = fval if ftype == "difficulty" else None
+        subject = fval if ftype == "subject" else None
+
+        rows = await asyncio.to_thread(db_get_rank_matrix, scope, grade, difficulty, subject, 10)
+
+        subjects_list = []
+        if ftype == "subject":
+            subjects_list = await asyncio.to_thread(db_get_all_subjects)
+
+        text = build_world_rank_text(scope, ftype, fval, rows)
+        kb = build_world_rank_keyboard(scope, ftype, fval, subjects_list, soff)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 

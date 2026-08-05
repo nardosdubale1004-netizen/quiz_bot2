@@ -21,53 +21,23 @@ user_profile_cache = TTLCache(default_ttl=8.0)
 DB_SEMAPHORE = _asyncio.Semaphore(int(os.getenv("DB_MAX_INFLIGHT", "80")))
 _FN_PROCESS_USER_SCORE_SQL = """
 CREATE OR REPLACE FUNCTION fn_process_user_score(
-    p_user_id text,
-    p_message_id text,
-    p_q_id text,
-    p_is_correct boolean,
-    p_selected_option int,
-    p_private_message_id bigint,
-    p_show_derivation boolean,
-    p_show_perf boolean
+    p_user_id text, p_message_id text, p_q_id text, p_is_correct boolean,
+    p_selected_option int, p_private_message_id bigint,
+    p_show_derivation boolean, p_show_perf boolean
 ) RETURNS TABLE (
-    o_total int,
-    o_correct int,
-    o_total_marks int,
-    o_marks_awarded int,
-    o_first_try boolean,
-    o_speed_tier text,
-    o_grade int,
-    o_current_streak int
+    o_total int, o_correct int, o_total_marks int, o_marks_awarded int,
+    o_first_try boolean, o_speed_tier text, o_grade int, o_current_streak int
 ) AS $$
 DECLARE
-    v_existing_marks int;
-    v_marks int := 0;
-    v_first_try boolean := true;
-    v_streak int := 0;
-    v_streak_mult numeric := 1.0;
-    v_last_active timestamptz;
-    v_last_active_date date;
-    v_today date := (NOW() AT TIME ZONE 'utc')::date;
-    v_days_diff int;
-    v_user_grade int;
-    v_question_grade int;
-    v_q_grade_raw text;
-    v_difficulty text;
-    v_subject text;
-    v_base_marks numeric;
-    v_speed_mult numeric;
-    v_speed_tier text;
-    v_grade_mult numeric;
-    v_sent_at timestamptz;
-    v_seconds_since_sent numeric;
-    v_referrer_t1 text;
-    v_referrer_t2 text;
-    v_t1_bonus int;
-    v_t2_bonus int;
-    v_potential_marks int;
+    v_existing_marks int; v_marks int := 0; v_first_try boolean := true;
+    v_streak int := 0; v_streak_mult numeric := 1.0; v_last_active timestamptz;
+    v_last_active_date date; v_today date := (NOW() AT TIME ZONE 'utc')::date;
+    v_days_diff int; v_user_grade int; v_question_grade int; v_q_grade_raw text;
+    v_difficulty text; v_subject text; v_base_marks numeric; v_speed_mult numeric;
+    v_speed_tier text; v_grade_mult numeric; v_sent_at timestamptz; v_seconds_since_sent numeric;
+    v_referrer_t1 text; v_referrer_t2 text; v_t1_bonus int; v_t2_bonus int; v_potential_marks int;
 BEGIN
-    SELECT ur.marks_awarded INTO v_existing_marks
-      FROM user_responses ur
+    SELECT ur.marks_awarded INTO v_existing_marks FROM user_responses ur
      WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
 
     IF FOUND THEN
@@ -76,49 +46,35 @@ BEGIN
     ELSE
         SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by
           INTO v_last_active, v_streak, v_user_grade, v_referrer_t1
-          FROM user_stats us
-         WHERE us.user_id = p_user_id;
+          FROM user_stats us WHERE us.user_id = p_user_id;
 
         IF v_last_active IS NULL THEN
             v_streak := 1;
         ELSE
             v_last_active_date := v_last_active::date;
             v_days_diff := v_today - v_last_active_date;
-            IF v_days_diff = 1 THEN
-                v_streak := v_streak + 1;
-            ELSIF v_days_diff > 1 THEN
-                v_streak := 1;
+            IF v_days_diff = 1 THEN v_streak := v_streak + 1;
+            ELSIF v_days_diff > 1 THEN v_streak := 1;
             END IF;
         END IF;
 
-        IF v_streak >= 7 THEN
-            v_streak_mult := 1.5;
-        ELSIF v_streak >= 3 THEN
-            v_streak_mult := 1.2;
-        ELSE
-            v_streak_mult := 1.0;
+        IF v_streak >= 7 THEN v_streak_mult := 1.5;
+        ELSIF v_streak >= 3 THEN v_streak_mult := 1.2;
+        ELSE v_streak_mult := 1.0;
         END IF;
 
-        SELECT q.difficulty, q.subject, q.tags::text
-          INTO v_difficulty, v_subject, v_q_grade_raw
+        SELECT q.difficulty, q.subject, q.tags::text INTO v_difficulty, v_subject, v_q_grade_raw
           FROM questions q WHERE q.id = p_q_id;
 
         v_base_marks := CASE lower(COALESCE(v_difficulty, 'medium'))
-            WHEN 'easy' THEN 3
-            WHEN 'weak' THEN 3
-            WHEN 'hard' THEN 12
-            ELSE 6
-        END;
+            WHEN 'easy' THEN 3 WHEN 'weak' THEN 3 WHEN 'hard' THEN 12 ELSE 6 END;
 
         SELECT st.sent_at INTO v_sent_at FROM sent_tracks st WHERE st.message_id = p_message_id;
         v_seconds_since_sent := EXTRACT(EPOCH FROM (NOW() - COALESCE(v_sent_at, NOW())));
 
-        IF v_seconds_since_sent <= 60 THEN
-            v_speed_mult := 1.5; v_speed_tier := 'lightning';
-        ELSIF v_seconds_since_sent <= 300 THEN
-            v_speed_mult := 1.2; v_speed_tier := 'fast';
-        ELSE
-            v_speed_mult := 1.0; v_speed_tier := 'standard';
+        IF v_seconds_since_sent <= 60 THEN v_speed_mult := 1.5; v_speed_tier := 'lightning';
+        ELSIF v_seconds_since_sent <= 300 THEN v_speed_mult := 1.2; v_speed_tier := 'fast';
+        ELSE v_speed_mult := 1.0; v_speed_tier := 'standard';
         END IF;
 
         IF v_q_grade_raw LIKE '%grade6%' THEN v_question_grade := 6;
@@ -139,23 +95,17 @@ BEGIN
 
         BEGIN
             INSERT INTO user_stats (user_id, total, correct, total_marks, current_streak, last_active_at)
-            VALUES (
-                p_user_id, 1,
-                CASE WHEN p_is_correct THEN 1 ELSE 0 END,
-                v_marks, v_streak, NOW()
-            )
+            VALUES (p_user_id, 1, CASE WHEN p_is_correct THEN 1 ELSE 0 END, v_marks, v_streak, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
                 total = COALESCE(user_stats.total, 0) + 1,
                 correct = COALESCE(user_stats.correct, 0) + CASE WHEN p_is_correct THEN 1 ELSE 0 END,
                 total_marks = COALESCE(user_stats.total_marks, 0) + v_marks,
-                current_streak = v_streak,
-                last_active_at = NOW();
+                current_streak = v_streak, last_active_at = NOW();
 
-           INSERT INTO user_responses (
+            INSERT INTO user_responses (
                 user_id, message_id, q_id, is_correct, marks_awarded,
                 selected_option, private_message_id, show_derivation, show_perf, potential_marks
-            )
-            VALUES (
+            ) VALUES (
                 p_user_id, p_message_id, p_q_id, p_is_correct, v_marks,
                 p_selected_option, p_private_message_id, p_show_derivation, p_show_perf, v_potential_marks
             );
@@ -163,27 +113,27 @@ BEGIN
             IF p_is_correct AND v_marks > 0 AND v_subject IS NOT NULL THEN
                 INSERT INTO user_subject_marks (user_id, subject, marks)
                 VALUES (p_user_id, lower(v_subject), v_marks)
-                ON CONFLICT (user_id, subject) DO UPDATE SET
-                    marks = user_subject_marks.marks + v_marks;
+                ON CONFLICT (user_id, subject) DO UPDATE SET marks = user_subject_marks.marks + v_marks;
+            END IF;
+
+            IF p_is_correct AND v_marks > 0 AND v_difficulty IS NOT NULL THEN
+                INSERT INTO user_difficulty_marks (user_id, difficulty, marks)
+                VALUES (p_user_id, lower(CASE WHEN lower(v_difficulty) = 'weak' THEN 'easy' ELSE v_difficulty END), v_marks)
+                ON CONFLICT (user_id, difficulty) DO UPDATE SET marks = user_difficulty_marks.marks + v_marks;
             END IF;
 
             IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
                 v_t1_bonus := GREATEST(1, FLOOR(v_marks * 0.05)::int);
-                UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t1_bonus
-                WHERE user_id = v_referrer_t1;
-
+                UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t1_bonus WHERE user_id = v_referrer_t1;
                 SELECT referred_by INTO v_referrer_t2 FROM user_stats WHERE user_id = v_referrer_t1;
                 IF v_referrer_t2 IS NOT NULL THEN
                     v_t2_bonus := GREATEST(1, FLOOR(v_marks * 0.025)::int);
-                    UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t2_bonus
-                    WHERE user_id = v_referrer_t2;
+                    UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t2_bonus WHERE user_id = v_referrer_t2;
                 END IF;
             END IF;
-
         EXCEPTION WHEN unique_violation THEN
             v_first_try := false;
-            SELECT ur.marks_awarded INTO v_existing_marks
-              FROM user_responses ur
+            SELECT ur.marks_awarded INTO v_existing_marks FROM user_responses ur
              WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
             v_marks := COALESCE(v_existing_marks, 0);
         END;
@@ -191,8 +141,7 @@ BEGIN
 
     RETURN QUERY
     SELECT us.total, us.correct, us.total_marks, v_marks, v_first_try, v_speed_tier, us.grade, us.current_streak
-      FROM user_stats us
-     WHERE us.user_id = p_user_id;
+      FROM user_stats us WHERE us.user_id = p_user_id;
 END;
 $$ LANGUAGE plpgsql;
 """
@@ -468,6 +417,18 @@ class QuizEngine:
                         PRIMARY KEY (user_id, subject)
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_difficulty_marks (
+                        user_id VARCHAR(20) NOT NULL,
+                        difficulty VARCHAR(20) NOT NULL,
+                        marks INT DEFAULT 0,
+                        PRIMARY KEY (user_id, difficulty)
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_grade ON user_stats(grade);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_org_memberships_org_role ON org_memberships(org_id, org_role);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_subject_marks_subject ON user_subject_marks(subject);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_difficulty_marks_diff ON user_difficulty_marks(difficulty);")
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS last_shown_at TIMESTAMPTZ;")
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS times_shown INT DEFAULT 0;")
                 cur.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS first_shown_at TIMESTAMPTZ;")
@@ -2848,7 +2809,7 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_count_countries_ranked() -> int:
     conn = None
     try:
@@ -4338,6 +4299,88 @@ def db_get_top_users_by_country(country: str, limit: int = 10):
             return cur.fetchall()
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch top users by country: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_all_subjects():
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT subject FROM questions WHERE subject IS NOT NULL ORDER BY subject ASC;")
+            return [r['subject'] for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] db_get_all_subjects: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_rank_matrix(scope: str = "world", grade=None, difficulty=None, subject=None, limit: int = 10):
+    """
+    Unified leaderboard query for World/Country/City/School tabs, filtered by AT MOST ONE of
+    grade / difficulty / subject (mirrors the mutually-exclusive filter row in the UI).
+    Uses precomputed per-user aggregates (user_stats.total_marks, user_subject_marks,
+    user_difficulty_marks) so every variant is a single indexed pass — no per-question scans.
+    """
+    from src.rendering.html_views import format_public_name
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            grade_val = None if grade in (None, "total", "__open__") else int(grade)
+
+            if subject and subject != "__open__":
+                score_join, score_expr, score_params = (
+                    "JOIN user_subject_marks sm ON sm.user_id = u.user_id AND sm.subject = %s",
+                    "sm.marks", [subject.lower()]
+                )
+            elif difficulty and difficulty != "__open__":
+                score_join, score_expr, score_params = (
+                    "JOIN user_difficulty_marks dm ON dm.user_id = u.user_id AND dm.difficulty = %s",
+                    "dm.marks", [difficulty.lower()]
+                )
+            else:
+                score_join, score_expr, score_params = "", "u.total_marks", []
+
+            if scope == "world":
+                cur.execute(f"""
+                    SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted,
+                           {score_expr} AS score
+                    FROM user_stats u
+                    {score_join}
+                    WHERE (%s::int IS NULL OR u.grade = %s)
+                    ORDER BY score DESC LIMIT %s;
+                """, tuple(score_params) + (grade_val, grade_val, limit))
+                return [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
+
+            group_col = {"country": "COALESCE(o.country, u.personal_country)",
+                         "city": "COALESCE(o.city, u.personal_city)",
+                         "school": "o.org_name"}.get(scope)
+            if not group_col:
+                return []
+
+            org_join = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+                        "LEFT JOIN organizations o ON m.org_id = o.org_id")
+            if scope == "school":
+                org_join = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+                           "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
+
+            cur.execute(f"""
+                SELECT {group_col} AS name, SUM({score_expr})::int AS score
+                FROM user_stats u
+                {org_join}
+                {score_join}
+                WHERE {group_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
+                GROUP BY name
+                ORDER BY score DESC LIMIT %s;
+            """, tuple(score_params) + (grade_val, grade_val, limit))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] db_get_rank_matrix({scope}): {e}", flush=True)
         return []
     finally:
         if conn:
