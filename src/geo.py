@@ -1,5 +1,8 @@
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone as _dt_timezone
+import difflib
+import re as _re
+
 
 # Primary IANA timezone per country — used to auto-derive a user's clock
 # from the country they select, with no extra onboarding step.
@@ -91,3 +94,44 @@ def format_local_time(dt, tz_name: str = "UTC", fmt: str = "%b %d, %Y · %H:%M")
         local_dt = dt.astimezone(_dt_timezone.utc)
     tz_label = local_dt.strftime("%Z") or (tz_name or "UTC")
     return f"{local_dt.strftime(fmt)} {tz_label}"
+
+def normalize_location_name(name: str) -> str:
+    """Lowercase, strip punctuation/whitespace so 'Addis-Ababa' == 'addis ababa' == 'ADDIS_ABABA'."""
+    if not name:
+        return ""
+    cleaned = _re.sub(r'[^\w\s]', '', name.lower()).strip()
+    return _re.sub(r'\s+', ' ', cleaned)
+
+
+def find_close_match(candidate: str, known_list: list, cutoff: float = 0.82) -> str or None:
+    """Returns the known_list entry closest to `candidate`, or None if nothing is close
+    enough to be confident it's the same place rather than a genuinely new one."""
+    if not candidate or not known_list:
+        return None
+    norm_candidate = normalize_location_name(candidate)
+    norm_map = {normalize_location_name(k): k for k in known_list}
+    if norm_candidate in norm_map:
+        return norm_map[norm_candidate]
+    matches = difflib.get_close_matches(norm_candidate, list(norm_map.keys()), n=1, cutoff=cutoff)
+    return norm_map[matches[0]] if matches else None
+
+def normalize_country_input(raw: str):
+    """Matches freely-typed country text against the canonical COUNTRY_NAMES list.
+    Returns (normalized_name, is_exact): is_exact=True only when the input matched a
+    known country exactly (after normalization). On a close-but-not-exact match, returns
+    the canonical name with is_exact=False so the caller can show a 'matched to...' note.
+    If nothing is close enough, returns the cleaned, title-cased input as a new candidate."""
+    if not raw:
+        return "", False
+    cleaned = raw.strip()
+    norm_input = normalize_location_name(cleaned)
+    norm_map = {normalize_location_name(c): c for c in COUNTRY_NAMES}
+
+    if norm_input in norm_map:
+        return norm_map[norm_input], True
+
+    matches = difflib.get_close_matches(norm_input, list(norm_map.keys()), n=1, cutoff=0.78)
+    if matches:
+        return norm_map[matches[0]], False
+
+    return cleaned.title(), False

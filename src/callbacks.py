@@ -3,6 +3,7 @@ import asyncio
 import traceback
 import httpx
 import io
+import html
 from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS, FSM_INPUT_HINT
 from src.rendering import UIFactory, fetch_kroki_image
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
@@ -221,8 +222,17 @@ async def _notify_org_admins_pending_request(context, org_id, org_name, requeste
         GLOBAL_ENGINE.release_connection(conn)
 
     from src.geo import format_local_time
+    from src.database import db_get_user_snapshot
     last_req_str = format_local_time(last_requested_at) if last_requested_at else "just now"
     req_name = html.escape(requester.first_name or requester.username or "A student")
+
+    snap = await asyncio.to_thread(db_get_user_snapshot, requester.id)
+    acc = int((snap.get('correct', 0) / snap['total']) * 100) if snap.get('total') else 0
+    snapshot_line = (
+        f"\n📊 Grade {snap.get('grade') or '—'} · {snap.get('total_marks', 0)} marks · "
+        f"🎯 {acc}% ({snap.get('correct', 0)}/{snap.get('total', 0)}) · 🔥 {snap.get('current_streak', 0)}d streak"
+        f"\n📍 {snap.get('personal_city') or '—'}, {snap.get('personal_country') or '—'}"
+    ) if snap else ""
 
     approve_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("🟢 APPROVE", callback_data=f"process_req|{org_id}|{requester.id}|1"),
@@ -237,7 +247,7 @@ async def _notify_org_admins_pending_request(context, org_id, org_name, requeste
         try:
             await context.bot.send_message(
                 chat_id=int(admin_id),
-                text=f"📥 <b>NEW JOIN REQUEST</b>\n\n<b>{req_name}</b> wants to join <b>{html.escape(org_name)}</b>.{repeat_note}",
+                text=f"📥 <b>NEW JOIN REQUEST</b>\n\n<b>{req_name}</b> wants to join <b>{html.escape(org_name)}</b>.{repeat_note}{snapshot_line}",
                 reply_markup=approve_kb, parse_mode="HTML"
             )
         except Exception:
@@ -359,41 +369,99 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "toggle_consent":
         consent_state = (d_id == "1")
-        warn_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ CONFIRM", callback_data=f"confirm_consent|{d_id}"),
-             InlineKeyboardButton("❌ CANCEL", callback_data="settings_menu|0")]
-        ])
-        if consent_state:
-            explain = (
-                "<h3>🟢 Going Public</h3>\n"
-                "<blockquote>"
-                "This shows your <b>real Telegram username or first name</b> — the exact one people "
-                "see when they message you day-to-day — on round podiums and grade leaderboards.\n\n"
-                "If you've set a custom <b>nickname</b>, that nickname is shown instead, and your real "
-                "Telegram identity stays hidden either way."
-                "</blockquote>\n"
-                "Confirm to make your Telegram identity (or nickname, if set) visible to other students?"
-            )
-        else:
+        await query.answer()
+
+        if not consent_state:
             explain = (
                 "<h3>🔴 Going Private</h3>\n"
                 "<blockquote>"
-                "Your name disappears from public leaderboards and round podiums entirely. "
-                "Other students will only see an anonymous ID like <code>Scholar ...4821</code>.\n\n"
+                "Your name disappears from leaderboards and round podiums. Others see a stable "
+                "anonymous ID like <code>Scholar ...4821</code> instead.\n\n"
                 "Your scores and rank still count — only your identity is hidden."
                 "</blockquote>\n"
                 "Confirm to go private?"
             )
-        await query.answer()
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=explain, reply_markup=warn_kb
+            warn_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ CONFIRM", callback_data="confirm_consent|0"),
+                 InlineKeyboardButton("❌ CANCEL", callback_data="settings_menu|0")]
+            ])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explain, reply_markup=warn_kb)
+            return
+
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        has_nickname = bool(profile and profile.get("nickname"))
+
+        if not has_nickname:
+            explain = (
+                "<h3>🟢 Going Public — pick a name first</h3>\n"
+                "<blockquote>"
+                "You haven't set a nickname yet. We <b>strongly recommend</b> a nickname — it lets you "
+                "show up on leaderboards without ever revealing your real Telegram username or name.\n\n"
+                "If you'd rather show your real Telegram identity instead, that's a separate, explicit "
+                "choice below — nothing is shown by default."
+                "</blockquote>"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✍️ SET A NICKNAME (RECOMMENDED)", callback_data="set_nick_fsm|0")],
+                [InlineKeyboardButton("🆔 Use my real Telegram identity instead", callback_data="reveal_identity_warn|0")],
+                [InlineKeyboardButton("❌ CANCEL", callback_data="settings_menu|0")]
+            ])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explain, reply_markup=kb)
+            return
+
+        explain = (
+            "<h3>🟢 Going Public</h3>\n"
+            "<blockquote>"
+            f"You already have a nickname set (<b>{html.escape(profile.get('nickname'))}</b>) — that's "
+            "what shows on leaderboards and podiums. Your real Telegram username/name stays hidden. "
+            "No need to reveal it unless you specifically choose to below."
+            "</blockquote>\n"
+            "Confirm to go public with your nickname?"
         )
+        warn_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ CONFIRM (use nickname)", callback_data="confirm_consent|1")],
+            [InlineKeyboardButton("🆔 Use real identity instead", callback_data="reveal_identity_warn|0")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data="settings_menu|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explain, reply_markup=warn_kb)
+        return
+
+    elif action == "reveal_identity_warn":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        handle = f"@{profile.get('username')}" if profile.get("username") else (profile.get("first_name") or "your name")
+        explain = (
+            "<h3>⚠️ Reveal your real Telegram identity?</h3>\n"
+            "<blockquote>"
+            f"This will show <b>{html.escape(handle)}</b> — your actual Telegram handle — to every "
+            "student on leaderboards and round podiums, instead of a nickname or anonymous ID.\n\n"
+            "You can turn this off again anytime from Settings."
+            "</blockquote>\n"
+            "Are you sure?"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚠️ YES, SHOW MY REAL IDENTITY", callback_data="confirm_reveal_identity|1")],
+            [InlineKeyboardButton("❌ NO, GO BACK", callback_data="settings_menu|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=explain, reply_markup=kb)
+        return
+
+    elif action == "confirm_reveal_identity":
+        from src.database import db_set_show_real_identity
+        await asyncio.to_thread(db_set_show_real_identity, user_id, True)
+        await asyncio.to_thread(db_update_user_consent_state, user_id, True)
+        await query.answer("Real identity enabled.")
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        kb = build_profile_settings_keyboard(True)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.", reply_markup=kb)
         return
 
     elif action == "confirm_consent":
+        from src.database import db_set_show_real_identity
         consent_state = (d_id == "1")
         await asyncio.to_thread(db_update_user_consent_state, user_id, consent_state)
+        if not consent_state:
+            await asyncio.to_thread(db_set_show_real_identity, user_id, False)
         await query.answer("Visibility updated!")
         kb = build_profile_settings_keyboard(consent_state)
         await edit_rich_message_safe(
@@ -515,6 +583,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return
+
     elif action == "alliance_info":
         await query.answer()
         text = build_alliance_info_text()
@@ -656,6 +725,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "loc_user_reply":
+        sid = int(d_id)
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_USER_LOCATION_REPLY"
+        USER_PAYLOADS[user_id] = {"suggestion_id": sid, "edit_mid": query.message.message_id}
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|privacy_menu")]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="✍️ <b>Type your reply:</b>", reply_markup=cancel_kb)
         return
 
     elif action == "view_org":
@@ -851,6 +929,97 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 html_content="❌ Location change cancelled. Your previous location is unchanged.", reply_markup=profile_nav_kb)
         return
 
+    elif action == "confirm_location_pending":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        pending_city = session.get("pending_city")
+        pending_country = session.get("pending_country")
+        profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN PROFILE DASHBOARD", callback_data="privacy_menu|0")]])
+        if d_id == "1" and pending_city and pending_country:
+            from src.database import db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids
+            sid = await asyncio.to_thread(db_create_location_suggestion, "city", pending_city, pending_country, user_id)
+            await asyncio.to_thread(db_set_user_pending_city, user_id, pending_city, pending_country, sid)
+            USER_PAYLOADS.pop(user_id, None)
+
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⏳ <b>Submitted!</b>\n📍 {pending_city}, {pending_country} — pending admin review.",
+                reply_markup=profile_nav_kb
+            )
+
+            admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+            req_name = html.escape(query.from_user.first_name or query.from_user.username or "A student")
+            review_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
+                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+            ], [
+                InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}")
+            ]])
+            for admin_id in admin_ids:
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(admin_id),
+                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(pending_city)}, {html.escape(pending_country)}</b> — not in our known list.",
+                        reply_markup=review_kb, parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+        else:
+            USER_PAYLOADS.pop(user_id, None)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content="❌ Cancelled.", reply_markup=profile_nav_kb)
+        return
+
+    elif action == "loc_review":
+        from src.database import db_is_admin, db_resolve_location_suggestion, db_get_location_suggestion
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        sid, decision = int(d_id), data[2]
+        approve = (decision == "1")
+        result = await asyncio.to_thread(db_resolve_location_suggestion, sid, user_id, approve)
+        await query.answer("Approved!" if approve else "Rejected.")
+        if result:
+            sug = result["suggestion"]
+            status_line = f"\n\n{'✅ Approved' if approve else '🚫 Rejected'} by admin."
+            try:
+                old_text = (query.message.text or query.message.caption or "") + status_line
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=None)
+            except Exception:
+                pass
+            for uid in result.get("affected_users", []):
+                try:
+                    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+                    if approve:
+                        msg = f"✅ <b>Your city was approved!</b>\n📍 {html.escape(sug['name'])}, {html.escape(sug.get('country') or '')} now shows on your profile and leaderboards."
+                    else:
+                        msg = f"🚫 Your suggested city <b>{html.escape(sug['name'])}</b> wasn't approved. Please update your location with a different spelling from /profile → 📍 LOCATION."
+                    await context.bot.send_message(chat_id=int(uid), text=msg, parse_mode="HTML", reply_markup=nav_kb)
+                except Exception:
+                    pass
+        return
+
+    elif action == "loc_review_msg":
+        from src.database import db_is_admin, db_get_location_suggestion
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        sid = int(d_id)
+        sug = await asyncio.to_thread(db_get_location_suggestion, sid)
+        if not sug:
+            await query.answer("Not found.", show_alert=True)
+            return
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_ADMIN_LOCATION_REPLY"
+        USER_PAYLOADS[user_id] = {"suggestion_id": sid, "target_user_id": sug["submitted_by"], "edit_mid": query.message.message_id}
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|privacy_menu")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"💬 <b>Ask the student about:</b> {html.escape(sug['name'])}, {html.escape(sug.get('country') or '')}\n\nType your question below:",
+            reply_markup=cancel_kb
+        )
+        return
+
     elif action == "fsm_create_org":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_NAME"
@@ -926,11 +1095,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             cities = await asyncio.to_thread(db_get_active_cities, None)
             text = "🌆 <b>PICK A CITY</b>"
             kb = build_geo_picker_keyboard(cities, "city") if cities else build_leaderboard_keyboard(scope)
-        else:
+        elif scope == "country":
             from src.database import db_get_active_countries
             countries = await asyncio.to_thread(db_get_active_countries)
             text = "🌍 <b>PICK A COUNTRY</b>"
             kb = build_geo_picker_keyboard(countries, "country") if countries else build_leaderboard_keyboard(scope)
+        elif scope == "country_overall":
+            from src.database import db_get_country_leaderboard
+            rows = await asyncio.to_thread(db_get_country_leaderboard)
+            text = build_leaderboard_text(scope, rows, profile)
+            kb = build_leaderboard_keyboard(scope)
+        else:  # city_overall
+            from src.database import db_get_city_leaderboard
+            rows = await asyncio.to_thread(db_get_city_leaderboard)
+            text = build_leaderboard_text(scope, rows, profile)
+            kb = build_leaderboard_keyboard(scope)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -1671,6 +1850,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=nav_kb
         )
         return
+
+
 
 
 

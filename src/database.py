@@ -513,6 +513,35 @@ class QuizEngine:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status VARCHAR(15) DEFAULT 'approved';")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS personal_city_status VARCHAR(15) DEFAULT 'approved';")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS pending_city_suggestion_id INT;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS show_real_identity BOOLEAN DEFAULT FALSE;")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS location_suggestions (
+                        id SERIAL PRIMARY KEY,
+                        kind VARCHAR(10) NOT NULL,
+                        name VARCHAR(80) NOT NULL,
+                        normalized_name VARCHAR(80) NOT NULL,
+                        country VARCHAR(50),
+                        submitted_by VARCHAR(20) NOT NULL,
+                        status VARCHAR(15) DEFAULT 'pending',
+                        org_id INT,
+                        admin_id VARCHAR(20),
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        resolved_at TIMESTAMPTZ
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS location_suggestion_messages (
+                        id SERIAL PRIMARY KEY,
+                        suggestion_id INT REFERENCES location_suggestions(id) ON DELETE CASCADE,
+                        sender_role VARCHAR(10) NOT NULL,
+                        sender_user_id VARCHAR(20),
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -1898,16 +1927,16 @@ def db_update_tournament_meta_field(key: str, value):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School", is_public: bool = True, city: str = "Addis Ababa", country: str = "Ethiopia") -> int:
+def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_type: str = "School", is_public: bool = True, city: str = "Addis Ababa", country: str = "Ethiopia", status: str = "approved") -> int:
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country, join_token)
-                VALUES (%s, UPPER(%s), %s, %s, %s, %s, %s, %s)
+                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country, join_token, status)
+                VALUES (%s, UPPER(%s), %s, %s, %s, %s, %s, %s, %s)
                 RETURNING org_id;
-            """, (org_name, org_tag, str(creator_id), org_type, is_public, city, country, secrets.token_hex(16)))
+            """, (org_name, org_tag, str(creator_id), org_type, is_public, city, country, secrets.token_hex(16), status))
             org_id = cur.fetchone()['org_id']
 
             cur.execute("""
@@ -2662,7 +2691,7 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            clauses, params = [], []
+            clauses, params = ["deleted_at IS NULL", "status = 'approved'"], []
             if query:
                 clauses.append("org_name ILIKE %s")
                 params.append(f"%{query.strip()}%")
@@ -2672,14 +2701,11 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
             if country:
                 clauses.append("country = %s")
                 params.append(country)
-            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             params.append(limit)
-            deleted_clause = "deleted_at IS NULL" if not where else "deleted_at IS NULL AND "
-            where_final = f"WHERE {deleted_clause}{' AND '.join(clauses)}" if clauses else "WHERE deleted_at IS NULL"
             cur.execute(f"""
                 SELECT org_id, org_name, org_tag, city, country
                 FROM organizations
-                {where_final}
+                WHERE {' AND '.join(clauses)}
                 ORDER BY org_name ASC
                 LIMIT %s;
             """, tuple(params))
@@ -2690,7 +2716,6 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_get_user_timezone(user_id) -> str:
     conn = None
@@ -3269,6 +3294,168 @@ def db_get_tournament_geo_leaderboard(run_id: str, group_by: str, limit: int = 5
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_create_location_suggestion(kind: str, name: str, country: str, submitted_by, org_id: int = None) -> int:
+    from src.geo import normalize_location_name
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO location_suggestions (kind, name, normalized_name, country, submitted_by, org_id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
+            """, (kind, name, normalize_location_name(name), country, str(submitted_by), org_id))
+            sid = cur.fetchone()['id']
+            conn.commit()
+            return sid
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to create location suggestion: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_location_suggestion(suggestion_id: int):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM location_suggestions WHERE id = %s;", (int(suggestion_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch location suggestion: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_pending_location_suggestions(kind: str = None, limit: int = 20):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if kind:
+                cur.execute("SELECT * FROM location_suggestions WHERE status = 'pending' AND kind = %s ORDER BY created_at ASC LIMIT %s;", (kind, limit))
+            else:
+                cur.execute("SELECT * FROM location_suggestions WHERE status = 'pending' ORDER BY created_at ASC LIMIT %s;", (limit,))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch pending location suggestions: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) -> dict:
+    """Approves or rejects a city/school suggestion. For cities: bumps every user who was
+    waiting on THIS exact suggestion to 'approved'/'rejected'. For schools: flips the linked
+    organization's status too, so it becomes joinable/visible."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM location_suggestions WHERE id = %s FOR UPDATE;", (int(suggestion_id),))
+            sug = cur.fetchone()
+            if not sug:
+                return None
+
+            new_status = "approved" if approve else "rejected"
+            cur.execute("""
+                UPDATE location_suggestions SET status = %s, admin_id = %s, resolved_at = NOW()
+                WHERE id = %s;
+            """, (new_status, str(admin_id), int(suggestion_id)))
+
+            if sug['kind'] == 'city':
+                cur.execute("""
+                    UPDATE user_stats SET personal_city_status = %s
+                    WHERE pending_city_suggestion_id = %s;
+                """, (new_status, int(suggestion_id)))
+                cur.execute("SELECT user_id FROM user_stats WHERE pending_city_suggestion_id = %s;", (int(suggestion_id),))
+                affected_users = [r['user_id'] for r in cur.fetchall()]
+            elif sug['kind'] == 'school' and sug.get('org_id'):
+                cur.execute("UPDATE organizations SET status = %s WHERE org_id = %s;", (new_status, sug['org_id']))
+                affected_users = []
+            else:
+                affected_users = []
+
+            conn.commit()
+            return {"suggestion": dict(sug), "affected_users": affected_users}
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to resolve location suggestion: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_add_location_suggestion_message(suggestion_id: int, sender_role: str, sender_user_id, message: str) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO location_suggestion_messages (suggestion_id, sender_role, sender_user_id, message)
+                VALUES (%s, %s, %s, %s);
+            """, (int(suggestion_id), sender_role, str(sender_user_id) if sender_user_id else None, message))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to add location suggestion message: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_location_suggestion_thread(suggestion_id: int):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM location_suggestion_messages WHERE suggestion_id = %s ORDER BY created_at ASC;", (int(suggestion_id),))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch suggestion thread: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_user_pending_city(user_id, city: str, country: str, suggestion_id: int) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, personal_city, personal_country, personal_city_status, pending_city_suggestion_id, total, correct, total_marks)
+                VALUES (%s, %s, %s, 'pending', %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    personal_city = EXCLUDED.personal_city,
+                    personal_country = EXCLUDED.personal_country,
+                    personal_city_status = 'pending',
+                    pending_city_suggestion_id = EXCLUDED.pending_city_suggestion_id;
+            """, (str(user_id), city, country, suggestion_id))
+            user_profile_cache.invalidate(f"profile:{user_id}")
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set pending city: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_all_admin_ids_cached():
+    return db_get_all_admin_ids()
 
 def db_count_feedback(status: str = None, category: str = None) -> int:
     conn = None
@@ -3682,6 +3869,46 @@ def db_is_tournament_round_still_open(message_id) -> bool:
             return float(row['deadline_epoch']) > float(row['now_epoch'])
     except Exception as e:
         print(f"[DB ERROR] Failed to check round open state: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_user_snapshot(user_id) -> dict:
+    """Compact stats block for admin-facing approval cards — no need to open the full profile."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT grade, total_marks, total, correct, current_streak, personal_city, personal_country
+                FROM user_stats WHERE user_id = %s;
+            """, (str(user_id),))
+            row = cur.fetchone()
+            return dict(row) if row else {}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user snapshot: {e}", flush=True)
+        return {}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_set_show_real_identity(user_id, show: bool) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, show_real_identity, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET show_real_identity = EXCLUDED.show_real_identity;
+            """, (str(user_id), bool(show)))
+            user_profile_cache.invalidate(f"profile:{user_id}")
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to set show_real_identity: {e}", flush=True)
         return False
     finally:
         if conn:

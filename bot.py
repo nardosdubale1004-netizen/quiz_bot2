@@ -1443,7 +1443,6 @@ async def handle_fsm_message(update: Update, context):
 
             await _fsm_advance(context, update.message.chat_id, edit_mid, response_text, profile_nav_kb)
 
-
         elif state == "AWAITING_LOCATION_CITY":
             clean_city = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip().title()
             if not clean_city:
@@ -1462,39 +1461,112 @@ async def handle_fsm_message(update: Update, context):
             )
 
         elif state == "AWAITING_LOCATION_COUNTRY":
-            from src.geo import normalize_country_input
+            from src.geo import normalize_country_input, find_close_match
+            from src.database import db_get_cities_for_country
             raw_country = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
             if not raw_country:
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid country name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
 
             normalized_country, is_exact = normalize_country_input(raw_country)
-            clean_city = USER_PAYLOADS[user_id].get("loc_city", "")
+            typed_city = USER_PAYLOADS[user_id].get("loc_city", "")
+
+            known_cities = await asyncio.to_thread(db_get_cities_for_country, normalized_country)
+            matched_city = find_close_match(typed_city, known_cities)
 
             profile = await asyncio.to_thread(db_get_user_profile, user_id)
             old_city = profile.get("personal_city") if profile else None
             old_country = profile.get("personal_country") if profile else None
 
-            USER_PAYLOADS[user_id]["pending_city"] = clean_city
-            USER_PAYLOADS[user_id]["pending_country"] = normalized_country
             USER_STATES[user_id] = "IDLE"
-
-            suggestion_note = "" if is_exact else "\n<i>(Interpreted as closest known match — cancel and re-enter if wrong)</i>"
             old_line = f"{old_city}, {old_country}" if old_city else "<i>not set</i>"
+
+            if matched_city:
+                # Known city — normal instant-confirm path.
+                USER_PAYLOADS[user_id]["pending_city"] = matched_city
+                USER_PAYLOADS[user_id]["pending_country"] = normalized_country
+                suggestion_note = "" if (is_exact and matched_city.lower() == typed_city.strip().lower()) else "\n<i>(Matched to closest known place — cancel and re-enter if wrong)</i>"
+                confirm_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ CONFIRM", callback_data="confirm_location|1"),
+                     InlineKeyboardButton("❌ CANCEL", callback_data="confirm_location|0")]
+                ])
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    (
+                        "📍 <b>CONFIRM LOCATION CHANGE</b>\n<hr/>\n"
+                        f"From: {old_line}\n"
+                        f"To: <b>{matched_city}, {normalized_country}</b>{suggestion_note}\n\n"
+                        "This powers your City/Country leaderboard placement. Confirm?"
+                    ),
+                    confirm_kb
+                )
+                return
+
+            # No close match — this looks like a genuinely new city. Preview it as
+            # pending, require a second confirm, then route to admin review.
+            USER_PAYLOADS[user_id]["pending_city"] = typed_city
+            USER_PAYLOADS[user_id]["pending_country"] = normalized_country
             confirm_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ CONFIRM", callback_data="confirm_location|1"),
-                 InlineKeyboardButton("❌ CANCEL", callback_data="confirm_location|0")]
+                [InlineKeyboardButton("📨 SUBMIT FOR REVIEW", callback_data="confirm_location_pending|1")],
+                [InlineKeyboardButton("❌ CANCEL", callback_data="confirm_location|0")]
             ])
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
                 (
-                    "📍 <b>CONFIRM LOCATION CHANGE</b>\n<hr/>\n"
+                    "📍 <b>NEW LOCATION — PREVIEW</b>\n<hr/>\n"
                     f"From: {old_line}\n"
-                    f"To: <b>{clean_city}, {normalized_country}</b>{suggestion_note}\n\n"
-                    "This powers your City/Country leaderboard placement. Confirm?"
+                    f"To: <b>{typed_city}, {normalized_country}</b>\n\n"
+                    "🕵️ We don't recognize this city yet. It'll be set on your profile as "
+                    "<b>⏳ Pending</b> right away, and our admins will double-check it shortly — "
+                    "they may message you here if they need to confirm the spelling."
                 ),
                 confirm_kb
             )
+
+        elif state == "AWAITING_ADMIN_LOCATION_REPLY":
+            from src.database import db_add_location_suggestion_message
+            sid = session.get("suggestion_id")
+            target_user_id = session.get("target_user_id")
+            q_text = text_input[:500].strip()
+            if not q_text:
+                return
+            await asyncio.to_thread(db_add_location_suggestion_message, sid, "admin", user_id, q_text)
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
+
+            reply_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 REPLY", callback_data=f"loc_user_reply|{sid}")]])
+            try:
+                await send_rich_message_safe(
+                    context.bot, chat_id=int(target_user_id),
+                    html_content=f"📍 <b>A question about your location:</b>\n\n<blockquote>{html.escape(q_text)}</blockquote>",
+                    reply_markup=reply_kb
+                )
+            except Exception:
+                pass
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
+            await _fsm_advance(context, update.message.chat_id, edit_mid, "✅ Question sent to the student.", nav_kb)
+
+        elif state == "AWAITING_USER_LOCATION_REPLY":
+            from src.database import db_add_location_suggestion_message, db_get_all_admin_ids
+            sid = session.get("suggestion_id")
+            reply_text = text_input[:500].strip()
+            if not reply_text:
+                return
+            await asyncio.to_thread(db_add_location_suggestion_message, sid, "user", user_id, reply_text)
+            USER_STATES[user_id] = "IDLE"
+            USER_PAYLOADS.pop(user_id, None)
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
+            await _fsm_advance(context, update.message.chat_id, edit_mid, "✅ Reply sent to the admin team.", nav_kb)
+            admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+            for admin_id in admin_ids:
+                try:
+                    review_kb = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
+                        InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+                    ]])
+                    await context.bot.send_message(chat_id=int(admin_id), text=f"💬 <b>Student replied on suggestion #{sid}:</b>\n\n<blockquote>{html.escape(reply_text)}</blockquote>", parse_mode="HTML", reply_markup=review_kb)
+                except Exception:
+                    pass
 
         elif state == "AWAITING_FEEDBACK_TEXT":
             category = session.get("category", "general")

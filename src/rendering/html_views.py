@@ -28,8 +28,9 @@ def format_public_name(row) -> str:
 
     if nickname and nickname.strip():
         return html.escape(nickname.strip())
-        
-    if consent:
+
+    show_real = row.get('show_real_identity', False)
+    if consent and show_real:
         if username and username.strip():
             un = username.strip().lstrip('@')
             return f"@{html.escape(un)}"
@@ -910,6 +911,8 @@ def build_leaderboard_text(scope: str, rows: list, profile: dict = None, label_o
         "country": f"🌍 {label_override}" if label_override else "🌍 Countries (Top)",
         "city": f"🌆 {label_override}" if label_override else "🌆 Cities (Top)",
         "school": "🏫 School Teams",
+        "country_overall": "🌍 TOP COUNTRIES (Global)",
+        "city_overall": "🌆 TOP CITIES (Global)",
     }
     lines = [f"<h2>🏆 {scope_labels.get(scope, 'Leaderboard')}</h2>"]
 
@@ -927,11 +930,16 @@ def build_leaderboard_text(scope: str, rows: list, profile: dict = None, label_o
         return "\n".join(lines)
 
     medals = ["🥇", "🥈", "🥉"]
-    table_rows = ["<tr><td><b>#</b></td><td><b>Scholar</b></td><td><b>Marks</b></td></tr>"]
+    label_col = "Country" if scope == "country_overall" else "City" if scope == "city_overall" else "Scholar"
+    table_rows = [f"<tr><td><b>#</b></td><td><b>{label_col}</b></td><td><b>Marks</b></td></tr>"]
     for i, r in enumerate(rows[:10]):
         rank = medals[i] if i < 3 else str(i + 1)
         if scope == "school":
             nm, score = f"#{r['alliance_tag']}", r['total_score']
+        elif scope == "country_overall":
+            nm, score = str(r.get('country') or '—'), r.get('total_score', 0)
+        elif scope == "city_overall":
+            nm, score = str(r.get('city') or '—'), r.get('total_score', 0)
         elif label_override and scope in ("city", "country"):
             nm, score = format_public_name(r), r.get('total_marks', 0)
         else:
@@ -946,6 +954,7 @@ def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKe
     rows = [
         [_b("grade", "🎒 GRADE"), _b("school", "🏫 SCHOOL")],
         [_b("city", "🌆 CITY"), _b("country", "🌍 COUNTRY")],
+        [_b("city_overall", "🌆 TOP CITIES"), _b("country_overall", "🌍 TOP COUNTRIES")],
     ]
     if scope == "grade":
         grade_row = [
