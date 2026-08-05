@@ -2724,6 +2724,131 @@ def db_get_countries_ranked(limit: int = 15, offset: int = 0):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_world_summary_counts(grade: int = None):
+    """Tier-1 header block: total students/teams/schools/cities/countries + total/avg marks,
+    optionally scoped to one grade."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(DISTINCT u.user_id) AS student_count,
+                    COALESCE(SUM(u.total_marks), 0) AS total_marks,
+                    COALESCE(AVG(u.total_marks), 0) AS avg_marks,
+                    COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS country_count,
+                    COUNT(DISTINCT COALESCE(o.city, u.personal_city)) AS city_count
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE (%s::int IS NULL OR u.grade = %s);
+            """, (grade, grade))
+            summary = dict(cur.fetchone())
+
+            cur.execute("""
+                SELECT COUNT(DISTINCT o.org_id) AS school_count, COUNT(DISTINCT b.branch_id) AS team_count
+                FROM organizations o
+                LEFT JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN user_stats u ON m.user_id = u.user_id AND (%s::int IS NULL OR u.grade = %s)
+                LEFT JOIN school_branches b ON b.org_id = o.org_id AND b.deleted_at IS NULL
+                WHERE o.deleted_at IS NULL AND (%s::int IS NULL OR u.grade IS NOT NULL);
+            """, (grade, grade, grade))
+            counts = cur.fetchone()
+            summary["school_count"] = counts["school_count"] if counts else 0
+            summary["team_count"] = counts["team_count"] if counts else 0
+            return summary
+    except Exception as e:
+        print(f"[DB ERROR] db_get_world_summary_counts: {e}", flush=True)
+        return {"student_count": 0, "total_marks": 0, "avg_marks": 0, "country_count": 0, "city_count": 0, "school_count": 0, "team_count": 0}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int = 10):
+    """
+    Tier-1 multi-column table: top N students, teams (branches), schools, cities, countries.
+    mode: 'total' sorts/scores by SUM(total_marks); 'average' sorts/scores by AVG(total_marks).
+    Returns dict with keys: students, teams, schools, cities, countries — each a list of
+    {'name': str, 'score': int}.
+    """
+    agg = "AVG" if mode == "average" else "SUM"
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # Students
+            cur.execute(f"""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted,
+                       u.total_marks AS score
+                FROM user_stats u
+                WHERE (%s::int IS NULL OR u.grade = %s)
+                ORDER BY u.total_marks DESC
+                LIMIT %s;
+            """, (grade, grade, limit))
+            students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
+
+            # Teams (school_branches)
+            cur.execute(f"""
+                SELECT b.branch_name AS name, {agg}(u.total_marks)::int AS score
+                FROM school_branches b
+                JOIN org_memberships m ON m.branch_id = b.branch_id AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN user_stats u ON u.user_id = m.user_id
+                WHERE b.deleted_at IS NULL AND (%s::int IS NULL OR u.grade = %s)
+                GROUP BY b.branch_id, b.branch_name
+                ORDER BY score DESC
+                LIMIT %s;
+            """, (grade, grade, limit))
+            teams = [dict(r) for r in cur.fetchall()]
+
+            # Schools
+            cur.execute(f"""
+                SELECT o.org_name AS name, {agg}(u.total_marks)::int AS score
+                FROM organizations o
+                JOIN org_memberships m ON m.org_id = o.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN user_stats u ON u.user_id = m.user_id
+                WHERE o.deleted_at IS NULL AND (%s::int IS NULL OR u.grade = %s)
+                GROUP BY o.org_id, o.org_name
+                ORDER BY score DESC
+                LIMIT %s;
+            """, (grade, grade, limit))
+            schools = [dict(r) for r in cur.fetchall()]
+
+            # Cities
+            cur.execute(f"""
+                SELECT COALESCE(o.city, u.personal_city) AS name, {agg}(u.total_marks)::int AS score
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.city, u.personal_city) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
+                GROUP BY name
+                ORDER BY score DESC
+                LIMIT %s;
+            """, (grade, grade, limit))
+            cities = [dict(r) for r in cur.fetchall()]
+
+            # Countries
+            cur.execute(f"""
+                SELECT COALESCE(o.country, u.personal_country) AS name, {agg}(u.total_marks)::int AS score
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
+                GROUP BY name
+                ORDER BY score DESC
+                LIMIT %s;
+            """, (grade, grade, limit))
+            countries = [dict(r) for r in cur.fetchall()]
+
+            return {"students": students, "teams": teams, "schools": schools, "cities": cities, "countries": countries}
+    except Exception as e:
+        print(f"[DB ERROR] db_get_world_rank_matrix: {e}", flush=True)
+        return {"students": [], "teams": [], "schools": [], "cities": [], "countries": []}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_count_countries_ranked() -> int:
     conn = None
     try:

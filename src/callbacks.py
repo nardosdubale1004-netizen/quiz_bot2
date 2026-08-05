@@ -109,7 +109,7 @@ def _build_school_branch_leaderboard_text(schools: list) -> str:
         for b in s.get('branches', []):
             lines.append(f"   🏢 {html.escape(b['branch_name'])} ({html.escape(b.get('city') or '—')}) — {b.get('branch_score', 0)} marks")
     return "\n".join(lines)
-    
+
 
 def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKeyboardMarkup:
     rs = return_state or "all:all:0"
@@ -1238,6 +1238,22 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         total = await asyncio.to_thread(db_count_countries_ranked)
         text = build_geo_country_list_text(rows, offset, total)
         kb = build_geo_country_list_keyboard(rows, offset, total)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "world_rank":
+        await query.answer()
+        grade_raw = d_id  # "total" or "6"/"8"/"10"/"12"
+        mode = data[2] if len(data) > 2 else "total"
+        grade_val = None if grade_raw == "total" else int(grade_raw)
+
+        from src.database import db_get_world_summary_counts, db_get_world_rank_matrix
+        from src.rendering.html_views import build_world_rank_text, build_world_rank_keyboard
+
+        summary = await asyncio.to_thread(db_get_world_summary_counts, grade_val)
+        matrix = await asyncio.to_thread(db_get_world_rank_matrix, grade_val, mode, 10)
+        text = build_world_rank_text(summary, matrix, grade_raw, mode)
+        kb = build_world_rank_keyboard(grade_raw, mode)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 

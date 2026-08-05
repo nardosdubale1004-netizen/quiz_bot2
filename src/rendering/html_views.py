@@ -5,6 +5,7 @@ from src.config import CONFIG
 from src.typography import clean_latex_to_unicode, lite_math, beautify_markdown_math
 from src.rendering.latex_templates import get_day_from_tags, sanitize_tag_to_hashtag, is_complex
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from src.rendering.html_views import format_public_name
 
 def replace_code_with_italic(text: str) -> str:
     return text.replace("<code>", "<i>").replace("</code>", "</i>") if text else ""
@@ -966,9 +967,11 @@ def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKe
         return InlineKeyboardButton(f"{'• ' if scope == key else ''}{label}", callback_data=f"lb_filter|{key}")
     rows = [
         [_b("grade", "🎒 GRADE"), _b("school", "🏫 SCHOOL")],
-        [_b("city", "🌆 CITY"), _b("country", "🌍 COUNTRY")],
-        [_b("city_overall", "🌆 TOP CITIES"), _b("country_overall", "🌍 TOP COUNTRIES")],
-        [InlineKeyboardButton("🗺️ EXPLORE WORLD RANKS", callback_data="geo_country_list|0"),
+        [_b("school_branch", "🏢 BRANCHES"), _b("city", "🌆 CITY")],   # NEW: branch view
+        [_b("country", "🌍 COUNTRY"), _b("city_overall", "🌆 TOP CITIES")],
+        [_b("country_overall", "🌍 TOP COUNTRIES")],
+        [InlineKeyboardButton("🌍 WORLD RANK (NEW)", callback_data="world_rank|total|total")],
+        [InlineKeyboardButton("🗺️ EXPLORE COUNTRIES", callback_data="geo_country_list|0"),
          InlineKeyboardButton("🎒 GRADE RANKS", callback_data="geo_grade_list|0")],
     ]
     if scope == "grade":
@@ -1611,3 +1614,53 @@ def build_organization_grade_breakdown_text(grade_rows: list) -> str:
         lines.append(f"<tr><td>Grade {r['grade']}</td><td>{r['school_grade_score']}</td><td>#{r['city_rank']}</td><td>#{r['country_rank']}</td><td>#{r['world_rank']}</td></tr>")
     lines.append("</table>")
     return "\n".join(lines)
+
+def build_world_rank_text(summary: dict, matrix: dict, grade: str, mode: str) -> str:
+    grade_label = "All Grades" if grade in (None, "total") else f"Grade {grade}"
+    mode_label = "Average" if mode == "average" else "Total"
+
+    header = (
+        f"<h2>🌍 WORLD RANK</h2>\n"
+        f"<i>{grade_label} · {mode_label} scoring</i>\n<hr/>\n"
+        f"👥 {summary.get('student_count',0)} students · 👥 {summary.get('team_count',0)} teams · "
+        f"🏫 {summary.get('school_count',0)} schools · 🌆 {summary.get('city_count',0)} cities · "
+        f"🌍 {summary.get('country_count',0)} countries\n"
+        f"📊 <b>{summary.get('total_marks',0)}</b> total marks · <b>{int(summary.get('avg_marks',0))}</b> average\n<hr/>\n"
+    )
+
+    cols = ["students", "teams", "schools", "cities", "countries"]
+    col_labels = {"students": "Student", "teams": "Team", "schools": "School", "cities": "City", "countries": "Country"}
+    max_rows = max((len(matrix.get(c, [])) for c in cols), default=0)
+
+    table = [f"<tr>" + "".join(f"<td><b>{col_labels[c]}</b></td>" for c in cols) + "</tr>"]
+    for i in range(min(max_rows, 10)):
+        cells = []
+        for c in cols:
+            rows = matrix.get(c, [])
+            if i < len(rows):
+                cells.append(f"<td>{i+1}. {html.escape(str(rows[i]['name']))} ({rows[i]['score']})</td>")
+            else:
+                cells.append("<td>—</td>")
+        table.append("<tr>" + "".join(cells) + "</tr>")
+
+    return header + "<table>" + "".join(table) + "</table>"
+
+
+def build_world_rank_keyboard(grade: str, mode: str) -> InlineKeyboardMarkup:
+    def _g(g, label):
+        return InlineKeyboardButton(("• " if str(grade) == str(g) else "") + label, callback_data=f"world_rank|{g}|{mode}")
+
+    grade_row = [_g("total", "Total"), _g("12", "12"), _g("10", "10"), _g("8", "8"), _g("6", "6")]
+    mode_row = [
+        InlineKeyboardButton(("• " if mode == "total" else "") + "🔢 Total", callback_data=f"world_rank|{grade}|total"),
+        InlineKeyboardButton(("• " if mode == "average" else "") + "📊 Average", callback_data=f"world_rank|{grade}|average"),
+    ]
+    scope_row = [
+        InlineKeyboardButton("🌍 Country", callback_data="geo_country_list|0"),
+        InlineKeyboardButton("🌆 City", callback_data="lb_filter|city"),
+        InlineKeyboardButton("🏫 School", callback_data="geo_school_list|all|all|0"),
+    ]
+    return InlineKeyboardMarkup([
+        grade_row, mode_row, scope_row,
+        [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"), InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
+    ])
