@@ -1934,25 +1934,28 @@ def db_join_organization(user_id, org_tag: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_tag = UPPER(%s);", (org_tag.strip(),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
             row = cur.fetchone()
             if not row:
                 return None
             org_id, org_name, is_public, creator_id, country = row['org_id'], row['org_name'], row['is_public'], row['creator_id'], row['country']
 
-            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
+            cur.execute("SELECT org_role, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
             existing = cur.fetchone()
             if existing and existing['org_role'] in ('creator', 'admin', 'member'):
                 return {"org_id": org_id, "org_name": org_name, "role_assigned": existing['org_role'], "creator_id": creator_id, "already_member": True}
             if existing and existing['org_role'] == 'pending':
-                return {"org_id": org_id, "org_name": org_name, "role_assigned": "pending", "creator_id": creator_id, "already_pending": True}
+                return {
+                    "org_id": org_id, "org_name": org_name, "role_assigned": "pending", "creator_id": creator_id,
+                    "already_pending": True, "request_count": existing['request_count'], "last_requested_at": existing['last_requested_at']
+                }
 
             role = "pending" if is_public else "member"
             cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, %s)
+                INSERT INTO org_memberships (user_id, org_id, org_role, request_count, last_requested_at)
+                VALUES (%s, %s, %s, 1, NOW())
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW()
+                    org_role = EXCLUDED.org_role, joined_at = NOW(), request_count = 1, last_requested_at = NOW()
                 WHERE org_memberships.org_role = 'rejected';
             """, (str(user_id), org_id, role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
@@ -1966,23 +1969,45 @@ def db_join_organization(user_id, org_tag: str) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_resend_join_request(user_id, org_id: int) -> bool:
+    """Bumps request_count + last_requested_at for an already-pending request."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE org_memberships SET request_count = COALESCE(request_count, 1) + 1, last_requested_at = NOW()
+                WHERE user_id = %s AND org_id = %s AND org_role = 'pending';
+            """, (str(user_id), int(org_id)))
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB-ORG-ERROR] Resend request failed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
 def db_join_organization_by_id(user_id, org_id: int) -> dict:
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_id = %s;", (int(org_id),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
             row = cur.fetchone()
             if not row:
                 return None
 
-            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            cur.execute("SELECT org_role, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
             existing = cur.fetchone()
             if existing and existing['org_role'] in ('creator', 'admin', 'member'):
                 return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": existing['org_role'], "creator_id": row['creator_id'], "already_member": True}
             if existing and existing['org_role'] == 'pending':
-                return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": "pending", "creator_id": row['creator_id'], "already_pending": True}
+                return {
+                    "org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": "pending", "creator_id": row['creator_id'],
+                    "already_pending": True, "request_count": existing['request_count'], "last_requested_at": existing['last_requested_at']
+                }
 
             role = "pending" if row['is_public'] else "member"
             cur.execute("""
@@ -2089,7 +2114,7 @@ def db_get_user_organizations(user_id):
                 SELECT o.*, m.org_role
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
-                WHERE m.user_id = %s;
+                WHERE m.user_id = %s AND o.deleted_at IS NULL AND m.org_role NOT IN ('rejected', 'left');
             """, (str(user_id),))
             return cur.fetchall()
     except Exception as e:
@@ -2127,7 +2152,7 @@ def db_find_similar_organizations(name: str):
             cur.execute("""
                 SELECT org_id, org_name, org_tag, city, country
                 FROM organizations
-                WHERE org_name ILIKE %s
+                WHERE org_name ILIKE %s AND deleted_at IS NULL
                 LIMIT 5;
             """, (f"%{core}%",))
             return cur.fetchall()
@@ -2149,7 +2174,7 @@ def db_get_organization_roster(org_id: int):
                        m.org_role, m.joined_at, u.public_consent_granted
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_id = %s AND m.org_role NOT IN ('pending', 'rejected')
+                WHERE m.org_id = %s AND m.org_role NOT IN ('pending', 'rejected', 'left')
                 ORDER BY u.total_marks DESC;
             """, (int(org_id),))
             return cur.fetchall()
@@ -2649,10 +2674,12 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
                 params.append(country)
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             params.append(limit)
+            deleted_clause = "deleted_at IS NULL" if not where else "deleted_at IS NULL AND "
+            where_final = f"WHERE {deleted_clause}{' AND '.join(clauses)}" if clauses else "WHERE deleted_at IS NULL"
             cur.execute(f"""
                 SELECT org_id, org_name, org_tag, city, country
                 FROM organizations
-                {where}
+                {where_final}
                 ORDER BY org_name ASC
                 LIMIT %s;
             """, tuple(params))
@@ -3338,7 +3365,7 @@ def db_get_all_campaigns(active_only: bool = False):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            clause = "WHERE is_active = TRUE" if active_only else ""
+            clause = "WHERE is_active = TRUE AND deleted_at IS NULL" if active_only else "WHERE deleted_at IS NULL"
             cur.execute(f"SELECT * FROM channel_campaigns {clause} ORDER BY id ASC;")
             return cur.fetchall()
     except Exception as e:
@@ -3354,7 +3381,7 @@ def db_get_campaign_by_name(name: str):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM channel_campaigns WHERE name = %s;", (name.strip(),))
+            cur.execute("SELECT * FROM channel_campaigns WHERE name = %s AND deleted_at IS NULL;", (name.strip(),))
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:

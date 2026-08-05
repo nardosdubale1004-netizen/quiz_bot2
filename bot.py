@@ -70,7 +70,7 @@ from src.database import (
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
 from src.rendering.rich_helpers import send_rich_message_safe, edit_rich_message_safe, convert_to_legacy_html
-from src.callbacks import handle_callback
+from src.callbacks import handle_callback, _notify_org_admins_pending_request
 from src.cli import admin_panel
 from src.tournament import tournament_watcher_loop, emergency_shutdown_cleanup
 import httpx
@@ -756,6 +756,7 @@ async def start_command(update: Update, context):
                 if should_notify:
                     try:
                         new_name = html.escape(user.first_name or user.username or "A student")
+                        referral_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0")]])
                         await context.bot.send_message(
                             chat_id=int(referrer_id),
                             text=(
@@ -763,7 +764,8 @@ async def start_command(update: Update, context):
                                 f"You'll earn bonus marks from their correct answers.\n\n"
                                 f"📊 Total referrals so far: <b>{ref_count}</b>"
                             ),
-                            parse_mode="HTML"
+                            parse_mode="HTML",
+                            reply_markup=referral_nav_kb
                         )
                     except Exception:
                         pass
@@ -1209,26 +1211,6 @@ async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
     except Exception:
         pass
 
-
-async def _notify_org_admins_pending_request(context, org_id, org_name, requester):
-    from src.database import db_get_org_admin_ids
-    admin_ids = await asyncio.to_thread(db_get_org_admin_ids, org_id)
-    if not admin_ids:
-        return
-    approve_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🟢 APPROVE", callback_data=f"process_req|{org_id}|{requester.id}|1"),
-        InlineKeyboardButton("🔴 REJECT", callback_data=f"process_req|{org_id}|{requester.id}|0")
-    ]])
-    req_name = html.escape(requester.first_name or requester.username or "A student")
-    for admin_id in admin_ids:
-        try:
-            await context.bot.send_message(
-                chat_id=int(admin_id),
-                text=f"📥 <b>NEW JOIN REQUEST</b>\n\n<b>{req_name}</b> wants to join <b>{html.escape(org_name)}</b>.",
-                reply_markup=approve_kb, parse_mode="HTML"
-            )
-        except Exception:
-            pass
 
 
 async def _fsm_advance(context, chat_id, edit_mid, html_content, reply_markup=None):
