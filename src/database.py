@@ -4301,162 +4301,6 @@ def db_get_user_snapshot(user_id) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_get_team_geo_ownership(org_id: int) -> dict:
-
-def db_get_branch_leaderboard(branch_id: int, limit: int = 10):
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT u.user_id, u.nickname, u.username, u.first_name,
-                       u.public_consent_granted, u.total_marks
-                FROM user_stats u
-                WHERE u.branch_id = %s
-                ORDER BY u.total_marks DESC
-                LIMIT %s;
-            """, (int(branch_id), limit))
-            return cur.fetchall()
-    except Exception as e:
-        print(f"[DB ERROR] db_get_branch_leaderboard: {e}", flush=True)
-        return []
-    finally:
-        if conn: GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_get_school_with_branches_leaderboard(limit: int = 10):
-    """
-    Returns schools ranked by total marks, including branch breakdowns.
-    Each row has: org_id, org_name, total_score, branches (list).
-    """
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            # School totals
-            cur.execute("""
-                SELECT o.org_id, o.org_name, o.org_tag, o.city, o.country,
-                       SUM(u.total_marks) AS total_score,
-                       COUNT(DISTINCT m.user_id) AS member_count
-                FROM organizations o
-                JOIN org_memberships m ON o.org_id = m.org_id
-                  AND m.org_role NOT IN ('pending','rejected','left')
-                JOIN user_stats u ON m.user_id = u.user_id
-                WHERE o.deleted_at IS NULL
-                GROUP BY o.org_id, o.org_name, o.org_tag, o.city, o.country
-                ORDER BY total_score DESC
-                LIMIT %s;
-            """, (limit,))
-            schools = [dict(r) for r in cur.fetchall()]
-
-            # Branch totals per school
-            for s in schools:
-                cur.execute("""
-                    SELECT b.branch_id, b.branch_name, b.city, b.country,
-                           SUM(u.total_marks) AS branch_score,
-                           COUNT(DISTINCT m.user_id) AS member_count
-                    FROM school_branches b
-                    JOIN org_memberships m ON m.branch_id = b.branch_id
-                      AND m.org_role NOT IN ('pending','rejected','left')
-                    JOIN user_stats u ON m.user_id = u.user_id
-                    WHERE b.org_id = %s AND b.deleted_at IS NULL
-                    GROUP BY b.branch_id, b.branch_name, b.city, b.country
-                    ORDER BY branch_score DESC;
-                """, (s['org_id'],))
-                s['branches'] = [dict(r) for r in cur.fetchall()]
-
-            return schools
-    except Exception as e:
-        print(f"[DB ERROR] db_get_school_with_branches_leaderboard: {e}", flush=True)
-        return []
-    finally:
-        if conn: GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None, limit: int = 10):
-    """
-    scope: 'world' | 'country' | 'city' | 'school'
-    Only includes teams where ALL members share the same scope_value.
-    Uses db_get_team_geo_ownership logic inline via SQL.
-    """
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            # Subquery: for each org, get all unique resolved countries and cities
-            base_sql = """
-                WITH team_geo AS (
-                    SELECT
-                        m.org_id,
-                        COUNT(DISTINCT m.user_id) AS member_count,
-                        COUNT(DISTINCT COALESCE(b.country, o.country, u.personal_country)) AS country_count,
-                        COUNT(DISTINCT COALESCE(b.city, o.city, u.personal_city)) AS city_count,
-                        MIN(COALESCE(b.country, o.country, u.personal_country)) AS solo_country,
-                        MIN(COALESCE(b.city, o.city, u.personal_city)) AS solo_city
-                    FROM org_memberships m
-                    JOIN user_stats u ON u.user_id = m.user_id
-                    JOIN organizations o ON o.org_id = m.org_id
-                    LEFT JOIN school_branches b ON b.branch_id = m.branch_id
-                    WHERE m.org_role NOT IN ('pending','rejected','left')
-                      AND o.deleted_at IS NULL
-                    GROUP BY m.org_id
-                ),
-                ranked_teams AS (
-                    SELECT
-                        tg.org_id,
-                        o.org_name,
-                        o.org_tag,
-                        SUM(u.total_marks) AS total_score,
-                        tg.member_count,
-                        tg.solo_country,
-                        tg.solo_city,
-                        tg.country_count,
-                        tg.city_count
-                    FROM team_geo tg
-                    JOIN organizations o ON o.org_id = tg.org_id
-                    JOIN org_memberships m ON m.org_id = tg.org_id
-                      AND m.org_role NOT IN ('pending','rejected','left')
-                    JOIN user_stats u ON u.user_id = m.user_id
-                    GROUP BY tg.org_id, o.org_name, o.org_tag,
-                             tg.member_count, tg.solo_country, tg.solo_city,
-                             tg.country_count, tg.city_count
-                )
-            """
-
-            if scope == "country" and scope_value:
-                cur.execute(base_sql + """
-                    SELECT * FROM ranked_teams
-                    WHERE country_count = 1 AND solo_country = %s
-                    ORDER BY total_score DESC LIMIT %s;
-                """, (scope_value, limit))
-            elif scope == "city" and scope_value:
-                cur.execute(base_sql + """
-                    SELECT * FROM ranked_teams
-                    WHERE city_count = 1 AND solo_city = %s
-                    ORDER BY total_score DESC LIMIT %s;
-                """, (scope_value, limit))
-            elif scope == "school" and scope_value:
-                cur.execute(base_sql + """
-                    SELECT rt.* FROM ranked_teams rt
-                    JOIN team_geo tg ON tg.org_id = rt.org_id
-                    WHERE rt.org_id = %s
-                    ORDER BY rt.total_score DESC LIMIT %s;
-                """, (int(scope_value), limit))
-            else:
-                # World — all teams qualify
-                cur.execute(base_sql + """
-                    SELECT * FROM ranked_teams
-                    ORDER BY total_score DESC LIMIT %s;
-                """, (limit,))
-
-            return cur.fetchall()
-    except Exception as e:
-        print(f"[DB ERROR] db_get_smart_team_leaderboard({scope}): {e}", flush=True)
-        return []
-    finally:
-        if conn: GLOBAL_ENGINE.release_connection(conn)
-        
-
 def db_set_show_real_identity(user_id, show: bool) -> bool:
     conn = None
     try:
@@ -4649,6 +4493,10 @@ def db_join_branch(user_id, branch_id: int) -> bool:
     finally:
         if conn: GLOBAL_ENGINE.release_connection(conn)
 
+
+
+
+def db_get_team_geo_ownership(org_id: int) -> dict:
     """
     Determines whether a team's members are homogenous enough to be attributed
     to a specific school/branch/city/country for leaderboard purposes.
@@ -4697,5 +4545,159 @@ def db_join_branch(user_id, branch_id: int) -> bool:
     except Exception as e:
         print(f"[DB ERROR] db_get_team_geo_ownership: {e}", flush=True)
         return {"school_id": None, "branch_id": None, "city": None, "country": None}
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_branch_leaderboard(branch_id: int, limit: int = 10):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.user_id, u.nickname, u.username, u.first_name,
+                       u.public_consent_granted, u.total_marks
+                FROM user_stats u
+                WHERE u.branch_id = %s
+                ORDER BY u.total_marks DESC
+                LIMIT %s;
+            """, (int(branch_id), limit))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_branch_leaderboard: {e}", flush=True)
+        return []
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_school_with_branches_leaderboard(limit: int = 10):
+    """
+    Returns schools ranked by total marks, including branch breakdowns.
+    Each row has: org_id, org_name, total_score, branches (list).
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # School totals
+            cur.execute("""
+                SELECT o.org_id, o.org_name, o.org_tag, o.city, o.country,
+                       SUM(u.total_marks) AS total_score,
+                       COUNT(DISTINCT m.user_id) AS member_count
+                FROM organizations o
+                JOIN org_memberships m ON o.org_id = m.org_id
+                  AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN user_stats u ON m.user_id = u.user_id
+                WHERE o.deleted_at IS NULL
+                GROUP BY o.org_id, o.org_name, o.org_tag, o.city, o.country
+                ORDER BY total_score DESC
+                LIMIT %s;
+            """, (limit,))
+            schools = [dict(r) for r in cur.fetchall()]
+
+            # Branch totals per school
+            for s in schools:
+                cur.execute("""
+                    SELECT b.branch_id, b.branch_name, b.city, b.country,
+                           SUM(u.total_marks) AS branch_score,
+                           COUNT(DISTINCT m.user_id) AS member_count
+                    FROM school_branches b
+                    JOIN org_memberships m ON m.branch_id = b.branch_id
+                      AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON m.user_id = u.user_id
+                    WHERE b.org_id = %s AND b.deleted_at IS NULL
+                    GROUP BY b.branch_id, b.branch_name, b.city, b.country
+                    ORDER BY branch_score DESC;
+                """, (s['org_id'],))
+                s['branches'] = [dict(r) for r in cur.fetchall()]
+
+            return schools
+    except Exception as e:
+        print(f"[DB ERROR] db_get_school_with_branches_leaderboard: {e}", flush=True)
+        return []
+    finally:
+        if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None, limit: int = 10):
+    """
+    scope: 'world' | 'country' | 'city' | 'school'
+    Only includes teams where ALL members share the same scope_value.
+    Uses db_get_team_geo_ownership logic inline via SQL.
+    """
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            # Subquery: for each org, get all unique resolved countries and cities
+            base_sql = """
+                WITH team_geo AS (
+                    SELECT
+                        m.org_id,
+                        COUNT(DISTINCT m.user_id) AS member_count,
+                        COUNT(DISTINCT COALESCE(b.country, o.country, u.personal_country)) AS country_count,
+                        COUNT(DISTINCT COALESCE(b.city, o.city, u.personal_city)) AS city_count,
+                        MIN(COALESCE(b.country, o.country, u.personal_country)) AS solo_country,
+                        MIN(COALESCE(b.city, o.city, u.personal_city)) AS solo_city
+                    FROM org_memberships m
+                    JOIN user_stats u ON u.user_id = m.user_id
+                    JOIN organizations o ON o.org_id = m.org_id
+                    LEFT JOIN school_branches b ON b.branch_id = m.branch_id
+                    WHERE m.org_role NOT IN ('pending','rejected','left')
+                      AND o.deleted_at IS NULL
+                    GROUP BY m.org_id
+                ),
+                ranked_teams AS (
+                    SELECT
+                        tg.org_id,
+                        o.org_name,
+                        o.org_tag,
+                        SUM(u.total_marks) AS total_score,
+                        tg.member_count,
+                        tg.solo_country,
+                        tg.solo_city,
+                        tg.country_count,
+                        tg.city_count
+                    FROM team_geo tg
+                    JOIN organizations o ON o.org_id = tg.org_id
+                    JOIN org_memberships m ON m.org_id = tg.org_id
+                      AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN user_stats u ON u.user_id = m.user_id
+                    GROUP BY tg.org_id, o.org_name, o.org_tag,
+                             tg.member_count, tg.solo_country, tg.solo_city,
+                             tg.country_count, tg.city_count
+                )
+            """
+
+            if scope == "country" and scope_value:
+                cur.execute(base_sql + """
+                    SELECT * FROM ranked_teams
+                    WHERE country_count = 1 AND solo_country = %s
+                    ORDER BY total_score DESC LIMIT %s;
+                """, (scope_value, limit))
+            elif scope == "city" and scope_value:
+                cur.execute(base_sql + """
+                    SELECT * FROM ranked_teams
+                    WHERE city_count = 1 AND solo_city = %s
+                    ORDER BY total_score DESC LIMIT %s;
+                """, (scope_value, limit))
+            elif scope == "school" and scope_value:
+                cur.execute(base_sql + """
+                    SELECT rt.* FROM ranked_teams rt
+                    JOIN team_geo tg ON tg.org_id = rt.org_id
+                    WHERE rt.org_id = %s
+                    ORDER BY rt.total_score DESC LIMIT %s;
+                """, (int(scope_value), limit))
+            else:
+                # World — all teams qualify
+                cur.execute(base_sql + """
+                    SELECT * FROM ranked_teams
+                    ORDER BY total_score DESC LIMIT %s;
+                """, (limit,))
+
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_smart_team_leaderboard({scope}): {e}", flush=True)
+        return []
     finally:
         if conn: GLOBAL_ENGINE.release_connection(conn)
