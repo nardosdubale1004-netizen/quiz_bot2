@@ -4319,50 +4319,234 @@ def db_get_all_subjects():
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_get_rank_matrix(scope: str = "world", grade=None, limit: int = 10):
-    """Unified matrix for World/Country/City/School — always SUM(total_marks), grade optional."""
+# def db_get_rank_matrix(scope: str = "world", grade=None, limit: int = 10):
+#     """Unified matrix for World/Country/City/School — always SUM(total_marks), grade optional."""
+#     from src.rendering.html_views import format_public_name
+#     conn = None
+#     try:
+#         conn = GLOBAL_ENGINE.get_db_connection()
+#         with conn.cursor() as cur:
+#             grade_val = None if grade in (None, "all") else int(grade)
+
+#             cur.execute("""
+#                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks AS score
+#                 FROM user_stats u
+#                 WHERE (%s::int IS NULL OR u.grade = %s)
+#                 ORDER BY u.total_marks DESC LIMIT %s;
+#             """, (grade_val, grade_val, limit))
+#             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
+
+#             def _group(label_col, join_clause, require_org=False):
+#                 cur.execute(f"""
+#                     SELECT {label_col} AS name, SUM(u.total_marks)::int AS score
+#                     FROM user_stats u
+#                     {join_clause}
+#                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
+#                     GROUP BY name ORDER BY score DESC LIMIT %s;
+#                 """, (grade_val, grade_val, limit))
+#                 return [dict(r) for r in cur.fetchall()]
+
+#             org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+#                         "LEFT JOIN organizations o ON m.org_id = o.org_id")
+#             org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+#                        "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
+
+#             teams = _group("o.org_name", org_req)
+#             schools = _group("o.org_name", org_req)
+#             cities = _group("COALESCE(o.city, u.personal_city)", org_left)
+#             countries = _group("COALESCE(o.country, u.personal_country)", org_left)
+
+#             return {"students": students, "teams": teams, "schools": schools, "cities": cities, "countries": countries}
+#     except Exception as e:
+#         print(f"[DB ERROR] db_get_rank_matrix({scope}): {e}", flush=True)
+#         return {"students": [], "teams": [], "schools": [], "cities": [], "countries": []}
+#     finally:
+#         if conn:
+#             GLOBAL_ENGINE.release_connection(conn)
+def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, difficulty=None, mode="total", limit=10):
+    """
+    scope: world|country|city|school. entity: selected country/city name, or org_id (str) for school, or None.
+    Combined filters (grade + subject + difficulty) apply together. mode: 'total' (SUM) or 'average' (AVG).
+    """
     from src.rendering.html_views import format_public_name
+    agg = "AVG" if mode == "average" else "SUM"
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             grade_val = None if grade in (None, "all") else int(grade)
+            subject_val = None if subject in (None, "all") else subject.lower()
+            difficulty_val = None if difficulty in (None, "all") else difficulty.lower()
 
-            cur.execute("""
-                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks AS score
-                FROM user_stats u
-                WHERE (%s::int IS NULL OR u.grade = %s)
-                ORDER BY u.total_marks DESC LIMIT %s;
-            """, (grade_val, grade_val, limit))
-            students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
-
-            def _group(label_col, join_clause, require_org=False):
-                cur.execute(f"""
-                    SELECT {label_col} AS name, SUM(u.total_marks)::int AS score
-                    FROM user_stats u
-                    {join_clause}
-                    WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
-                    GROUP BY name ORDER BY score DESC LIMIT %s;
-                """, (grade_val, grade_val, limit))
-                return [dict(r) for r in cur.fetchall()]
+            extra_join, score_col, extra_params = "", "u.total_marks", []
+            if subject_val:
+                extra_join = "JOIN user_subject_marks sm ON sm.user_id = u.user_id AND sm.subject = %s"
+                extra_params = [subject_val]
+                score_col = "sm.marks"
+            elif difficulty_val:
+                extra_join = "JOIN user_difficulty_marks dm ON dm.user_id = u.user_id AND dm.difficulty = %s"
+                extra_params = [difficulty_val]
+                score_col = "dm.marks"
 
             org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
                         "LEFT JOIN organizations o ON m.org_id = o.org_id")
             org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
                        "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
 
-            teams = _group("o.org_name", org_req)
-            schools = _group("o.org_name", org_req)
-            cities = _group("COALESCE(o.city, u.personal_city)", org_left)
-            countries = _group("COALESCE(o.country, u.personal_country)", org_left)
+            entity_clause, entity_params = "", []
+            if scope == "country" and entity:
+                entity_clause = "AND COALESCE(o.country, u.personal_country) = %s"
+                entity_params = [entity]
+            elif scope == "city" and entity:
+                entity_clause = "AND COALESCE(o.city, u.personal_city) = %s"
+                entity_params = [entity]
+            elif scope == "school" and entity:
+                entity_clause = "AND o.org_id = %s"
+                entity_params = [int(entity)]
 
-            return {"students": students, "teams": teams, "schools": schools, "cities": cities, "countries": countries}
+            join_for_scope = org_req if scope in ("city", "school") else org_left
+
+            cur.execute(f"""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, {score_col} AS score
+                FROM user_stats u
+                {extra_join}
+                {join_for_scope if entity_clause else ''}
+                WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause}
+                ORDER BY score DESC LIMIT %s;
+            """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
+            students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
+
+            def _group(label_col, join_clause):
+                cur.execute(f"""
+                    SELECT {label_col} AS name, {agg}({score_col})::int AS score
+                    FROM user_stats u
+                    {extra_join}
+                    {join_clause}
+                    WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause}
+                    GROUP BY name ORDER BY score DESC LIMIT %s;
+                """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
+                return [dict(r) for r in cur.fetchall()]
+
+            result = {"students": students}
+            if scope in ("world", "country", "city"):
+                result["schools"] = _group("o.org_name", org_req)
+            if scope in ("world", "country", "city", "school"):
+                result["teams"] = _group("o.org_name", org_req)
+            if scope in ("world", "country"):
+                result["cities"] = _group("COALESCE(o.city, u.personal_city)", org_left)
+            if scope == "world":
+                result["countries"] = _group("COALESCE(o.country, u.personal_country)", org_left)
+
+            return result
     except Exception as e:
-        print(f"[DB ERROR] db_get_rank_matrix({scope}): {e}", flush=True)
-        return {"students": [], "teams": [], "schools": [], "cities": [], "countries": []}
+        print(f"[DB ERROR] db_get_rank_matrix({scope}/{entity}): {e}", flush=True)
+        return {"students": []}
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_scope_summary(scope="world", entity=None, grade=None):
+    """Section-1 stats: population counts, total/avg score, and parent rank."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            grade_val = None if grade in (None, "all") else int(grade)
+            org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+                        "LEFT JOIN organizations o ON m.org_id = o.org_id")
+            org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+                       "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
+
+            entity_clause, entity_params, join_sql = "", [], org_left
+            if scope == "country" and entity:
+                entity_clause, entity_params = "AND COALESCE(o.country, u.personal_country) = %s", [entity]
+            elif scope == "city" and entity:
+                entity_clause, entity_params, join_sql = "AND COALESCE(o.city, u.personal_city) = %s", [entity], org_req
+            elif scope == "school" and entity:
+                entity_clause, entity_params, join_sql = "AND o.org_id = %s", [int(entity)], org_req
+
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT u.user_id) AS student_count,
+                       COALESCE(SUM(u.total_marks), 0) AS total_marks,
+                       COALESCE(AVG(u.total_marks), 0) AS avg_marks,
+                       COUNT(DISTINCT o.org_id) AS school_count,
+                       COUNT(DISTINCT COALESCE(o.city, u.personal_city)) AS city_count,
+                       COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS country_count
+                FROM user_stats u
+                {join_sql}
+                WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause};
+            """, (grade_val, grade_val) + tuple(entity_params))
+            summary = dict(cur.fetchone())
+            summary["team_count"] = summary["school_count"]
+
+            summary["parent_ranks"] = {}
+            if scope == "country" and entity:
+                cur.execute("""
+                    WITH ranked AS (SELECT COALESCE(o.country, u.personal_country) AS c, SUM(u.total_marks) AS s,
+                        RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS r
+                        FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                        LEFT JOIN organizations o ON m.org_id=o.org_id WHERE COALESCE(o.country,u.personal_country) IS NOT NULL GROUP BY c)
+                    SELECT r FROM ranked WHERE c = %s;
+                """, (entity,))
+                row = cur.fetchone()
+                summary["parent_ranks"]["world"] = row["r"] if row else None
+            elif scope == "city" and entity:
+                cur.execute("SELECT country FROM organizations WHERE city = %s LIMIT 1;", (entity,))
+                row = cur.fetchone()
+                summary["parent_country"] = row["country"] if row else None
+            elif scope == "school" and entity:
+                cur.execute("SELECT city, country FROM organizations WHERE org_id = %s;", (int(entity),))
+                row = cur.fetchone()
+                summary["parent_city"] = row["city"] if row else None
+                summary["parent_country"] = row["country"] if row else None
+
+            return summary
+    except Exception as e:
+        print(f"[DB ERROR] db_get_scope_summary({scope}/{entity}): {e}", flush=True)
+        return {"student_count": 0, "total_marks": 0, "avg_marks": 0, "school_count": 0, "team_count": 0, "city_count": 0, "country_count": 0}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_entity_list(scope, parent_entity=None, limit=40):
+    """Entity picker source (📍 PICK COUNTRY/CITY/SCHOOL buttons)."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if scope == "country":
+                cur.execute("""
+                    SELECT DISTINCT COALESCE(o.country, u.personal_country) AS name
+                    FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    LEFT JOIN organizations o ON m.org_id=o.org_id
+                    WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
+                    ORDER BY name ASC LIMIT %s;
+                """, (limit,))
+            elif scope == "city":
+                cur.execute("""
+                    SELECT DISTINCT COALESCE(o.city, u.personal_city) AS name
+                    FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    LEFT JOIN organizations o ON m.org_id=o.org_id
+                    WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                    ORDER BY name ASC LIMIT %s;
+                """, (parent_entity, limit))
+            elif scope == "school":
+                cur.execute("""
+                    SELECT org_id AS id, org_name AS name FROM organizations
+                    WHERE city = %s AND deleted_at IS NULL ORDER BY org_name ASC LIMIT %s;
+                """, (parent_entity, limit))
+            else:
+                return []
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[DB ERROR] db_get_entity_list({scope}): {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
                       
 def db_edit_tournament_answer(user_id, message_id, new_option: int, new_is_correct: bool):
     conn = None

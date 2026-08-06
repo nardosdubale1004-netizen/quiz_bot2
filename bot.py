@@ -257,6 +257,10 @@ async def start_command(update: Update, context):
             await update.message.reply_text("⚠️ Something went wrong loading that. Please try /start again.")
         except Exception:
             pass
+
+
+async def _start_command_inner(update: Update, context):
+    user = update.effective_user
     user = update.effective_user
     user_id = user.id
     args = context.args
