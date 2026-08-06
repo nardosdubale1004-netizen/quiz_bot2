@@ -1819,11 +1819,15 @@ async def handle_fsm_message(update: Update, context):
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
                     (
-                        f"⏳ <b>Review Needed!</b>\n\n"
-                        f"<b>{html.escape(final_city)}</b> isn't in our records yet, so it's saved to your "
-                        f"profile as <b>pending</b>. Your marks won't count toward this city's leaderboard "
-                        f"until an admin approves it — we'll message you the moment that happens.\n\n"
-                        f"Tap below to keep going with your school."
+                        f"⏳ <b>Review Needed — register \"{html.escape(final_city)}\" as a city in "
+                        f"{html.escape(reg_country or '')}?</b>\n\n"
+                        f"We don't have {html.escape(final_city)} on file yet — thanks for helping widen "
+                        f"the platform for other students there too!\n\n"
+                        f"It's saved to your profile as <b>pending</b> for now. Your marks won't count "
+                        f"toward {html.escape(final_city)}'s leaderboard until an admin approves it — "
+                        f"we'll message you the moment that happens.\n\n"
+                        f"<i>Nothing is sent to admins yet — you'll review and confirm everything together "
+                        f"(city + school) at the very end.</i> Tap below to continue with your school."
                     ),
                     pending_kb
                 )

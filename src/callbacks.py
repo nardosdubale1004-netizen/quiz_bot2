@@ -265,10 +265,10 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
 
     if city_is_new or school_is_new:
         lines.append(
-            "\n<blockquote>⚠️ Anything marked <b>pending</b> is saved to your profile now, but your "
-            "score stays <b>personal only</b> and won't count toward that city/school/team leaderboard "
-            "until an admin approves it. We'll message you the moment that happens — nothing else about "
-            "your account is affected while you wait.</blockquote>"
+            "\n<blockquote>⚠️ Anything marked <b>pending</b> gets saved to your profile AND sent to admins "
+            "for review only when you tap CONFIRM &amp; SAVE below — nothing was sent while you were "
+            "filling this out. Your score stays <b>personal only</b> on anything pending until an admin "
+            "approves it; we'll message you the moment that happens.</blockquote>"
         )
 
     kb = InlineKeyboardMarkup([
@@ -288,9 +288,10 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     city_is_new = session.get("reg_city_is_new", False)
     existing_sid = session.get("reg_city_suggestion_id")
 
-    if city or country:
-        if city_is_new and not existing_sid:
-            # Fallback only — normally the pending-ack step already created and notified this.
+    if city_is_new and not existing_sid:
+            # This IS the single point where a new city gets created and admins get notified —
+            # only ever reached from the final regloc_confirm tap, after the user has reviewed
+            # the whole setup (city + school together) on the review screen.
             sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
             await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
             admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
@@ -298,6 +299,8 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
             review_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
                 InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+            ], [
+                InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"loc_review|{sid}|-1")
             ]])
             for admin_id in admin_ids:
                 try:
@@ -314,7 +317,11 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     status_line = "⏳ pending admin review" if city_is_new else "✅ saved"
     await edit_rich_message_safe(
         context.bot, chat_id=chat_id, message_id=message_id,
-        html_content=f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'} ({status_line})\n{school_msg or ''}",
+        html_content=(
+            f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'} ({status_line})\n{school_msg or ''}\n\n"
+            f"📌 <i>Your marks always stay with the city/country/school you earned them in — changing any of "
+            f"these later never moves old marks, it just starts a fresh total on the new one.</i>"
+        ),
         reply_markup=profile_nav_kb
     )
 
@@ -923,32 +930,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
     
     elif action == "regloc_city_pending_ack":
+        # No DB writes here on purpose — the city stays STAGED in USER_PAYLOADS (already
+        # set by AWAITING_REGLOC_CITY_TEXT) and is only ever actually created/sent to
+        # admins from _regloc_finish, once the user reviews and confirms the WHOLE setup
+        # (city + school together) at the final step. Tapping "accept & continue" here is
+        # purely navigation to the school step.
         await query.answer()
-        session = USER_PAYLOADS.get(user_id, {})
-        city, country = session.get("reg_city"), session.get("reg_country")
-        if city and country and not session.get("reg_city_suggestion_id"):
-            from src.database import db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids
-            sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
-            await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
-            USER_PAYLOADS.setdefault(user_id, {})["reg_city_suggestion_id"] = sid
-
-            admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
-            req_name = html.escape(query.from_user.first_name or query.from_user.username or "A student")
-            review_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
-                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
-            ], [
-                InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}")
-            ]])
-            for admin_id in admin_ids:
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(admin_id),
-                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(city)}, {html.escape(country)}</b> — not in our known list.",
-                        reply_markup=review_kb, parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
         await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id)
         return
 
@@ -987,6 +974,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 review_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
                     InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+                ], [
+                    InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"loc_review|{sid}|-1")
                 ]])
                 for admin_id in admin_ids:
                     try:
@@ -1115,9 +1104,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 )
             except Exception:
                 pass
-            msg = "🚪 You left the team. Since you were the creator, leadership was automatically handed to your longest-standing admin/member."
+            msg = (
+                "🚪 You left the team. Since you were the creator, leadership was automatically handed "
+                "to your longest-standing admin/member.\n\n"
+                "📌 <i>Your marks stay credited to this team's board exactly as they were. From here, "
+                "your correct answers only count toward whichever team(s) you're currently in.</i>"
+            )
         else:
-            msg = "🚪 You successfully exited the school team. Alliance points reset."
+            msg = (
+                "🚪 You successfully exited the school team.\n\n"
+                "📌 <i>Every mark you earned while on this team stays on its board. Going forward, "
+                "your correct answers only count toward your current team(s).</i>"
+            )
             # Non-creator leave — notify the remaining admins/creator, since they'd
             # otherwise have no way of knowing their roster shrank.
             for admin_id in admin_ids_before:
@@ -1292,6 +1290,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Admins only.", show_alert=True)
             return
         sid, decision = int(d_id), data[2]
+        if decision == "-1":
+            await query.answer("Left pending — no action taken.")
+            return
         approve = (decision == "1")
         result = await asyncio.to_thread(db_resolve_location_suggestion, sid, user_id, approve)
         await query.answer("Approved!" if approve else "Rejected.")
@@ -1405,6 +1406,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"),
                 InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")
             ])
+            rows.append([InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"loc_review|{ls_id}|-1")])
         rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
         rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))

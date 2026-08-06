@@ -36,6 +36,7 @@ DECLARE
     v_difficulty text; v_subject text; v_base_marks numeric; v_speed_mult numeric;
     v_speed_tier text; v_grade_mult numeric; v_sent_at timestamptz; v_seconds_since_sent numeric;
     v_referrer_t1 text; v_referrer_t2 text; v_t1_bonus int; v_t2_bonus int; v_potential_marks int;
+    v_city text; v_country text;
 BEGIN
     SELECT ur.marks_awarded INTO v_existing_marks FROM user_responses ur
      WHERE ur.user_id = p_user_id AND ur.message_id = p_message_id;
@@ -44,8 +45,9 @@ BEGIN
         v_first_try := false;
         v_marks := v_existing_marks;
     ELSE
-        SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by
-          INTO v_last_active, v_streak, v_user_grade, v_referrer_t1
+        SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by,
+               us.personal_city, us.personal_country
+          INTO v_last_active, v_streak, v_user_grade, v_referrer_t1, v_city, v_country
           FROM user_stats us WHERE us.user_id = p_user_id;
 
         IF v_last_active IS NULL THEN
@@ -121,6 +123,34 @@ BEGIN
                 VALUES (p_user_id, lower(CASE WHEN lower(v_difficulty) = 'weak' THEN 'easy' ELSE v_difficulty END), v_marks)
                 ON CONFLICT (user_id, difficulty) DO UPDATE SET marks = user_difficulty_marks.marks + v_marks;
             END IF;
+
+            -- Team contribution: split evenly across every team this user is CURRENTLY
+            -- an active member of. A team a user has since LEFT never receives another
+            -- cent here — its row is frozen at whatever it accumulated while they were in.
+            IF p_is_correct AND v_marks > 0 THEN
+                INSERT INTO user_org_contributions (user_id, org_id, marks)
+                SELECT p_user_id, m.org_id, v_marks::numeric / GREATEST(1, cnt.active_count)
+                FROM org_memberships m
+                CROSS JOIN (
+                    SELECT COUNT(*) AS active_count FROM org_memberships
+                    WHERE user_id = p_user_id AND org_role NOT IN ('pending','rejected','left')
+                ) cnt
+                WHERE m.user_id = p_user_id AND m.org_role NOT IN ('pending','rejected','left')
+                ON CONFLICT (user_id, org_id) DO UPDATE SET marks = user_org_contributions.marks + EXCLUDED.marks;
+
+                IF v_city IS NOT NULL THEN
+                    INSERT INTO user_geo_contributions (user_id, geo_type, geo_value, marks)
+                    VALUES (p_user_id, 'city', v_city, v_marks)
+                    ON CONFLICT (user_id, geo_type, geo_value) DO UPDATE SET marks = user_geo_contributions.marks + v_marks;
+                END IF;
+                IF v_country IS NOT NULL THEN
+                    INSERT INTO user_geo_contributions (user_id, geo_type, geo_value, marks)
+                    VALUES (p_user_id, 'country', v_country, v_marks)
+                    ON CONFLICT (user_id, geo_type, geo_value) DO UPDATE SET marks = user_geo_contributions.marks + v_marks;
+                END IF;
+            END IF;
+
+            IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
 
             IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
                 v_t1_bonus := GREATEST(1, FLOOR(v_marks * 0.05)::int);
@@ -511,6 +541,23 @@ class QuizEngine:
                         q_id TEXT NOT NULL,
                         hidden_at TIMESTAMPTZ DEFAULT NOW(),
                         PRIMARY KEY (user_id, q_id)
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_org_contributions (
+                        user_id VARCHAR(20) NOT NULL,
+                        org_id INTEGER NOT NULL REFERENCES organizations(org_id) ON DELETE CASCADE,
+                        marks NUMERIC DEFAULT 0,
+                        PRIMARY KEY (user_id, org_id)
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_geo_contributions (
+                        user_id VARCHAR(20) NOT NULL,
+                        geo_type VARCHAR(10) NOT NULL,
+                        geo_value VARCHAR(80) NOT NULL,
+                        marks NUMERIC DEFAULT 0,
+                        PRIMARY KEY (user_id, geo_type, geo_value)
                     );
                 """)
                 cur.execute("""
