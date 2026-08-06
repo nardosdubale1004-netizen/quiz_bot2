@@ -288,7 +288,8 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     city_is_new = session.get("reg_city_is_new", False)
     existing_sid = session.get("reg_city_suggestion_id")
 
-    if city_is_new and not existing_sid:
+    if city or country:
+        if city_is_new and not existing_sid:
             # This IS the single point where a new city gets created and admins get notified —
             # only ever reached from the final regloc_confirm tap, after the user has reviewed
             # the whole setup (city + school together) on the review screen.
