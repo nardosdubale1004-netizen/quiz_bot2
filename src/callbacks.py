@@ -50,6 +50,9 @@ from src.database import (
     db_get_user_timezone,
     db_search_schools,
     db_get_cities_for_country,
+    db_get_user_favorites,
+    db_add_favorite,
+    db_remove_favorite,
 )
 
 from src.rendering.html_views import (
@@ -75,32 +78,14 @@ from src.rendering.html_views import (
     format_public_name,
 )
 
-# from src.rendering.html_views import (
-#     build_profile_card_text,
-#     build_alliance_info_text,
-#     build_organization_card_text,
-#     build_help_menu_text,
-#     build_feedback_menu_text,
-#     build_help_menu_keyboard,
-#     build_help_topic_text,
-#     build_help_topic_keyboard,
-#     build_feedback_item_text,
-#     build_admin_dashboard_text,
-#     build_user_directory_text,
-#     build_user_feedback_list_text,
-#     build_feedback_thread_text,
-#     build_profile_main_keyboard,
-#     build_profile_settings_keyboard,
-#     build_leaderboard_text,
-#     build_leaderboard_keyboard,
-#     build_geo_picker_keyboard,
-#     format_public_name,
-# )
+
 
 
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
+
+_WR_FAV_TYPE_FOR_PURPOSE = {"nav_country": "country", "nav_city": "city", "nav_school": "school"}
 
 async def _delayed_delete(bot, chat_id, message_id, delay_seconds: int = 10800):
     """Deletes a status-update DM after a delay — the student still sees it
@@ -164,6 +149,34 @@ def _build_country_index_kb() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("⏭ SKIP", callback_data="regloc_skip_all|0")])
     return InlineKeyboardMarkup(rows)
 
+_WR_FAV_TYPE_FOR_PURPOSE = {"nav_country": "country", "nav_city": "city", "nav_school": "school"}
+
+
+def _build_wrsel_country_index_kb(purpose: str, favorites: list = None) -> InlineKeyboardMarkup:
+    from src.geo import COUNTRY_NAMES
+    rows = []
+    if favorites:
+        for f in favorites[:6]:
+            rows.append([InlineKeyboardButton(f"⭐ {f['fav_label']}", callback_data=f"wrsel_fav_go|{purpose}|{f['fav_value']}")])
+    letters = sorted(set(c[0] for c in COUNTRY_NAMES))
+    row = []
+    for l in letters:
+        row.append(InlineKeyboardButton(l, callback_data=f"wrsel_letter|{purpose}|{l}"))
+        if len(row) == 7:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⭐ MANAGE FAVORITES", callback_data="wr_fav_menu|0")])
+    rows.append([InlineKeyboardButton("🔙 BACK TO LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_wrsel_country_letter_kb(purpose: str, letter: str) -> InlineKeyboardMarkup:
+    from src.geo import COUNTRY_NAMES
+    matches = sorted(c for c in COUNTRY_NAMES if c.startswith(letter))
+    rows = [[InlineKeyboardButton(c, callback_data=f"wrsel_ctry_go|{purpose}|{c}")] for c in matches]
+    rows.append([InlineKeyboardButton("🔤 A-Z", callback_data=f"wrsel_ctry|{purpose}|0")])
+    return InlineKeyboardMarkup(rows)
 
 def _build_country_letter_kb(letter: str) -> InlineKeyboardMarkup:
     from src.geo import COUNTRY_NAMES
@@ -1304,12 +1317,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         if scope in ("country", "city", "school") and not entity:
             await query.answer()
-            from src.database import db_get_entity_list
-            items = await asyncio.to_thread(db_get_entity_list, scope, None, 200)
-            text = build_entity_picker_text(scope, None)
-            back_scope = {"country": "world", "city": "country", "school": "city"}.get(scope, "world")
-            kb = build_entity_picker_keyboard(scope, None, items, 0, back_scope)
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            favorites = await asyncio.to_thread(db_get_user_favorites, user_id, scope)
+            purpose = f"nav_{scope}"
+            title = {"country": "🌎 SELECT A COUNTRY", "city": "🏙 SELECT YOUR CITY'S COUNTRY", "school": "🏫 SELECT YOUR SCHOOL'S COUNTRY"}[scope]
+            subtitle = "" if scope == "country" else "\n<i>Select the country where your city belongs, then we'll narrow it down.</i>"
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"<h2>{title}</h2>{subtitle}",
+                reply_markup=_build_wrsel_country_index_kb(purpose, favorites)
+            )
             return
 
         await query.answer()
@@ -1355,6 +1371,53 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
+    elif action == "wr_fav_menu":
+        await query.answer()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌍 COUNTRIES", callback_data="wr_fav_list|country|0")],
+            [InlineKeyboardButton("🏙 CITIES", callback_data="wr_fav_list|city|0")],
+            [InlineKeyboardButton("🏫 SCHOOLS", callback_data="wr_fav_list|school|0")],
+            [InlineKeyboardButton("🔙 LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="<h2>⭐ MY FAVORITES</h2>\nPick a category to view, or add a new favorite from inside each list.",
+            reply_markup=kb)
+        return
+
+    elif action == "wr_fav_list":
+        await query.answer()
+        fav_type = d_id
+        favs = await asyncio.to_thread(db_get_user_favorites, user_id, fav_type)
+        icon = {"country": "🌍", "city": "🏙", "school": "🏫"}.get(fav_type, "⭐")
+        rows = [[InlineKeyboardButton(f"{icon} {f['fav_label']}", callback_data=f"wr_fav_item|{fav_type}|{f['fav_value']}")] for f in favs]
+        rows.append([InlineKeyboardButton("➕ ADD FAVORITE", callback_data=f"wrsel_ctry|fav_{fav_type}|0")])
+        rows.append([InlineKeyboardButton("🔙 BACK", callback_data="wr_fav_menu|0")])
+        body = f"<h2>{icon} MY FAVORITE {fav_type.upper()}S</h2>"
+        if not favs:
+            body += "\n<i>None yet — tap add below.</i>"
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=body, reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    elif action == "wr_fav_item":
+        await query.answer()
+        fav_type, value = d_id, data[2]
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 VIEW LEADERBOARD", callback_data=f"wr|{fav_type}|{value}|all|all|all|total|none|0")],
+            [InlineKeyboardButton("🗑 REMOVE FAVORITE", callback_data=f"wr_fav_remove|{fav_type}|{value}")],
+            [InlineKeyboardButton("🔙 BACK", callback_data=f"wr_fav_list|{fav_type}|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"<h2>⭐ {html.escape(value)}</h2>\nWhat would you like to do?", reply_markup=kb)
+        return
+
+    elif action == "wr_fav_remove":
+        await query.answer("Removed.")
+        fav_type, value = d_id, data[2]
+        await asyncio.to_thread(db_remove_favorite, user_id, fav_type, value)
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"wr_fav_list|{fav_type}|0")]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="🗑 Removed from your favorites.", reply_markup=nav_kb)
+        return
     
     # elif action == "menu_leaderboard":
         #     profile = await asyncio.to_thread(db_get_user_profile, user_id)
@@ -2248,6 +2311,169 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             html_content="🔁 <b>Request re-sent!</b> The team's admins have been notified again.",
             reply_markup=nav_kb
         )
+        return
+
+    elif action == "wrsel_ctry":
+        await query.answer()
+        purpose = d_id
+        fav_type = _WR_FAV_TYPE_FOR_PURPOSE.get(purpose)
+        favorites = await asyncio.to_thread(db_get_user_favorites, user_id, fav_type) if fav_type else []
+        title = {"nav_country": "🌎 SELECT A COUNTRY", "nav_city": "🏙 SELECT YOUR CITY'S COUNTRY",
+                  "nav_school": "🏫 SELECT YOUR SCHOOL'S COUNTRY", "fav_country": "🌎 PICK A COUNTRY TO FAVORITE",
+                  "fav_city": "🏙 PICK YOUR CITY'S COUNTRY", "fav_school": "🏫 PICK YOUR SCHOOL'S COUNTRY"}.get(purpose, "SELECT COUNTRY")
+        subtitle = "" if purpose in ("nav_country", "fav_country") else "\n<i>Select the country where your city belongs, then we'll narrow it down.</i>"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"<h2>{title}</h2>{subtitle}",
+            reply_markup=_build_wrsel_country_index_kb(purpose, favorites)
+        )
+        return
+
+    elif action == "wrsel_letter":
+        await query.answer()
+        purpose, letter = d_id, data[2]
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"<h2>🌎 COUNTRIES: {letter}</h2>",
+            reply_markup=_build_wrsel_country_letter_kb(purpose, letter)
+        )
+        return
+
+    elif action == "wrsel_ctry_go":
+        await query.answer()
+        purpose, country = d_id, data[2]
+        from src.database import db_get_rank_matrix, db_get_scope_summary
+
+        if purpose == "nav_country":
+            matrix = await asyncio.to_thread(db_get_rank_matrix, "country", country, "all", "all", "all", "total", 10)
+            summary = await asyncio.to_thread(db_get_scope_summary, "country", country, "all")
+            text = build_leaderboard_text("country", country, "all", "all", "all", "total", matrix, summary)
+            kb = build_leaderboard_keyboard("country", country, "all", "all", "all", "total", "none", [], 0)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            return
+
+        if purpose == "fav_country":
+            await asyncio.to_thread(db_add_favorite, user_id, "country", country, country)
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ MY COUNTRY FAVORITES", callback_data="wr_fav_list|country|0")],
+                                            [InlineKeyboardButton("🔙 LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")]])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⭐ <b>{html.escape(country)}</b> added to your favorites!", reply_markup=nav_kb)
+            return
+
+        # nav_city / fav_city / nav_school / fav_school -> continue to city selection
+        from src.database import db_get_cities_for_country
+        cities = await asyncio.to_thread(db_get_cities_for_country, country)
+        rows = [[InlineKeyboardButton(c, callback_data=f"wrsel_city_go|{purpose}|{country}|{c}")] for c in cities[:20]]
+        rows.append([InlineKeyboardButton("✍️ TYPE CITY", callback_data=f"wrsel_city_type|{purpose}|{country}")])
+        rows.append([InlineKeyboardButton("🔙 COUNTRIES", callback_data=f"wrsel_ctry|{purpose}|0")])
+        subtitle = "Pick your city, or type it if it's not listed:" if cities else "No cities on file yet for this country — type yours:"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"<h2>🏙 {html.escape(country)}</h2>\n{subtitle}",
+            reply_markup=InlineKeyboardMarkup(rows)
+        )
+        return
+
+    elif action == "wrsel_city_go":
+        await query.answer()
+        purpose, country, city = d_id, data[2], data[3]
+        from src.database import db_get_rank_matrix, db_get_scope_summary
+
+        if purpose == "nav_city":
+            matrix = await asyncio.to_thread(db_get_rank_matrix, "city", city, "all", "all", "all", "total", 10)
+            summary = await asyncio.to_thread(db_get_scope_summary, "city", city, "all")
+            text = build_leaderboard_text("city", city, "all", "all", "all", "total", matrix, summary)
+            kb = build_leaderboard_keyboard("city", city, "all", "all", "all", "total", "none", [], 0)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            return
+
+        if purpose == "fav_city":
+            await asyncio.to_thread(db_add_favorite, user_id, "city", city, f"{city}, {country}")
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ MY CITY FAVORITES", callback_data="wr_fav_list|city|0")],
+                                            [InlineKeyboardButton("🔙 LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")]])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⭐ <b>{html.escape(city)}</b> added to your favorites!", reply_markup=nav_kb)
+            return
+
+        # nav_school / fav_school -> continue to school selection
+        from src.database import db_search_schools
+        schools = await asyncio.to_thread(db_search_schools, None, city, country, 20)
+        rows = [[InlineKeyboardButton(s["org_name"], callback_data=f"wrsel_school_go|{purpose}|{s['org_id']}")] for s in schools]
+        rows.append([InlineKeyboardButton("✍️ TYPE SCHOOL", callback_data=f"wrsel_school_type|{purpose}|{country}|{city}")])
+        rows.append([InlineKeyboardButton("🔙 CITIES", callback_data=f"wrsel_ctry_go|{purpose}|{country}")])
+        subtitle = "Pick your school, or type its name if it's not listed:" if schools else "No schools on file yet for this city — type yours:"
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"<h2>🏫 {html.escape(city)}</h2>\n{subtitle}",
+            reply_markup=InlineKeyboardMarkup(rows)
+        )
+        return
+
+    elif action == "wrsel_school_go":
+        await query.answer()
+        purpose, org_id = d_id, int(data[2])
+        from src.database import GLOBAL_ENGINE
+        conn = GLOBAL_ENGINE.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT org_name FROM organizations WHERE org_id = %s;", (org_id,))
+                row = cur.fetchone()
+                org_name = row["org_name"] if row else "School"
+        finally:
+            GLOBAL_ENGINE.release_connection(conn)
+
+        if purpose == "fav_school":
+            await asyncio.to_thread(db_add_favorite, user_id, "school", str(org_id), org_name)
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ MY SCHOOL FAVORITES", callback_data="wr_fav_list|school|0")],
+                                            [InlineKeyboardButton("🔙 LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")]])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⭐ <b>{html.escape(org_name)}</b> added to your favorites!", reply_markup=nav_kb)
+            return
+
+        from src.database import db_get_rank_matrix, db_get_scope_summary
+        matrix = await asyncio.to_thread(db_get_rank_matrix, "school", str(org_id), "all", "all", "all", "total", 10)
+        summary = await asyncio.to_thread(db_get_scope_summary, "school", str(org_id), "all")
+        text = build_leaderboard_text("school", str(org_id), "all", "all", "all", "total", matrix, summary)
+        kb = build_leaderboard_keyboard("school", str(org_id), "all", "all", "all", "total", "none", [], 0)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "wrsel_city_type":
+        await query.answer()
+        purpose, country = d_id, data[2]
+        USER_STATES[user_id] = "AWAITING_WR_CITY_TEXT"
+        USER_PAYLOADS[user_id] = {"wr_purpose": purpose, "wr_country": country, "edit_mid": query.message.message_id}
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data=f"wrsel_ctry_go|{purpose}|{country}")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"✍️ <b>Type your city in {html.escape(country)}:</b>" + FSM_INPUT_HINT,
+            reply_markup=cancel_kb
+        )
+        return
+
+    elif action == "wrsel_school_type":
+        await query.answer()
+        purpose, country, city = d_id, data[2], data[3]
+        USER_STATES[user_id] = "AWAITING_WR_SCHOOL_TEXT"
+        USER_PAYLOADS[user_id] = {"wr_purpose": purpose, "wr_country": country, "wr_city": city, "edit_mid": query.message.message_id}
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data=f"wrsel_city_go|{purpose}|{country}|{city}")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"✍️ <b>Type your school's name in {html.escape(city)}:</b>" + FSM_INPUT_HINT,
+            reply_markup=cancel_kb
+        )
+        return
+
+    elif action == "wrsel_fav_go":
+        await query.answer()
+        purpose, value = d_id, data[2]
+        from src.database import db_get_rank_matrix, db_get_scope_summary
+        scope = {"nav_country": "country", "nav_city": "city", "nav_school": "school"}.get(purpose, "world")
+        matrix = await asyncio.to_thread(db_get_rank_matrix, scope, value, "all", "all", "all", "total", 10)
+        summary = await asyncio.to_thread(db_get_scope_summary, scope, value, "all")
+        text = build_leaderboard_text(scope, value, "all", "all", "all", "total", matrix, summary)
+        kb = build_leaderboard_keyboard(scope, value, "all", "all", "all", "total", "none", [], 0)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
 

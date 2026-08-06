@@ -523,8 +523,19 @@ class QuizEngine:
                         UNIQUE (org_id, branch_name)
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_favorites (
+                        user_id VARCHAR(20) NOT NULL,
+                        fav_type VARCHAR(10) NOT NULL,
+                        fav_value VARCHAR(100) NOT NULL,
+                        fav_label VARCHAR(120) NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (user_id, fav_type, fav_value)
+                    );
+                """)
                 cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_utility_mid BIGINT;")
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -4000,6 +4011,39 @@ def db_get_bot_state(key: str, default=None):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_last_utility_mid(user_id):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT last_utility_mid FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            return row["last_utility_mid"] if row else None
+    except Exception as e:
+        print(f"[DB ERROR] db_get_last_utility_mid: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_last_utility_mid(user_id, mid):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, last_utility_mid, total, correct, total_marks)
+                VALUES (%s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET last_utility_mid = EXCLUDED.last_utility_mid;
+            """, (str(user_id), int(mid) if mid else None))
+            conn.commit()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_set_last_utility_mid: {e}", flush=True)
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
 def db_set_bot_state(key: str, value) -> bool:
     conn = None
@@ -5031,3 +5075,60 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
         return []
     finally:
         if conn: GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_favorites(user_id, fav_type):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT fav_value, fav_label FROM user_favorites
+                WHERE user_id = %s AND fav_type = %s ORDER BY created_at DESC LIMIT 12;
+            """, (str(user_id), fav_type))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_user_favorites: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_add_favorite(user_id, fav_type, fav_value, fav_label) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_favorites (user_id, fav_type, fav_value, fav_label)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id, fav_type, fav_value) DO NOTHING;
+            """, (str(user_id), fav_type, fav_value, fav_label))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_add_favorite: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_remove_favorite(user_id, fav_type, fav_value) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_favorites WHERE user_id = %s AND fav_type = %s AND fav_value = %s;",
+                        (str(user_id), fav_type, fav_value))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_remove_favorite: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

@@ -1761,9 +1761,7 @@ def build_leaderboard_keyboard(scope, entity, grade, subject, difficulty, mode, 
 
     def _scope_btn(s, label):
         if s in ("country", "city", "school") and scope != s:
-            # No entity picked yet for this scope -> go straight to the picker instead of
-            # landing on a dash-filled matrix that then needs a second tap.
-            return InlineKeyboardButton(label, callback_data=f"wr_pick|{s}|_|0")
+            return InlineKeyboardButton(label, callback_data=f"wrsel_ctry|nav_{s}|0")
         return InlineKeyboardButton(("• " if scope == s else "") + label, callback_data=_cb(s=s, ent="_"))
 
     rows = [
@@ -1797,10 +1795,13 @@ def build_leaderboard_keyboard(scope, entity, grade, subject, difficulty, mode, 
             rows.append(nav)
 
     if scope in ("country", "city", "school") and (not entity or entity == "_"):
-        rows.append([InlineKeyboardButton(f"🔄 SWITCH {scope.upper()}", callback_data=f"wr_pick|{scope}|_|0")])
+        rows.append([InlineKeyboardButton(f"🔄 SWITCH {scope.upper()}", callback_data=f"wrsel_ctry|nav_{scope}|0")])
 
     rows.append([
+        InlineKeyboardButton("⭐ FAVORITES", callback_data="wr_fav_menu|0"),
         InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
+    ])
+    rows.append([
         InlineKeyboardButton("📢 CHANNEL", url=f"https://t.me/{CONFIG.get('channel', 'QuizOva').lstrip('@')}"),
         InlineKeyboardButton("❌ CLOSE", callback_data="close_portal|0"),
     ])

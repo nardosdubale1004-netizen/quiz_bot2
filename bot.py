@@ -1779,6 +1779,113 @@ async def handle_fsm_message(update: Update, context):
                 ])
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "🔍 No matches.", no_match_kb)
 
+        elif state == "AWAITING_WR_CITY_TEXT":
+            from src.geo import find_close_match
+            from src.database import db_get_cities_for_country, db_get_rank_matrix, db_get_scope_summary
+            from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
+            purpose = session.get("wr_purpose")
+            country = session.get("wr_country")
+            typed = text_input.strip()
+            known_cities = await asyncio.to_thread(db_get_cities_for_country, country)
+            matched = find_close_match(typed, known_cities, cutoff=0.86)
+
+            USER_STATES[user_id] = "IDLE"
+            if not matched:
+                USER_PAYLOADS.pop(user_id, None)
+                not_found_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 PICK FROM LIST", callback_data=f"wrsel_ctry_go|{purpose}|{country}")],
+                    [InlineKeyboardButton("📍 ADD IT TO MY PROFILE", callback_data="regloc_start|0")]
+                ])
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    (
+                        f"⚠️ <b>\"{html.escape(typed)}\" isn't listed for {html.escape(country)}.</b>\n\n"
+                        f"This might be a typo — try picking from the list. If your city genuinely belongs "
+                        f"here and isn't registered yet, add it from 📍 <b>Locations &amp; School</b> in your "
+                        f"profile first, then it'll show up here."
+                    ),
+                    not_found_kb
+                )
+                return
+
+            if purpose == "nav_city":
+                matrix = await asyncio.to_thread(db_get_rank_matrix, "city", matched, "all", "all", "all", "total", 10)
+                summary = await asyncio.to_thread(db_get_scope_summary, "city", matched, "all")
+                text = build_leaderboard_text("city", matched, "all", "all", "all", "total", matrix, summary)
+                kb = build_leaderboard_keyboard("city", matched, "all", "all", "all", "total", "none", [], 0)
+                USER_PAYLOADS.pop(user_id, None)
+                await _fsm_advance(context, update.message.chat_id, edit_mid, text, kb)
+                return
+
+            if purpose == "fav_city":
+                from src.database import db_add_favorite
+                await asyncio.to_thread(db_add_favorite, user_id, "city", matched, f"{matched}, {country}")
+                USER_PAYLOADS.pop(user_id, None)
+                nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ MY CITY FAVORITES", callback_data="wr_fav_list|city|0")],
+                                                [InlineKeyboardButton("🔙 LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")]])
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"⭐ <b>{html.escape(matched)}</b> added to your favorites!", nav_kb)
+                return
+
+            from src.database import db_search_schools
+            schools = await asyncio.to_thread(db_search_schools, None, matched, country, 20)
+            rows = [[InlineKeyboardButton(s["org_name"], callback_data=f"wrsel_school_go|{purpose}|{s['org_id']}")] for s in schools]
+            rows.append([InlineKeyboardButton("✍️ TYPE SCHOOL", callback_data=f"wrsel_school_type|{purpose}|{country}|{matched}")])
+            rows.append([InlineKeyboardButton("🔙 CITIES", callback_data=f"wrsel_ctry_go|{purpose}|{country}")])
+            subtitle = "Pick your school, or type its name if it's not listed:" if schools else "No schools on file yet for this city — type yours:"
+            USER_PAYLOADS.pop(user_id, None)
+            await _fsm_advance(context, update.message.chat_id, edit_mid, f"<h2>🏫 {html.escape(matched)}</h2>\n{subtitle}", InlineKeyboardMarkup(rows))
+            return
+
+        elif state == "AWAITING_WR_SCHOOL_TEXT":
+            from src.database import db_search_schools, db_get_rank_matrix, db_get_scope_summary, db_add_favorite
+            from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
+            purpose = session.get("wr_purpose")
+            country = session.get("wr_country")
+            city = session.get("wr_city")
+            typed = text_input.strip()
+            results = await asyncio.to_thread(db_search_schools, typed, city, country, 8)
+
+            USER_STATES[user_id] = "IDLE"
+            if not results:
+                USER_PAYLOADS.pop(user_id, None)
+                not_found_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 PICK FROM LIST", callback_data=f"wrsel_city_go|{purpose}|{country}|{city}")],
+                    [InlineKeyboardButton("📍 ADD IT TO MY PROFILE", callback_data="regloc_start|0")]
+                ])
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    (
+                        f"⚠️ <b>\"{html.escape(typed)}\" isn't listed in {html.escape(city)}.</b>\n\n"
+                        f"This might be a typo — try picking from the list. If your school genuinely belongs "
+                        f"here and isn't registered yet, add it from 📍 <b>Locations &amp; School</b> in your "
+                        f"profile first, then it'll show up here."
+                    ),
+                    not_found_kb
+                )
+                return
+
+            if len(results) == 1:
+                org = results[0]
+                USER_PAYLOADS.pop(user_id, None)
+                if purpose == "fav_school":
+                    await asyncio.to_thread(db_add_favorite, user_id, "school", str(org["org_id"]), org["org_name"])
+                    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ MY SCHOOL FAVORITES", callback_data="wr_fav_list|school|0")],
+                                                    [InlineKeyboardButton("🔙 LEADERBOARD", callback_data="wr|world|_|all|all|all|total|none|0")]])
+                    await _fsm_advance(context, update.message.chat_id, edit_mid, f"⭐ <b>{html.escape(org['org_name'])}</b> added to your favorites!", nav_kb)
+                    return
+                matrix = await asyncio.to_thread(db_get_rank_matrix, "school", str(org["org_id"]), "all", "all", "all", "total", 10)
+                summary = await asyncio.to_thread(db_get_scope_summary, "school", str(org["org_id"]), "all")
+                text = build_leaderboard_text("school", str(org["org_id"]), "all", "all", "all", "total", matrix, summary)
+                kb = build_leaderboard_keyboard("school", str(org["org_id"]), "all", "all", "all", "total", "none", [], 0)
+                await _fsm_advance(context, update.message.chat_id, edit_mid, text, kb)
+                return
+
+            rows = [[InlineKeyboardButton(s["org_name"], callback_data=f"wrsel_school_go|{purpose}|{s['org_id']}")] for s in results]
+            rows.append([InlineKeyboardButton("🔙 CITIES", callback_data=f"wrsel_ctry_go|{purpose}|{country}")])
+            USER_PAYLOADS.pop(user_id, None)
+            await _fsm_advance(context, update.message.chat_id, edit_mid, f"🔍 <b>Matches for \"{html.escape(typed)}\":</b>", InlineKeyboardMarkup(rows))
+            return
+
     except Exception:
         traceback.print_exc()
         await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Connection Error: Failed to commit your input.", profile_nav_kb)

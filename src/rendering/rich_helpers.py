@@ -335,22 +335,23 @@ async def edit_rich_message_safe(bot: Bot, chat_id, message_id, html_content: st
             print(f"[DEBUG-FIX-ERROR] Both TIER 2 legacy edit methods failed: {cap_err}", flush=True)
             raise text_err
 
-async def open_utility_view(bot, last_utility_mid: dict, locks: dict, user_id, chat_id, html_content, reply_markup=None):
-    """Ensures only ONE management/utility message (profile, settings, leaderboard,
-    invite, help, feedback, admin panels, etc.) is ever visible in a chat at a time.
-    Deletes whatever utility message preceded it, sends the new one, and tracks it.
-    A per-user asyncio.Lock prevents two near-simultaneous taps from both reading the
-    same stale tracked id and leaving an orphaned message behind."""
+async def open_utility_view(bot, last_utility_mid, locks: dict, user_id, chat_id, html_content, reply_markup=None):
+    """Ensures only ONE profile-family message (profile/settings/leaderboard/invite/help/
+    feedback/team/my-answers/locations wizard/favorites/etc) is ever visible in a chat at a
+    time. Tracked in the DATABASE, not just an in-memory dict — that's what guarantees it
+    stays correct across restarts and never desyncs into two live copies. Never touches
+    answer-explanation cards from the channel; those are never written to this tracker."""
     import asyncio
+    from src.database import db_get_last_utility_mid, db_set_last_utility_mid
     lock = locks.setdefault(user_id, asyncio.Lock())
     async with lock:
-        prev_mid = last_utility_mid.get(user_id)
+        prev_mid = await asyncio.to_thread(db_get_last_utility_mid, user_id)
         if prev_mid:
             try:
-                await bot.delete_message(chat_id=chat_id, message_id=prev_mid)
+                await bot.delete_message(chat_id=chat_id, message_id=int(prev_mid))
             except Exception:
                 pass
         m = await send_rich_message_safe(bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup, preserve_utility=True)
         if m:
-            last_utility_mid[user_id] = m.message_id
+            await asyncio.to_thread(db_set_last_utility_mid, user_id, m.message_id)
         return m
