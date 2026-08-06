@@ -1383,13 +1383,17 @@ async def handle_fsm_message(update: Update, context):
 
         elif state == "AWAITING_ORG_NAME":
             clean_org_name = re.sub(r'[^\w\s\-]', '', text_input)[:50].strip()
+            is_regloc = bool(session.get("reg_city") and session.get("reg_country"))
+            back_target = "regloc_school_page|0" if is_regloc else "alliance_portal|0"
+            local_cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data=back_target)]])
+
             if not clean_org_name:
-                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid formal name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid formal name.\n\n<i>Try again, or /cancel.</i>", local_cancel_kb)
                 return
 
             similar = await asyncio.to_thread(db_find_similar_organizations, clean_org_name)
             if similar:
-                USER_PAYLOADS[user_id] = {"org_name": clean_org_name, "edit_mid": edit_mid}
+                USER_PAYLOADS[user_id] = {**USER_PAYLOADS.get(user_id, {}), "org_name": clean_org_name, "edit_mid": edit_mid}
                 USER_STATES[user_id] = "IDLE"
 
                 lines = ["🔎 <b>Found similar existing team(s):</b>\n"]
@@ -1399,13 +1403,32 @@ async def handle_fsm_message(update: Update, context):
                     lines.append(f"🏫 <b>{org['org_name']}</b> (#{org['org_tag']}){loc}")
                     buttons.append([InlineKeyboardButton(f"🔑 Join #{org['org_tag']} instead", callback_data=f"quickjoin_org|{org['org_id']}")])
                 buttons.append([InlineKeyboardButton("✨ No, create new anyway", callback_data="force_create_org|0")])
-                buttons.append([InlineKeyboardButton("❌ CANCEL", callback_data="privacy_menu|0")])
+                buttons.append([InlineKeyboardButton("🔙 BACK", callback_data=back_target)])
                 lines.append("\n<i>Joining an existing team keeps everyone's scores together instead of splitting them across duplicates.</i>")
 
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "\n".join(lines), InlineKeyboardMarkup(buttons))
                 return
 
-            USER_PAYLOADS[user_id] = {"org_name": clean_org_name, "edit_mid": edit_mid}
+            if is_regloc:
+                # Regloc-created schools never enter a tag — one is derived from the
+                # name automatically, and the user goes straight to the review screen.
+                from src.database import _generate_unique_org_tag
+                auto_tag = await asyncio.to_thread(_generate_unique_org_tag, clean_org_name)
+                USER_PAYLOADS[user_id] = {
+                    **USER_PAYLOADS.get(user_id, {}),
+                    "org_name": clean_org_name,
+                    "org_tag": auto_tag,
+                    "reg_school_name": clean_org_name,
+                    "reg_school_is_new": True,
+                    "reg_school_org_id": None,
+                    "reg_new_org_tag": auto_tag,
+                }
+                USER_STATES[user_id] = "IDLE"
+                from src.callbacks import _regloc_show_review
+                await _regloc_show_review(context, update.message.chat_id, edit_mid, user_id)
+                return
+
+            USER_PAYLOADS[user_id] = {**USER_PAYLOADS.get(user_id, {}), "org_name": clean_org_name}
             USER_STATES[user_id] = "AWAITING_ORG_TAG"
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
@@ -1754,7 +1777,6 @@ async def handle_fsm_message(update: Update, context):
             known_cities = await asyncio.to_thread(db_get_cities_for_country, reg_country) if reg_country else []
             matched = find_close_match(clean_city, known_cities)
 
-            # Case/spelling variant of an existing city -> treat it as that existing city (no pending needed).
             final_city = matched or clean_city
             is_new = (matched is None)
             USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = final_city
@@ -1762,7 +1784,10 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "IDLE"
 
             if is_new:
-                pending_kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ ACCEPT & CONTINUE TO SCHOOL", callback_data="regloc_city_pending_ack|0")]])
+                pending_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ ACCEPT & CONTINUE TO SCHOOL", callback_data="regloc_city_pending_ack|0")],
+                    [InlineKeyboardButton("🔙 BACK", callback_data=f"regloc_country|{reg_country}")]
+                ])
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
                     (

@@ -279,9 +279,11 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     USER_STATES[user_id] = "IDLE"
     city, country = session.get("reg_city"), session.get("reg_country")
     city_is_new = session.get("reg_city_is_new", False)
+    existing_sid = session.get("reg_city_suggestion_id")
 
     if city or country:
-        if city_is_new:
+        if city_is_new and not existing_sid:
+            # Fallback only — normally the pending-ack step already created and notified this.
             sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
             await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
             admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
@@ -297,8 +299,9 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
                         reply_markup=review_kb, parse_mode="HTML")
                 except Exception:
                     pass
-        else:
+        elif not city_is_new:
             await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
+        # else: city_is_new and existing_sid — already created & admins already notified at accept-pending. No-op.
 
     profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
     status_line = "⏳ pending admin review" if city_is_new else "✅ saved"
@@ -819,7 +822,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         USER_STATES[user_id] = "AWAITING_REGLOC_CITY_TEXT"
         session = USER_PAYLOADS.get(user_id, {})
         country = session.get("reg_country", "")
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="regloc_start|0")]])
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data=f"regloc_country|{country}")]])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=f"✍️ <b>Register your city in {html.escape(country)}</b>\n\nType your city name:" + FSM_INPUT_HINT,
@@ -883,12 +886,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "reg_city": session.get("reg_city"),
             "reg_country": session.get("reg_country"),
             "reg_city_is_new": session.get("reg_city_is_new", False),
+            "reg_city_suggestion_id": session.get("reg_city_suggestion_id"),
         }
-        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|privacy_menu")]])
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="regloc_school_page|0")]])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content="✍️ <b>NEW SCHOOL NAME</b>" + FSM_INPUT_HINT,
-            reply_markup=cancel_kb
+            reply_markup=back_kb
         )
         return
     
@@ -900,6 +904,31 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     
     elif action == "regloc_city_pending_ack":
         await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        city, country = session.get("reg_city"), session.get("reg_country")
+        if city and country and not session.get("reg_city_suggestion_id"):
+            from src.database import db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids
+            sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
+            await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
+            USER_PAYLOADS.setdefault(user_id, {})["reg_city_suggestion_id"] = sid
+
+            admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+            req_name = html.escape(query.from_user.first_name or query.from_user.username or "A student")
+            review_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
+                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+            ], [
+                InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}")
+            ]])
+            for admin_id in admin_ids:
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(admin_id),
+                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(city)}, {html.escape(country)}</b> — not in our known list.",
+                        reply_markup=review_kb, parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
         await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id)
         return
 

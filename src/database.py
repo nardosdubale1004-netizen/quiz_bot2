@@ -3837,6 +3837,37 @@ def db_create_location_suggestion(kind: str, name: str, country: str, submitted_
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def _generate_unique_org_tag(org_name: str) -> str:
+    """Auto-derives a short uppercase tag from a school name so users registering a school
+    through the location wizard are never asked to type one. Falls back to a random suffix
+    on collision instead of failing the unique constraint."""
+    import re as _re
+    import secrets as _secrets
+    base = _re.sub(r'[^A-Za-z0-9]', '', org_name).upper()[:12] or "SCHOOL"
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            candidate = base
+            cur.execute("SELECT 1 FROM organizations WHERE org_tag = %s;", (candidate,))
+            attempt = 0
+            while cur.fetchone():
+                attempt += 1
+                suffix = _secrets.token_hex(2).upper()
+                candidate = f"{(base[:12-len(suffix)-1] or base[:1])}{suffix}"
+                cur.execute("SELECT 1 FROM organizations WHERE org_tag = %s;", (candidate,))
+                if attempt > 5:
+                    candidate = _secrets.token_hex(6).upper()
+                    break
+            return candidate
+    except Exception as e:
+        print(f"[DB ERROR] Failed to generate unique org tag: {e}", flush=True)
+        return f"{base[:8]}{_secrets.token_hex(2).upper()}"
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_get_location_suggestions_list(status: str = None, kind: str = None, limit: int = 8, offset: int = 0):
     """Admin inbox listing, newest request first. status/kind = None means 'all'."""
     conn = None
@@ -3891,7 +3922,7 @@ def db_count_location_suggestions(status: str = None, kind: str = None) -> int:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 def db_get_location_suggestion(suggestion_id: int):
     conn = None
     try:
