@@ -603,6 +603,17 @@ def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
     ])
 
+def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeyboardMarkup:
+    consent_label = "🔴 GO PRIVATE" if public_consent_granted else "🟢 GO PUBLIC"
+    consent_target = "0" if public_consent_granted else "1"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(consent_label, callback_data=f"toggle_consent|{consent_target}")],
+        [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
+         InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
+        [InlineKeyboardButton("📍 LOCATIONS & SCHOOL", callback_data="loc_status_menu|0")],
+        [InlineKeyboardButton("🔙 PROFILE", callback_data="privacy_menu|0")]
+    ])
+    
 def build_location_status_text(profile: dict) -> str:
     city = profile.get("personal_city")
     country = profile.get("personal_country")
@@ -1256,7 +1267,7 @@ def build_location_suggestion_item_text(ls: dict, thread: list = None) -> str:
         f"<blockquote><b>{html.escape(ls['name'])}</b>, {html.escape(str(ls.get('country') or ''))}</blockquote>"
         f"{thread_block}"
     )
-    
+
 def build_feedback_thread_text(fb: dict, thread: list, viewer_tz: str = "UTC") -> str:
     from src.config import FEEDBACK_CATEGORIES
     from src.geo import format_local_time
