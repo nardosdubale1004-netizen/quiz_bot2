@@ -194,36 +194,40 @@ def _build_city_kb(cities: list) -> InlineKeyboardMarkup:
             rows.append(row); row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton("✍️ TYPE CITY", callback_data="regloc_city_type|0")])
-    rows.append([InlineKeyboardButton("⏭ SKIP", callback_data="regloc_skip_city|0")])
+    rows.append([InlineKeyboardButton("✍️ REGISTER CITY", callback_data="regloc_city_type|0")])
+    rows.append([InlineKeyboardButton("🔙 BACK", callback_data="regloc_start|0")])
     return InlineKeyboardMarkup(rows)
 
 
-def _build_school_kb(schools: list) -> InlineKeyboardMarkup:
+def _build_school_kb(schools: list, offset: int = 0, total: int = None) -> InlineKeyboardMarkup:
+    total = total if total is not None else len(schools)
     rows = [[InlineKeyboardButton(f"🏫 {s['org_name']}", callback_data=f"regloc_school|{s['org_id']}")] for s in schools]
-    rows.append([InlineKeyboardButton("🔍 SEARCH", callback_data="regloc_school_search|0")])
-    rows.append([InlineKeyboardButton("✨ CREATE NEW", callback_data="regloc_school_create|0")])
-    rows.append([InlineKeyboardButton("⏭ SKIP", callback_data="regloc_school_skip|0")])
+    nav_row = []
+    if offset > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"regloc_school_page|{max(0, offset-10)}"))
+    if offset + 10 < total:
+        nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"regloc_school_page|{offset+10}"))
+    if nav_row:
+        rows.append(nav_row)
+    rows.append([InlineKeyboardButton("✨ REGISTER SCHOOL", callback_data="regloc_school_create|0")])
+    rows.append([InlineKeyboardButton("🚫 NOT A STUDENT", callback_data="regloc_school_skip|0")])
     return InlineKeyboardMarkup(rows)
 
 
-async def _regloc_show_school_step(context, chat_id, message_id, user_id):
+async def _regloc_show_school_step(context, chat_id, message_id, user_id, offset: int = 0):
     from src.database import db_search_schools
     session = USER_PAYLOADS.get(user_id, {})
     city, country = session.get("reg_city"), session.get("reg_country")
-    schools = await asyncio.to_thread(db_search_schools, None, city, country, 8)
-    if schools:
-        html_content = "🏫 <b>PICK YOUR SCHOOL</b>\n\nAlready registered nearby:"
-        kb = _build_school_kb(schools)
-    else:
-        html_content = "🏫 <b>NO SCHOOLS FOUND NEARBY</b>\n\nSearch, create, or skip:"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 SEARCH", callback_data="regloc_school_search|0")],
-            [InlineKeyboardButton("✨ CREATE NEW", callback_data="regloc_school_create|0")],
-            [InlineKeyboardButton("⏭ SKIP", callback_data="regloc_school_skip|0")]
-        ])
-    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
+    all_schools = await asyncio.to_thread(db_search_schools, None, city, country, 200)
+    page = all_schools[offset:offset + 10]
 
+    if all_schools:
+        html_content = f"<h2>🏫 Schools in {html.escape(city or '')}</h2>\n\nPick your school from the list:"
+    else:
+        html_content = f"<h2>🏫 Schools in {html.escape(city or '')}</h2>\n\nNo schools on file yet — register yours below:"
+
+    kb = _build_school_kb(page, offset, len(all_schools))
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
 
 async def _regloc_show_review(context, chat_id, message_id, user_id):
     """Final confirm screen — shows exactly what's about to be saved, flags anything that
@@ -250,7 +254,7 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
         else:
             lines.append(f"🏫 <b>School:</b> {html.escape(school_name)} — ✅ recognized")
     else:
-        lines.append("🏫 <b>School:</b> <i>skipped — you can add this anytime from 📍 LOCATIONS & SCHOOL</i>")
+        lines.append("🏫 <b>School:</b> <i>Not a student — you can add this anytime from 📍 LOCATIONS & SCHOOL</i>")
 
     if city_is_new or school_is_new:
         lines.append(
@@ -790,33 +794,36 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "regloc_country":
         await query.answer()
         from src.geo import normalize_country_input
-        country, _ = normalize_country_input(d_id)  # d_id already canonical from the A-Z list, but this keeps it safe if reused elsewhere
+        country, _ = normalize_country_input(d_id)
         USER_PAYLOADS.setdefault(user_id, {})["reg_country"] = country
         from src.database import db_get_cities_for_country
         cities = await asyncio.to_thread(db_get_cities_for_country, country)
         if cities:
             await edit_rich_message_safe(
                 context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=f"🏙️ <b>{country}</b>\n\nPick your city — or type it if it's not listed:",
+                html_content=f"<h2>🏙️ Cities in {html.escape(country)}</h2>\n\nPick your city from the list, or tap Register City to add yours:",
                 reply_markup=_build_city_kb(cities)
             )
         else:
             USER_STATES[user_id] = "AWAITING_REGLOC_CITY_TEXT"
-            skip_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⏭ SKIP", callback_data="regloc_skip_city|0")]])
+            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="regloc_start|0")]])
             await edit_rich_message_safe(
                 context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=f"🏙️ <b>{country}</b>\n\nNo cities on file yet — type yours:" + FSM_INPUT_HINT,
-                reply_markup=skip_kb
+                html_content=f"<h2>🏙️ Cities in {html.escape(country)}</h2>\n\nNo cities on file yet — type yours below:" + FSM_INPUT_HINT,
+                reply_markup=back_kb
             )
         return
 
     elif action == "regloc_city_type":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_REGLOC_CITY_TEXT"
-        skip_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⏭ SKIP", callback_data="regloc_skip_city|0")]])
+        session = USER_PAYLOADS.get(user_id, {})
+        country = session.get("reg_country", "")
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="regloc_start|0")]])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content="✍️ Type your city/state:" + FSM_INPUT_HINT, reply_markup=skip_kb
+            html_content=f"✍️ <b>Register your city in {html.escape(country)}</b>\n\nType your city name:" + FSM_INPUT_HINT,
+            reply_markup=back_kb
         )
         return
 
@@ -883,6 +890,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             html_content="✍️ <b>NEW SCHOOL NAME</b>" + FSM_INPUT_HINT,
             reply_markup=cancel_kb
         )
+        return
+    
+    elif action == "regloc_school_page":
+        await query.answer()
+        offset = int(d_id)
+        await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id, offset)
+        return
+    
+    elif action == "regloc_city_pending_ack":
+        await query.answer()
+        await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id)
         return
 
     elif action == "regloc_skip_all":
@@ -1343,7 +1361,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
         return
 
-    
+
     elif action == "fsm_create_org":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_NAME"

@@ -1756,9 +1756,26 @@ async def handle_fsm_message(update: Update, context):
 
             # Case/spelling variant of an existing city -> treat it as that existing city (no pending needed).
             final_city = matched or clean_city
+            is_new = (matched is None)
             USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = final_city
-            USER_PAYLOADS[user_id]["reg_city_is_new"] = (matched is None)
+            USER_PAYLOADS[user_id]["reg_city_is_new"] = is_new
             USER_STATES[user_id] = "IDLE"
+
+            if is_new:
+                pending_kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ ACCEPT & CONTINUE TO SCHOOL", callback_data="regloc_city_pending_ack|0")]])
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    (
+                        f"⏳ <b>Review Needed!</b>\n\n"
+                        f"<b>{html.escape(final_city)}</b> isn't in our records yet, so it's saved to your "
+                        f"profile as <b>pending</b>. Your marks won't count toward this city's leaderboard "
+                        f"until an admin approves it — we'll message you the moment that happens.\n\n"
+                        f"Tap below to keep going with your school."
+                    ),
+                    pending_kb
+                )
+                return
+
             from src.callbacks import _regloc_show_school_step
             await _regloc_show_school_step(context, update.message.chat_id, edit_mid, user_id)
 
