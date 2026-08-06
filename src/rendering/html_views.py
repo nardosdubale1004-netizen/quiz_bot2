@@ -1177,8 +1177,6 @@ def build_feedback_menu_text() -> str:
     )
 
 
-
-
 def build_feedback_browse_list_text(items: list, category: str, status: str, offset: int, total: int) -> str:
     from src.config import FEEDBACK_CATEGORIES, FEEDBACK_STATUS_LABELS
     cat_label = "All Categories" if category == "all" else FEEDBACK_CATEGORIES.get(category, category)
@@ -1201,6 +1199,48 @@ def build_feedback_browse_list_text(items: list, category: str, status: str, off
 
     return "\n\n".join(lines)
 
+def build_location_suggestions_browse_list_text(items: list, kind: str, status: str, offset: int, total: int) -> str:
+    kind_label = {"all": "All", "city": "🏙 Cities", "school": "🏫 Schools"}.get(kind, "All")
+    status_label = {"all": "All", "pending": "📥 Pending", "approved": "✅ Approved", "rejected": "🚫 Rejected"}.get(status, status.capitalize())
+
+    if not items:
+        return (
+            f"<h2>📍 LOCATION &amp; SCHOOL REQUESTS</h2>\n"
+            f"<i>{kind_label} • {status_label}</i>\n<hr/>\n"
+            f"<i>Nothing here right now.</i>"
+        )
+
+    lines = [f"<h2>📍 LOCATION &amp; SCHOOL REQUESTS</h2>\n<i>{kind_label} • {status_label} • {offset+1}-{offset+len(items)} of {total}</i>\n<hr/>\n"]
+    status_icon = {"pending": "📥", "approved": "✅", "rejected": "🚫"}
+    for ls in items:
+        icon = "🏙" if ls['kind'] == "city" else "🏫"
+        s_icon = status_icon.get(ls['status'], "•")
+        who = format_public_name(ls)
+        repeat = f" · asked {ls['request_count']}×" if ls.get('request_count', 1) > 1 else ""
+        lines.append(f"{s_icon} {icon} <b>#{ls['id']}</b> {html.escape(ls['name'])}, {html.escape(str(ls.get('country') or ''))}\n   <i>by {who}{repeat}</i>")
+    return "\n\n".join(lines)
+
+
+def build_location_suggestion_item_text(ls: dict, thread: list = None) -> str:
+    icon = "🏙 City" if ls['kind'] == "city" else "🏫 School"
+    status_labels = {"pending": "📥 Pending", "approved": "✅ Approved", "rejected": "🚫 Rejected"}
+    who = format_public_name(ls)
+    repeat = f"\n📈 Requested <b>{ls['request_count']}×</b>" if ls.get('request_count', 1) > 1 else ""
+    thread_block = ""
+    if thread:
+        bubbles = []
+        for m in thread:
+            role_label = "🛠️ Admin" if m['sender_role'] == "admin" else "🧑 Student"
+            bubbles.append(f"<b>{role_label}:</b> {html.escape(m['message'])}")
+        thread_block = "\n\n<blockquote>" + "\n\n".join(bubbles) + "</blockquote>"
+    return (
+        f"<b>#{ls['id']} • {icon}</b>\n"
+        f"📌 Status: <b>{status_labels.get(ls['status'], ls['status'])}</b>{repeat}\n"
+        f"👤 {who} (<code>{ls['submitted_by']}</code>)\n\n"
+        f"<blockquote><b>{html.escape(ls['name'])}</b>, {html.escape(str(ls.get('country') or ''))}</blockquote>"
+        f"{thread_block}"
+    )
+    
 def build_feedback_thread_text(fb: dict, thread: list, viewer_tz: str = "UTC") -> str:
     from src.config import FEEDBACK_CATEGORIES
     from src.geo import format_local_time

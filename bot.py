@@ -1232,10 +1232,12 @@ async def admin_dashboard_command(update: Update, context):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
          InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
+        [InlineKeyboardButton("📍 LOCATION & SCHOOL REQUESTS", callback_data="loc_admin_browse|all|pending:0")],
         [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")],
         [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
     ])
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
+
 def db_get_all_admin_ids():
     conn = None
     try:

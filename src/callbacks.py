@@ -389,7 +389,7 @@ async def _open_utility_view(context, user_id, chat_id, html_content, reply_mark
     from src.rendering.rich_helpers import open_utility_view
     return await open_utility_view(context.bot, None, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
 
-    
+
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
     data = query.data.split("|")
@@ -1233,7 +1233,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             status_line = f"\n\n{'✅ Approved' if approve else '🚫 Rejected'} by admin."
             try:
                 old_text = (query.message.text or query.message.caption or "") + status_line
-                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=None)
+                back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{sug['kind']}|pending:0")]])
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=back_kb)
             except Exception:
                 pass
             for uid in result.get("affected_users", []):
@@ -1269,6 +1270,80 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
+
+    elif action == "loc_admin_browse":
+        from src.database import db_is_admin, db_get_location_suggestions_list, db_count_location_suggestions
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        await query.answer()
+
+        kind = d_id
+        rest = data[2] if len(data) > 2 else "pending:0"
+        status, offset_str = rest.split(":", 1) if ":" in rest else (rest, "0")
+        offset = int(offset_str) if offset_str.isdigit() else 0
+
+        items = await asyncio.to_thread(db_get_location_suggestions_list, status, kind, 6, offset)
+        total = await asyncio.to_thread(db_count_location_suggestions, status, kind)
+
+        from src.rendering.html_views import build_location_suggestions_browse_list_text
+        text = build_location_suggestions_browse_list_text(items, kind, status, offset, total)
+
+        return_state = f"{kind}:{status}:{offset}"
+        item_rows = [
+            [InlineKeyboardButton(f"#{ls['id']} · {ls['name'][:26]}", callback_data=f"loc_admin_item|{ls['id']}|{return_state}")]
+            for ls in items
+        ]
+        nav_row = []
+        if offset > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"loc_admin_browse|{kind}|{status}:{max(0, offset-6)}"))
+        if offset + 6 < total:
+            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"loc_admin_browse|{kind}|{status}:{offset+6}"))
+        if nav_row:
+            item_rows.append(nav_row)
+        item_rows.append([
+            InlineKeyboardButton("🏙 Cities", callback_data=f"loc_admin_browse|city|{status}:0"),
+            InlineKeyboardButton("🏫 Schools", callback_data=f"loc_admin_browse|school|{status}:0"),
+            InlineKeyboardButton("📋 All", callback_data=f"loc_admin_browse|all|{status}:0"),
+        ])
+        item_rows.append([
+            InlineKeyboardButton("📥 Pending", callback_data=f"loc_admin_browse|{kind}|pending:0"),
+            InlineKeyboardButton("✅ Approved", callback_data=f"loc_admin_browse|{kind}|approved:0"),
+            InlineKeyboardButton("🚫 Rejected", callback_data=f"loc_admin_browse|{kind}|rejected:0"),
+        ])
+        item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+        return
+
+    elif action == "loc_admin_item":
+        from src.database import db_is_admin, db_get_location_suggestion, db_get_location_suggestion_thread
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        ls_id = int(d_id)
+        return_state = data[2] if len(data) > 2 else "all:pending:0"
+        ls = await asyncio.to_thread(db_get_location_suggestion, ls_id)
+        if not ls:
+            await query.answer("Not found.", show_alert=True)
+            return
+        await query.answer()
+        thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
+
+        from src.rendering.html_views import build_location_suggestion_item_text
+        text = build_location_suggestion_item_text(ls, thread)
+
+        rows = []
+        if ls['status'] == 'pending':
+            rows.append([
+                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"),
+                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")
+            ])
+        rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+        rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    
     elif action == "fsm_create_org":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_NAME"
@@ -1884,6 +1959,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
              InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
+            [InlineKeyboardButton("📍 LOCATION & SCHOOL REQUESTS", callback_data="loc_admin_browse|all|pending:0")],
             [InlineKeyboardButton("🗂️ FEEDBACK KANBAN", callback_data="fb_kanban|0")],
             [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")],
             [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]

@@ -503,6 +503,8 @@ class QuizEngine:
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+                cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS request_count INT DEFAULT 1;")
+                cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS last_requested_at TIMESTAMPTZ DEFAULT NOW();")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS user_hidden_questions (
                         user_id VARCHAR(20) NOT NULL,
@@ -3805,10 +3807,25 @@ def db_create_location_suggestion(kind: str, name: str, country: str, submitted_
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            norm = normalize_location_name(name)
             cur.execute("""
-                INSERT INTO location_suggestions (kind, name, normalized_name, country, submitted_by, org_id)
-                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
-            """, (kind, name, normalize_location_name(name), country, str(submitted_by), org_id))
+                SELECT id FROM location_suggestions
+                WHERE kind = %s AND normalized_name = %s AND submitted_by = %s AND status = 'pending';
+            """, (kind, norm, str(submitted_by)))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("""
+                    UPDATE location_suggestions
+                    SET request_count = COALESCE(request_count, 1) + 1, last_requested_at = NOW()
+                    WHERE id = %s;
+                """, (existing['id'],))
+                conn.commit()
+                return existing['id']
+
+            cur.execute("""
+                INSERT INTO location_suggestions (kind, name, normalized_name, country, submitted_by, org_id, request_count, last_requested_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 1, NOW()) RETURNING id;
+            """, (kind, name, norm, country, str(submitted_by), org_id))
             sid = cur.fetchone()['id']
             conn.commit()
             return sid
@@ -3820,7 +3837,61 @@ def db_create_location_suggestion(kind: str, name: str, country: str, submitted_
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+def db_get_location_suggestions_list(status: str = None, kind: str = None, limit: int = 8, offset: int = 0):
+    """Admin inbox listing, newest request first. status/kind = None means 'all'."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            clauses, params = [], []
+            if status and status != "all":
+                clauses.append("ls.status = %s")
+                params.append(status)
+            if kind and kind != "all":
+                clauses.append("ls.kind = %s")
+                params.append(kind)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            params.extend([limit, offset])
+            cur.execute(f"""
+                SELECT ls.*, us.nickname, us.username, us.first_name
+                FROM location_suggestions ls
+                LEFT JOIN user_stats us ON ls.submitted_by = us.user_id
+                {where}
+                ORDER BY COALESCE(ls.last_requested_at, ls.created_at) DESC
+                LIMIT %s OFFSET %s;
+            """, tuple(params))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] Failed to list location suggestions: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
 
+
+def db_count_location_suggestions(status: str = None, kind: str = None) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            clauses, params = [], []
+            if status and status != "all":
+                clauses.append("status = %s")
+                params.append(status)
+            if kind and kind != "all":
+                clauses.append("kind = %s")
+                params.append(kind)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM location_suggestions {where};", tuple(params))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] Failed to count location suggestions: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 def db_get_location_suggestion(suggestion_id: int):
     conn = None
     try:
