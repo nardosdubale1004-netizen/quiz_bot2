@@ -511,90 +511,86 @@ async def _start_command_inner(update: Update, context):
             is_removed = (track_status == "deleted")
 
             if existing_response:
-                print(f" ├─ History found. Selected Option: {existing_response.get('selected_option')} | Is Correct: {existing_response.get('is_correct')}", flush=True)
-                original_selection = existing_response['selected_option']
-                old_private_mid = existing_response.get('private_message_id')
-                if old_private_mid:
-                    try:
-                        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
-                    except Exception:
-                        pass
+                if existing_response:
+                    print(f" ├─ History found. Selected Option: {existing_response.get('selected_option')} | Is Correct: {existing_response.get('is_correct')}", flush=True)
+                    original_selection = existing_response['selected_option']
+                    old_private_mid = existing_response.get('private_message_id')
 
-                m = await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content=confirm_html, reply_markup=confirm_kb)
-                if m:
-                    await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
-                return
+                    # Clear the previous saved-answer bubble first so re-taps never stack duplicates.
+                    if old_private_mid:
+                        try:
+                            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
+                        except Exception:
+                            pass
 
-                show_derivation = existing_response.get('show_derivation', False)
-                show_perf = existing_response.get('show_perf', False)
+                    show_derivation = existing_response.get('show_derivation', False)
+                    show_perf = existing_response.get('show_perf', False)
 
-                async def delete_msg_safe(chat_id, mid):
-                    try:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=mid)
-                    except Exception:
-                        pass
+                    async def delete_msg_safe(chat_id, mid):
+                        try:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+                        except Exception:
+                            pass
 
-                asyncio.create_task(delete_msg_safe(update.message.chat_id, update.message.message_id))
-                if old_private_mid:
-                    print(f" ├─ Deleting stale static message ID: {old_private_mid}", flush=True)
-                    asyncio.create_task(delete_msg_safe(update.message.chat_id, old_private_mid))
+                    asyncio.create_task(delete_msg_safe(update.message.chat_id, update.message.message_id))
 
-                print(f" ├─ Computing latest scoreboard metadata...", flush=True)
-                perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
+                    print(f" ├─ Computing latest scoreboard metadata...", flush=True)
+                    perf_card = await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], existing_response['is_correct'], original_selection)
 
-                # Answered-before and removed are NOT mutually exclusive — a question you
-                # already answered can later be pulled from the channel. Show BOTH facts
-                # instead of collapsing to a generic "quiz ended" message.
-                if is_removed:
-                    warning_notice = (
-                        "⚫ <b>This Question Was Removed</b>\n"
-                        "<i>It's no longer visible in the channel, but your saved answer below is completely unaffected.</i>\n\n"
+                    # Answered-before and removed are NOT mutually exclusive — a question you
+                    # already answered can later be pulled from the channel. Show BOTH facts
+                    # instead of collapsing to a generic "quiz ended" message.
+                    if is_removed:
+                        warning_notice = (
+                            "⚫ <b>This Question Was Removed</b>\n"
+                            "<i>It's no longer visible in the channel, but your saved answer below is completely unaffected.</i>\n\n"
+                        )
+                    else:
+                        warning_notice = "ℹ️ <b>Already Answered</b>\n" \
+                                        "<i>You've already submitted your answer for this one — here's your saved result.</i>\n\n"
+
+                    explanation_html = warning_notice + UIFactory.build_answered_view(
+                        question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
                     )
-                else:
-                    warning_notice = "ℹ️ <b>Already Answered</b>\n" \
-                                    "<i>You've already submitted your answer for this one — here's your saved result.</i>\n\n"
 
-                explanation_html = warning_notice + UIFactory.build_answered_view(
-                    question_data, str(display_id), original_selection, show_derivation=show_derivation, show_perf=show_perf, perf_card=perf_card
-                )
+                    has_tikz = UIFactory.has_real_diagram(question_data)
+                    media_bytes = None
+                    cached_file_id = None
 
-                has_tikz = UIFactory.has_real_diagram(question_data)
-                media_bytes = None
-                cached_file_id = None
+                    kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation, show_perf, is_photo=False, message_id=track['message_id'])
 
-                kb = UIFactory.build_answered_keyboard(display_id, original_selection, show_derivation, show_perf, is_photo=False, message_id=track['message_id'])
+                    if has_tikz:
+                        cache_key = f"q:{question_data['id']}:exp:{original_selection}"
+                        cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
 
-                if has_tikz:
-                    cache_key = f"q:{question_data['id']}:exp:{original_selection}"
-                    cached_file_id = await asyncio.to_thread(db_get_cached_file_id, cache_key)
+                        if not cached_file_id:
+                            print(f" ├─ [CACHE MISS] Solution sheet not cached. Generating LaTeX...", flush=True)
+                            latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
+                            if latex_code:
+                                img_url = UIFactory.get_latex_url(latex_code)
+                                async with httpx.AsyncClient() as client:
+                                    resp = await fetch_kroki_image(client, img_url, latex_code)
+                                    if resp and resp.status_code == 200:
+                                        media_bytes = resp.content
 
-                    if not cached_file_id:
-                        print(f" ├─ [CACHE MISS] Solution sheet not cached. Generating LaTeX...", flush=True)
-                        latex_code, _ = UIFactory.create_explanation_assets(question_data, original_selection, display_id)
-                        if latex_code:
-                            img_url = UIFactory.get_latex_url(latex_code)
-                            async with httpx.AsyncClient() as client:
-                                resp = await fetch_kroki_image(client, img_url, latex_code)
-                                if resp and resp.status_code == 200:
-                                    media_bytes = resp.content
+                    print(f" ├─ Sending updated explanation card...", flush=True)
+                    m = await send_rich_message_safe(
+                        context.bot,
+                        chat_id=update.message.chat_id,
+                        html_content=explanation_html,
+                        reply_markup=kb,
+                        media_bytes=media_bytes,
+                        file_id=cached_file_id,
+                        preserve_utility=True
+                    )
 
-                print(f" ├─ Sending updated explanation card...", flush=True)
-                m = await send_rich_message_safe(
-                    context.bot,
-                    chat_id=update.message.chat_id,
-                    html_content=explanation_html,
-                    reply_markup=kb,
-                    media_bytes=media_bytes,
-                    file_id=cached_file_id
-                )
+                    if media_bytes and m and m.photo and not cached_file_id:
+                        await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
 
-                if media_bytes and m and m.photo and not cached_file_id:
-                    await asyncio.to_thread(db_save_cached_file_id, cache_key, m.photo[-1].file_id)
-
-                LOCKOUT_MESSAGES.add((user_id, m.message_id))
-                await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
-                print(f"{Style.GREEN}[TRACE-COMPLETE] History fallback view successfully displayed.{Style.RESET}", flush=True)
-                return
+                    LOCKOUT_MESSAGES.add((user_id, m.message_id))
+                    await asyncio.to_thread(db_update_private_message_id, user_id, mid_key, m.message_id)
+                    print(f"{Style.GREEN}[TRACE-COMPLETE] History fallback view successfully displayed.{Style.RESET}", flush=True)
+                    return
 
             # Not answered yet — if it was removed, there's nothing to submit against.
             # THIS is the case that used to silently do nothing: track_status=="deleted"

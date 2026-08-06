@@ -79,13 +79,22 @@ def convert_to_legacy_html(rich_html: str) -> str:
 async def send_rich_message_safe(bot, chat_id, html_content, reply_markup=None, reply_to_message_id=None, media_bytes=None, file_id=None, preserve_utility=False, **kwargs) -> Message:
     if not preserve_utility:
         try:
-            from src.config import LAST_UTILITY_MID, NO_ANSWER_NUDGE_MIDS
-            stale_utility_mid = LAST_UTILITY_MID.pop(chat_id, None)
+            from src.config import NO_ANSWER_NUDGE_MIDS
+            from src.database import db_get_last_utility_mid, db_set_last_utility_mid
+            import asyncio as _asyncio_local
+
+            # Single source of truth for "the one profile-family message" lives in the
+            # database (survives restarts, never desyncs). Every non-preserve_utility send —
+            # regardless of which flow calls it — checks and clears it here, so profile,
+            # settings, leaderboard, feedback, and location-wizard messages can never stack.
+            # Answer explanation sends pass preserve_utility=True and are never touched here.
+            stale_utility_mid = await _asyncio_local.to_thread(db_get_last_utility_mid, chat_id)
             if stale_utility_mid:
                 try:
-                    await bot.delete_message(chat_id=chat_id, message_id=stale_utility_mid)
+                    await bot.delete_message(chat_id=chat_id, message_id=int(stale_utility_mid))
                 except Exception:
                     pass
+                await _asyncio_local.to_thread(db_set_last_utility_mid, chat_id, None)
 
             # "No answer on file yet" nudges only ever cleaned themselves up via TTL or a
             # re-tap on the SAME question's link. If a DIFFERENT question's answer card lands

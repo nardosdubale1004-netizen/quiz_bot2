@@ -446,8 +446,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
-        from src.config import LAST_UTILITY_MID
-        LAST_UTILITY_MID[user_id] = query.message.message_id
+        from src.database import db_set_last_utility_mid
+        await asyncio.to_thread(db_set_last_utility_mid, user_id, query.message.message_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
@@ -2012,8 +2012,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Cancelled.")
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
-        from src.config import LAST_UTILITY_MID
-        LAST_UTILITY_MID.pop(user_id, None)
+        from src.database import db_set_last_utility_mid
+        await asyncio.to_thread(db_set_last_utility_mid, user_id, None)
 
         destination = d_id or "privacy_menu"
 
@@ -2039,7 +2039,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             buttons.append([InlineKeyboardButton("🔙 BACK TO PROFILE", callback_data="privacy_menu|0")])
             m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
             if m:
-                LAST_UTILITY_MID[user_id] = m.message_id
+                await asyncio.to_thread(db_set_last_utility_mid, user_id, m.message_id)
             return
 
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
@@ -2048,7 +2048,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
         m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
         if m:
-            LAST_UTILITY_MID[user_id] = m.message_id
+            await asyncio.to_thread(db_set_last_utility_mid, user_id, m.message_id)
         return
 
     elif action == "org_history":
