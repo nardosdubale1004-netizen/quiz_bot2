@@ -249,6 +249,14 @@ async def check_and_publish_scheduled(app):
         await asyncio.sleep(60)
 
 async def start_command(update: Update, context):
+    try:
+        await _start_command_inner(update, context)
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            await update.message.reply_text("⚠️ Something went wrong loading that. Please try /start again.")
+        except Exception:
+            pass
     user = update.effective_user
     user_id = user.id
     args = context.args
@@ -1059,7 +1067,7 @@ async def leaderboard_command(update: Update, context):
     text = build_leaderboard_text("world", None, "all", "all", "all", "total", matrix, summary)
     kb = build_leaderboard_keyboard("world", None, "all", "all", "all", "total", "none", [], 0)
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
-    
+
 async def invite_command(update: Update, context):
     """Generates the student's personal referral deep-link."""
     user = update.effective_user

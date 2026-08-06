@@ -367,8 +367,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
-        from src.config import LAST_UTILITY_MID
+        from src.config import LAST_UTILITY_MID, PROFILE_POPUP_MID
         LAST_UTILITY_MID[user_id] = query.message.message_id
+        PROFILE_POPUP_MID.pop(user_id, None)  # this message IS now the tracked utility view, not a popup
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
@@ -378,16 +379,29 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "profile_popup":
         await query.answer()
+        from src.config import PROFILE_POPUP_MID
+
+        # Delete only the PREVIOUS profile popup (if any) — never touches answer
+        # explanation cards or the My Answers utility panel, since those are tracked
+        # in a completely separate dict (LAST_UTILITY_MID).
+        prev_popup_mid = PROFILE_POPUP_MID.pop(user_id, None)
+        if prev_popup_mid:
+            try:
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=prev_popup_mid)
+            except Exception:
+                pass
+
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-        # preserve_utility=True stops send_rich_message_safe from deleting whatever
-        # message the user is currently viewing (e.g. an answer sheet from My Answers).
-        await send_rich_message_safe(
+
+        m = await send_rich_message_safe(
             context.bot, chat_id=query.message.chat_id,
             html_content=text, reply_markup=kb, preserve_utility=True
         )
+        if m:
+            PROFILE_POPUP_MID[user_id] = m.message_id
         return
 
     elif action == "settings_menu":
