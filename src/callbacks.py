@@ -458,12 +458,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "profile_popup":
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if not profile or not profile.get("grade"):
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎒 SET UP MY PROFILE", callback_data="regloc_start_new|0")]])
+            await _open_utility_view(
+                context, user_id, query.message.chat_id,
+                "🎒 You haven't finished setup yet. Type /start to register your grade first.",
+                nav_kb
+            )
+            return
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-        # Uses the same single-utility-message tracker as every other menu/notification —
-        # deletes whichever profile/settings/notification message preceded it, never touches
-        # an answer explanation card (those aren't tracked in LAST_UTILITY_MID).
         await _open_utility_view(context, user_id, query.message.chat_id, text, kb)
         return
 
