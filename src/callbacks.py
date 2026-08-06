@@ -212,19 +212,85 @@ async def _regloc_show_school_step(context, chat_id, message_id, user_id):
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
 
 
-async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str):
-    from src.database import db_update_user_location
+async def _regloc_show_review(context, chat_id, message_id, user_id):
+    """Final confirm screen — shows exactly what's about to be saved, flags anything that
+    will land as pending, and requires an explicit CONFIRM before anything is written."""
+    session = USER_PAYLOADS.get(user_id, {})
+    city = session.get("reg_city") or "Not set"
+    country = session.get("reg_country") or "Not set"
+    city_is_new = session.get("reg_city_is_new", False)
+    school_name = session.get("reg_school_name")
+    school_is_new = session.get("reg_school_is_new", False)
+    school_org_id = session.get("reg_school_org_id")
+
+    lines = ["📋 <b>REVIEW YOUR PROFILE SETUP</b>\n"]
+    lines.append(f"🌍 <b>Country:</b> {html.escape(country)}")
+
+    if city_is_new:
+        lines.append(f"🏙️ <b>City:</b> {html.escape(city)} — ⏳ <i>pending admin approval</i>")
+    else:
+        lines.append(f"🏙️ <b>City:</b> {html.escape(city)} — ✅ recognized")
+
+    if school_name:
+        if school_is_new:
+            lines.append(f"🏫 <b>School:</b> {html.escape(school_name)} — ⏳ <i>pending admin approval</i>")
+        else:
+            lines.append(f"🏫 <b>School:</b> {html.escape(school_name)} — ✅ recognized")
+    else:
+        lines.append("🏫 <b>School:</b> <i>skipped — you can add this anytime from 📍 LOCATIONS & SCHOOL</i>")
+
+    if city_is_new or school_is_new:
+        lines.append(
+            "\n<blockquote>⚠️ Anything marked <b>pending</b> is saved to your profile now, but your "
+            "score stays <b>personal only</b> and won't count toward that city/school/team leaderboard "
+            "until an admin approves it. We'll message you the moment that happens — nothing else about "
+            "your account is affected while you wait.</blockquote>"
+        )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ CONFIRM & SAVE", callback_data="regloc_confirm|0")],
+        [InlineKeyboardButton("🔙 START OVER", callback_data="regloc_start|0")],
+        [InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|privacy_menu")]
+    ])
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content="\n".join(lines), reply_markup=kb)
+
+
+async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str = None):
+    """Actually commits the reviewed selections. Only ever called from the regloc_confirm branch."""
+    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids
     session = USER_PAYLOADS.pop(user_id, {})
     USER_STATES[user_id] = "IDLE"
     city, country = session.get("reg_city"), session.get("reg_country")
+    city_is_new = session.get("reg_city_is_new", False)
+
     if city or country:
-        await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
+        if city_is_new:
+            sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
+            await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
+            admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+            req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
+            review_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
+                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+            ]])
+            for admin_id in admin_ids:
+                try:
+                    await context.bot.send_message(chat_id=int(admin_id),
+                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(city)}, {html.escape(country)}</b>.",
+                        reply_markup=review_kb, parse_mode="HTML")
+                except Exception:
+                    pass
+        else:
+            await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
+
     profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
+    status_line = "⏳ pending admin review" if city_is_new else "✅ saved"
     await edit_rich_message_safe(
         context.bot, chat_id=chat_id, message_id=message_id,
-        html_content=f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'}\n{school_msg}",
+        html_content=f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'} ({status_line})\n{school_msg or ''}",
         reply_markup=profile_nav_kb
     )
+
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     """Thin safety wrapper — any exception in any action branch below used to make a
@@ -367,9 +433,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
-        from src.config import LAST_UTILITY_MID, PROFILE_POPUP_MID
+        from src.config import LAST_UTILITY_MID
         LAST_UTILITY_MID[user_id] = query.message.message_id
-        PROFILE_POPUP_MID.pop(user_id, None)  # this message IS now the tracked utility view, not a popup
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
@@ -379,29 +444,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "profile_popup":
         await query.answer()
-        from src.config import PROFILE_POPUP_MID
-
-        # Delete only the PREVIOUS profile popup (if any) — never touches answer
-        # explanation cards or the My Answers utility panel, since those are tracked
-        # in a completely separate dict (LAST_UTILITY_MID).
-        prev_popup_mid = PROFILE_POPUP_MID.pop(user_id, None)
-        if prev_popup_mid:
-            try:
-                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=prev_popup_mid)
-            except Exception:
-                pass
-
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-
-        m = await send_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id,
-            html_content=text, reply_markup=kb, preserve_utility=True
-        )
-        if m:
-            PROFILE_POPUP_MID[user_id] = m.message_id
+        # Uses the same single-utility-message tracker as every other menu/notification —
+        # deletes whichever profile/settings/notification message preceded it, never touches
+        # an answer explanation card (those aren't tracked in LAST_UTILITY_MID).
+        await _open_utility_view(context, user_id, query.message.chat_id, text, kb)
         return
 
     elif action == "settings_menu":
@@ -701,14 +751,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "regloc_country":
         await query.answer()
-        country = d_id
+        from src.geo import normalize_country_input
+        country, _ = normalize_country_input(d_id)  # d_id already canonical from the A-Z list, but this keeps it safe if reused elsewhere
         USER_PAYLOADS.setdefault(user_id, {})["reg_country"] = country
         from src.database import db_get_cities_for_country
         cities = await asyncio.to_thread(db_get_cities_for_country, country)
         if cities:
             await edit_rich_message_safe(
                 context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=f"🏙️ <b>{country}</b>\n\nPick your city/state:",
+                html_content=f"🏙️ <b>{country}</b>\n\nPick your city — or type it if it's not listed:",
                 reply_markup=_build_city_kb(cities)
             )
         else:
@@ -716,7 +767,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             skip_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⏭ SKIP", callback_data="regloc_skip_city|0")]])
             await edit_rich_message_safe(
                 context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=f"🏙️ <b>{country}</b>\n\nType your city/state:" + FSM_INPUT_HINT,
+                html_content=f"🏙️ <b>{country}</b>\n\nNo cities on file yet — type yours:" + FSM_INPUT_HINT,
                 reply_markup=skip_kb
             )
         return
@@ -754,15 +805,26 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "regloc_school":
         await query.answer()
-        org_id = int(d_id)
-        join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, org_id)
-        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id,
-                              school_msg=f"✅ Joined <b>{join_data['org_name']}</b>!" if join_data else "⚠️ Could not join.")
+        USER_PAYLOADS.setdefault(user_id, {})
+        USER_PAYLOADS[user_id]["reg_school_org_id"] = int(d_id)
+        USER_PAYLOADS[user_id]["reg_school_is_new"] = False
+        from src.database import GLOBAL_ENGINE
+        conn = GLOBAL_ENGINE.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT org_name FROM organizations WHERE org_id = %s;", (int(d_id),))
+                row = cur.fetchone()
+                USER_PAYLOADS[user_id]["reg_school_name"] = row["org_name"] if row else None
+        finally:
+            GLOBAL_ENGINE.release_connection(conn)
+        await _regloc_show_review(context, query.message.chat_id, query.message.message_id, user_id)
         return
 
     elif action == "regloc_school_skip":
         await query.answer()
-        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg="⏭ No school linked.")
+        USER_PAYLOADS.setdefault(user_id, {})
+        USER_PAYLOADS[user_id]["reg_school_name"] = None
+        await _regloc_show_review(context, query.message.chat_id, query.message.message_id, user_id)
         return
 
     elif action == "regloc_school_create":
@@ -773,6 +835,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "edit_mid": query.message.message_id,
             "org_city": session.get("reg_city"),
             "org_country": session.get("reg_country"),
+            "reg_city": session.get("reg_city"),
+            "reg_country": session.get("reg_country"),
+            "reg_city_is_new": session.get("reg_city_is_new", False),
         }
         cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|privacy_menu")]])
         await edit_rich_message_safe(
@@ -789,6 +854,49 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "regloc_confirm":
+        await query.answer()
+        session = USER_PAYLOADS.get(user_id, {})
+        school_org_id = session.get("reg_school_org_id")
+        school_name = session.get("reg_school_name")
+        school_msg = ""
+
+        if school_org_id:
+            join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, school_org_id)
+            school_msg = f"✅ Joined <b>{join_data['org_name']}</b>!" if join_data else "⚠️ Could not join school."
+        elif school_name and session.get("reg_school_is_new"):
+            from src.database import db_create_location_suggestion, db_get_all_admin_ids
+            org_tag = session.get("reg_new_org_tag")
+            reg_city = session.get("reg_city")
+            reg_country = session.get("reg_country")
+            try:
+                new_org_id = await asyncio.to_thread(
+                    db_create_organization, school_name, org_tag, user_id,
+                    "School", True, reg_city, reg_country, "pending"
+                )
+                sid = await asyncio.to_thread(db_create_location_suggestion, "school", school_name, reg_country, user_id, new_org_id)
+                admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+                req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
+                review_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
+                    InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+                ]])
+                for admin_id in admin_ids:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=int(admin_id),
+                            text=f"🏫 <b>NEW SCHOOL SUGGESTION</b>\n\n<b>{req_name}</b> created <b>{html.escape(school_name)}</b> ({html.escape(reg_city or '')}, {html.escape(reg_country or '')}).",
+                            reply_markup=review_kb, parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                school_msg = f"🏫 <b>{html.escape(school_name)}</b> submitted for review — you'll be linked once approved."
+            except Exception:
+                school_msg = "⚠️ Could not create the new school team — please try again from 📍 LOCATIONS &amp; SCHOOL."
+
+        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg=school_msg)
         return
 
     elif action == "loc_user_reply":
@@ -1184,7 +1292,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "wr":
-        await query.answer()
         parts = data[1:]
         scope = parts[0] if len(parts) > 0 else "world"
         entity = parts[1] if len(parts) > 1 and parts[1] != "_" else None
@@ -1195,8 +1302,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         edit = parts[6] if len(parts) > 6 else "none"
         soff = int(parts[7]) if len(parts) > 7 and parts[7].isdigit() else 0
 
-        from src.database import db_get_rank_matrix, db_get_scope_summary, db_get_all_subjects
+        if scope in ("country", "city", "school") and not entity:
+            await query.answer()
+            from src.database import db_get_entity_list
+            items = await asyncio.to_thread(db_get_entity_list, scope, None, 200)
+            text = build_entity_picker_text(scope, None)
+            back_scope = {"country": "world", "city": "country", "school": "city"}.get(scope, "world")
+            kb = build_entity_picker_keyboard(scope, None, items, 0, back_scope)
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            return
 
+        await query.answer()
+        from src.database import db_get_rank_matrix, db_get_scope_summary, db_get_all_subjects
         matrix = await asyncio.to_thread(db_get_rank_matrix, scope, entity, grade, subject, difficulty, mode, 10)
         summary = await asyncio.to_thread(db_get_scope_summary, scope, entity, grade)
         subjects_list = await asyncio.to_thread(db_get_all_subjects) if edit == "subject" else []

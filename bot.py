@@ -1429,16 +1429,15 @@ async def handle_fsm_message(update: Update, context):
             prefilled_country = USER_PAYLOADS[user_id].get("org_country")
             if prefilled_city and prefilled_country:
                 org_name = USER_PAYLOADS[user_id]["org_name"]
-                try:
-                    await asyncio.to_thread(db_create_organization, org_name, clean_tag, user_id, "School", True, prefilled_city, prefilled_country)
-                    USER_STATES[user_id] = "IDLE"
-                    from src.callbacks import _regloc_finish
-                    await _regloc_finish(context, update.message.chat_id, edit_mid, user_id, school_msg=f"✅ Created and joined <b>{org_name}</b>!")
-                except Exception as e:
-                    if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                        await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ <code>#{clean_tag}</code> taken. Enter unique tag:", cancel_kb)
-                    else:
-                        await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Setup failed.", cancel_kb)
+                # Nothing is written to the DB yet — stage it and let the user confirm
+                # on the review screen (matches every other pending-approval path).
+                USER_PAYLOADS[user_id]["reg_school_name"] = org_name
+                USER_PAYLOADS[user_id]["reg_school_is_new"] = True
+                USER_PAYLOADS[user_id]["reg_school_org_id"] = None
+                USER_PAYLOADS[user_id]["reg_new_org_tag"] = clean_tag
+                USER_STATES[user_id] = "IDLE"
+                from src.callbacks import _regloc_show_review
+                await _regloc_show_review(context, update.message.chat_id, edit_mid, user_id)
                 return
 
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
@@ -1749,7 +1748,18 @@ async def handle_fsm_message(update: Update, context):
             if not clean_city:
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid name. Try again.", None)
                 return
-            USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = clean_city
+
+            from src.geo import find_close_match
+            from src.database import db_get_cities_for_country
+            session = USER_PAYLOADS.get(user_id, {})
+            reg_country = session.get("reg_country")
+            known_cities = await asyncio.to_thread(db_get_cities_for_country, reg_country) if reg_country else []
+            matched = find_close_match(clean_city, known_cities)
+
+            # Case/spelling variant of an existing city -> treat it as that existing city (no pending needed).
+            final_city = matched or clean_city
+            USER_PAYLOADS.setdefault(user_id, {})["reg_city"] = final_city
+            USER_PAYLOADS[user_id]["reg_city_is_new"] = (matched is None)
             USER_STATES[user_id] = "IDLE"
             from src.callbacks import _regloc_show_school_step
             await _regloc_show_school_step(context, update.message.chat_id, edit_mid, user_id)

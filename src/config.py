@@ -68,4 +68,3 @@ ACTIVE_ENGINE = None
 # --- In-Memory FSM State Registries ---
 USER_STATES = {}       # Maps user_id -> Active State String
 USER_PAYLOADS = {}     # Maps user_id -> Temporary Session Dictionary dict
-PROFILE_POPUP_MID = {}   # Maps user_id -> message_id of their currently-open profile popup

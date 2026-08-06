@@ -610,7 +610,7 @@ def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeybo
         [InlineKeyboardButton(consent_label, callback_data=f"toggle_consent|{consent_target}")],
         [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
          InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
-        [InlineKeyboardButton("📍 LOCATION", callback_data="regloc_start|0")],
+        [InlineKeyboardButton("📍 LOCATIONS & SCHOOL", callback_data="regloc_start|0")],
         [InlineKeyboardButton("🔙 PROFILE", callback_data="privacy_menu|0")]
     ])
 
@@ -1760,8 +1760,11 @@ def build_leaderboard_keyboard(scope, entity, grade, subject, difficulty, mode, 
         ])
 
     def _scope_btn(s, label):
-        target_entity = "_" if s in ("country", "city", "school") else "_"
-        return InlineKeyboardButton(("• " if scope == s else "") + label, callback_data=_cb(s=s, ent=target_entity))
+        if s in ("country", "city", "school") and scope != s:
+            # No entity picked yet for this scope -> go straight to the picker instead of
+            # landing on a dash-filled matrix that then needs a second tap.
+            return InlineKeyboardButton(label, callback_data=f"wr_pick|{s}|_|0")
+        return InlineKeyboardButton(("• " if scope == s else "") + label, callback_data=_cb(s=s, ent="_"))
 
     rows = [
         [_scope_btn("world", "🌍 WORLD"), _scope_btn("country", "🌎 COUNTRY")],
@@ -1773,11 +1776,10 @@ def build_leaderboard_keyboard(scope, entity, grade, subject, difficulty, mode, 
          InlineKeyboardButton(("• " if edit == "difficulty" else "") + "⚡ DIFFICULTY", callback_data=_cb(e="difficulty" if edit != "difficulty" else "none"))],
     ]
 
-    # Grade quick-row now always visible (spec: "4th row filter changable"), not gated behind edit=="grade"
-    grade_vals = [("all", "Total"), ("12", "12"), ("10", "10"), ("8", "8"), ("6", "6")]
-    rows.append([InlineKeyboardButton(("• " if grade == v else "") + label, callback_data=_cb(g=v)) for v, label in grade_vals])
-
-    if edit == "difficulty":
+    if edit == "grade":
+        vals = [("all", "All"), ("6", "6"), ("8", "8"), ("10", "10"), ("12", "12")]
+        rows.append([InlineKeyboardButton(("• " if grade == v else "") + label, callback_data=_cb(g=v)) for v, label in vals])
+    elif edit == "difficulty":
         vals = [("all", "All"), ("easy", "Easy"), ("medium", "Medium"), ("hard", "Hard")]
         rows.append([InlineKeyboardButton(("• " if difficulty == v else "") + label, callback_data=_cb(d=v)) for v, label in vals])
     elif edit == "subject":
@@ -1795,7 +1797,7 @@ def build_leaderboard_keyboard(scope, entity, grade, subject, difficulty, mode, 
             rows.append(nav)
 
     if scope in ("country", "city", "school") and (not entity or entity == "_"):
-        rows.append([InlineKeyboardButton(f"📍 PICK {scope.upper()}", callback_data=f"wr_pick|{scope}|_|0")])
+        rows.append([InlineKeyboardButton(f"🔄 SWITCH {scope.upper()}", callback_data=f"wr_pick|{scope}|_|0")])
 
     rows.append([
         InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
