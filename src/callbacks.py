@@ -233,7 +233,6 @@ async def _regloc_show_school_step(context, chat_id, message_id, user_id, offset
     else:
         html_content = f"<h2>🏫 Schools in {html.escape(city or '')}</h2>\n\nNo schools on file yet — register yours below:"
 
-    new_str:
     kb = _build_school_kb(page, offset, len(all_schools), country)
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
 
