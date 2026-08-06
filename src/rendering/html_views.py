@@ -1697,7 +1697,7 @@ def _filter_chip_line(scope, entity, grade, subject, difficulty, mode) -> str:
         parts.append(f"⚡ {difficulty.title()}")
     return " • ".join(parts)
 
-    
+
 def build_leaderboard_text(scope, entity, grade, subject, difficulty, mode, matrix, summary) -> str:
     s = summary or {}
     titles = {"world": "🌍 WORLD LEADERBOARD", "country": f"🌎 {html.escape(str(entity or ''))}",
@@ -1720,11 +1720,11 @@ def build_leaderboard_text(scope, entity, grade, subject, difficulty, mode, matr
     lines.append(f"🏆 Cumulative: <b>{s.get('total_marks', 0):,}</b> · 📈 Average: <b>{int(s.get('avg_marks', 0))}</b>")
 
     stat_cols = {
-        "world": [("student_count", "👨‍🎓"), ("team_count", "👥"), ("school_count", "🏫"), ("city_count", "🏙"), ("country_count", "🌍")],
-        "country": [("student_count", "👨‍🎓"), ("team_count", "👥"), ("school_count", "🏫"), ("city_count", "🏙")],
-        "city": [("student_count", "👨‍🎓"), ("team_count", "👥"), ("school_count", "🏫")],
-        "school": [("student_count", "👨‍🎓"), ("team_count", "👥")],
-    }.get(scope, [("student_count", "👨‍🎓")])
+        "world": [("student_count", " Students 👨‍🎓  |"), ("team_count", " Teams 👥|"), ("school_count", " Schools 🏫 |"), ("city_count", "🏙"), ("country_count", " Country 🌍 |")],
+        "country": [("student_count", "Students 👨‍🎓 |"), ("team_count", " Teams 👥 |"), ("school_count", "Schools 🏫 |"), ("city_count", " City 🏙 |")],
+        "city": [("student_count", "Students 👨‍🎓 | "), ("team_count", " Teams 👥 |"), ("school_count", "Schools 🏫 |")],
+        "school": [("student_count", "Students 👨‍🎓 |"), ("team_count", " Teams 👥 |")],
+    }.get(scope, [("student_count", "Students 👨‍🎓 |")])
     lines.append("  ".join(f"{icon} <b>{s.get(key, 0):,}</b>" for key, icon in stat_cols))
     lines.append("<hr/>")
 

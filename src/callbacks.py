@@ -370,6 +370,26 @@ async def _notify_org_admins_pending_request(context, org_id, org_name, requeste
         except Exception:
             pass
 
+# Local lock registry for this module — mirrors bot.py's _UTILITY_LOCKS.
+# Needed because callbacks.py is a separate module; it cannot reach bot.py's
+# private _open_utility_view/_UTILITY_LOCKS directly.
+_UTILITY_LOCKS: dict = {}
+
+async def _open_utility_view(context, user_id, chat_id, html_content, reply_markup=None):
+    """Ensures only ONE profile-family message (profile/settings/leaderboard/invite/help/
+    feedback/team/my-answers/locations wizard/etc) is ever visible in this user's DM at a
+    time. Tracked in the DATABASE (db_get_last_utility_mid / db_set_last_utility_mid) so it
+    survives restarts and stays correct across both bot.py and callbacks.py call sites.
+    NEVER touches answer-explanation cards from the channel — those are tracked separately
+    via db_update_private_message_id and are never written to this tracker.
+
+    This was missing from callbacks.py entirely, which caused a silent NameError every time
+    the 👤 PROFILE button was tapped from an answer-explanation card in the DM — the tap
+    looked like it did nothing."""
+    from src.rendering.rich_helpers import open_utility_view
+    return await open_utility_view(context.bot, None, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
+
+    
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
     data = query.data.split("|")
