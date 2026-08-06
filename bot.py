@@ -343,9 +343,17 @@ async def start_command(update: Update, context):
                     from src.database import db_is_tournament_round_still_open, db_get_user_edit_stats
                     still_open = await asyncio.to_thread(db_is_tournament_round_still_open, mid_key)
                     old_opt = existing_response['selected_option']
+                    old_private_mid = existing_response.get('private_message_id')
+
+                    # Always clear the previous "Response Received!" (or prior prompt) bubble first —
+                    # every branch below replaces it with something new, so it should never linger.
+                    if old_private_mid:
+                        try:
+                            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=old_private_mid)
+                        except Exception:
+                            pass
 
                     if not still_open or user_selection == old_opt:
-                        # Round is over, or they re-tapped the SAME option — nothing to change.
                         letters = ["A", "B", "C", "D", "E"]
                         lockout_kb = InlineKeyboardMarkup([
                             [InlineKeyboardButton("📣 TO CHANNEL", url=f"https://t.me/{channel_username}")],

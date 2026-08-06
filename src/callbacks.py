@@ -378,30 +378,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "profile_popup":
         await query.answer()
-        from src.config import LAST_UTILITY_MID
-        prev_mid = LAST_UTILITY_MID.get(user_id)
-        if prev_mid and prev_mid != query.message.message_id:
-            try:
-                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-            except Exception:
-                pass
-            await send_rich_message_safe(
-                context.bot, chat_id=query.message.chat_id,
-                html_content=(
-                    f"✅ <b>Answer updated to {letters[new_opt]}</b> for REF <code>{display_id}</code>.\n\n"
-                    f"{flip_note}\n\n"
-                    f"The full explanation lands here automatically once the round wraps up."
-                ),
-                reply_markup=nav_kb
-            )
-            return
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
-        m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
-        if m:
-            LAST_UTILITY_MID[user_id] = m.message_id
+        # preserve_utility=True stops send_rich_message_safe from deleting whatever
+        # message the user is currently viewing (e.g. an answer sheet from My Answers).
+        await send_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id,
+            html_content=text, reply_markup=kb, preserve_utility=True
+        )
         return
 
     elif action == "settings_menu":
@@ -1175,7 +1161,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
         await query.answer()
 
-        from src.database import db_get_rank_matrix, db_get_scope_summary
+        from src.database import db_get_rank_matrix, db_get_scope_summary, db_get_all_subjects
         matrix = await asyncio.to_thread(db_get_rank_matrix, "world", None, "all", "all", "all", "total", 10)
         summary = await asyncio.to_thread(db_get_scope_summary, "world", None, "all")
         text = build_leaderboard_text("world", None, "all", "all", "all", "total", matrix, summary)
