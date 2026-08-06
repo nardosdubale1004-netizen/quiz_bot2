@@ -70,9 +70,34 @@ from src.rendering.html_views import (
     build_profile_settings_keyboard,
     build_leaderboard_text,
     build_leaderboard_keyboard,
-    build_geo_picker_keyboard,
+    build_entity_picker_text,
+    build_entity_picker_keyboard,
     format_public_name,
 )
+
+# from src.rendering.html_views import (
+#     build_profile_card_text,
+#     build_alliance_info_text,
+#     build_organization_card_text,
+#     build_help_menu_text,
+#     build_feedback_menu_text,
+#     build_help_menu_keyboard,
+#     build_help_topic_text,
+#     build_help_topic_keyboard,
+#     build_feedback_item_text,
+#     build_admin_dashboard_text,
+#     build_user_directory_text,
+#     build_user_feedback_list_text,
+#     build_feedback_thread_text,
+#     build_profile_main_keyboard,
+#     build_profile_settings_keyboard,
+#     build_leaderboard_text,
+#     build_leaderboard_keyboard,
+#     build_geo_picker_keyboard,
+#     format_public_name,
+# )
+
+
 from src.rendering.html_views import build_profile_card_text, build_alliance_info_text
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
@@ -1142,180 +1167,251 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Dashboard closed.")
         await query.delete_message()
         return
-    
+
     elif action == "menu_leaderboard":
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         if not profile or not profile.get("grade"):
             await query.answer("Please set your grade first via /start.", show_alert=True)
             return
         await query.answer()
-        rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
-        text = build_leaderboard_text("grade", rows, profile)
-        kb = build_leaderboard_keyboard("grade")
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
 
-    elif action == "lb_filter":
-        await query.answer()
-        scope = d_id
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        if scope == "grade":
-            active_grade = profile.get('grade') if profile else None
-            rows = await asyncio.to_thread(db_get_weekly_leaderboard, active_grade) if active_grade else []
-            text = build_leaderboard_text(scope, rows, profile)
-            kb = build_leaderboard_keyboard(scope, active_grade)
-        elif scope == "school":
-            rows = await asyncio.to_thread(db_get_alliance_leaderboard)
-            text = build_leaderboard_text(scope, rows, profile)
-            kb = build_leaderboard_keyboard(scope)
-        elif scope == "city":
-            from src.database import db_get_active_cities
-            cities = await asyncio.to_thread(db_get_active_cities, None)
-            text = "🌆 <b>PICK A CITY</b>"
-            kb = build_geo_picker_keyboard(cities, "city") if cities else build_leaderboard_keyboard(scope)
-        elif scope == "country":
-            from src.database import db_get_active_countries
-            countries = await asyncio.to_thread(db_get_active_countries)
-            text = "🌍 <b>PICK A COUNTRY</b>"
-            kb = build_geo_picker_keyboard(countries, "country") if countries else build_leaderboard_keyboard(scope)
-
-        elif scope == "country_overall":
-            from src.database import db_get_country_leaderboard
-            rows = await asyncio.to_thread(db_get_country_leaderboard)
-            text = build_leaderboard_text(scope, rows, profile)
-            kb = build_leaderboard_keyboard(scope)
-
-        elif scope == "school_branch":
-            from src.database import db_get_school_with_branches_leaderboard
-            schools_with_branches = await asyncio.to_thread(db_get_school_with_branches_leaderboard, 10)
-            text = _build_school_branch_leaderboard_text(schools_with_branches)
-            kb = build_leaderboard_keyboard(scope)
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-            return
-
-        else:  # city_overall
-            from src.database import db_get_city_leaderboard
-            rows = await asyncio.to_thread(db_get_city_leaderboard)
-            text = build_leaderboard_text(scope, rows, profile)
-            kb = build_leaderboard_keyboard(scope)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
-
-    elif action == "lb_grade":
-        await query.answer()
-        grade = int(d_id)
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        rows = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
-        text = build_leaderboard_text("grade", rows, profile, label_override=str(grade))
-        kb = build_leaderboard_keyboard("grade", grade)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
-
-    elif action == "lb_city_pick":
-        await query.answer()
-        from src.database import db_get_top_users_by_city
-        rows = await asyncio.to_thread(db_get_top_users_by_city, d_id)
-        text = build_leaderboard_text("city", rows, None, label_override=d_id)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 CITIES", callback_data="lb_filter|city")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
-
-    elif action == "lb_country_pick":
-        await query.answer()
-        from src.database import db_get_top_users_by_country
-        rows = await asyncio.to_thread(db_get_top_users_by_country, d_id)
-        text = build_leaderboard_text("country", rows, None, label_override=d_id)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 COUNTRIES", callback_data="lb_filter|country")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
-
-    elif action == "geo_country_list":
-        await query.answer()
-        offset = int(d_id)
-        from src.database import db_get_countries_ranked, db_count_countries_ranked
-        from src.rendering.html_views import build_geo_country_list_text, build_geo_country_list_keyboard
-        rows = await asyncio.to_thread(db_get_countries_ranked, 15, offset)
-        total = await asyncio.to_thread(db_count_countries_ranked)
-        text = build_geo_country_list_text(rows, offset, total)
-        kb = build_geo_country_list_keyboard(rows, offset, total)
+        from src.database import db_get_rank_matrix, db_get_scope_summary
+        matrix = await asyncio.to_thread(db_get_rank_matrix, "world", None, "all", "all", "all", "total", 10)
+        summary = await asyncio.to_thread(db_get_scope_summary, "world", None, "all")
+        text = build_leaderboard_text("world", None, "all", "all", "all", "total", matrix, summary)
+        kb = build_leaderboard_keyboard("world", None, "all", "all", "all", "total", "none", [], 0)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
     elif action == "wr":
         await query.answer()
+        parts = data[1:]
+        scope = parts[0] if len(parts) > 0 else "world"
+        entity = parts[1] if len(parts) > 1 and parts[1] != "_" else None
+        grade = parts[2] if len(parts) > 2 else "all"
+        subject = parts[3] if len(parts) > 3 else "all"
+        difficulty = parts[4] if len(parts) > 4 else "all"
+        mode = parts[5] if len(parts) > 5 else "total"
+        edit = parts[6] if len(parts) > 6 else "none"
+        soff = int(parts[7]) if len(parts) > 7 and parts[7].isdigit() else 0
+
+        from src.database import db_get_rank_matrix, db_get_scope_summary, db_get_all_subjects
+
+        matrix = await asyncio.to_thread(db_get_rank_matrix, scope, entity, grade, subject, difficulty, mode, 10)
+        summary = await asyncio.to_thread(db_get_scope_summary, scope, entity, grade)
+        subjects_list = await asyncio.to_thread(db_get_all_subjects) if edit == "subject" else []
+
+        text = build_leaderboard_text(scope, entity, grade, subject, difficulty, mode, matrix, summary)
+        kb = build_leaderboard_keyboard(scope, entity, grade, subject, difficulty, mode, edit, subjects_list, soff)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        return
+
+    elif action == "wr_pick":
+        await query.answer()
         scope = d_id
-        grade = data[2] if len(data) > 2 else "all"
+        parent = data[2] if len(data) > 2 and data[2] != "_" else None
+        offset = int(data[3]) if len(data) > 3 and data[3].isdigit() else 0
 
-        from src.database import db_get_rank_matrix, db_get_world_summary_counts
+        from src.database import db_get_entity_list
+        parent_for_query = parent if scope in ("city", "school") else None
+        items = await asyncio.to_thread(db_get_entity_list, scope, parent_for_query, 200)
 
-        grade_val = None if grade == "all" else int(grade)
-        matrix = await asyncio.to_thread(db_get_rank_matrix, scope, grade_val, 10)
-        summary = await asyncio.to_thread(db_get_world_summary_counts, grade_val)
-
-        text = build_world_rank_text(scope, grade, matrix, summary)
-        kb = build_world_rank_keyboard(scope, grade)
+        text = build_entity_picker_text(scope, parent)
+        back_scope = {"country": "world", "city": "country", "school": "city"}.get(scope, "world")
+        kb = build_entity_picker_keyboard(scope, parent, items, offset, back_scope)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
-    elif action == "geo_grade_list":
+    elif action == "wr_pick_go":
         await query.answer()
-        from src.database import db_get_grade_world_ranked
-        from src.rendering.html_views import build_geo_grade_list_text, build_geo_grade_list_keyboard
-        rows = await asyncio.to_thread(db_get_grade_world_ranked, 10, 0)
-        text = build_geo_grade_list_text(rows)
-        kb = build_geo_grade_list_keyboard(rows)
+        scope = d_id
+        entity = data[2]
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="Loading…", reply_markup=None
+        )
+        from src.database import db_get_rank_matrix, db_get_scope_summary
+        matrix = await asyncio.to_thread(db_get_rank_matrix, scope, entity, "all", "all", "all", "total", 10)
+        summary = await asyncio.to_thread(db_get_scope_summary, scope, entity, "all")
+        text = build_leaderboard_text(scope, entity, "all", "all", "all", "total", matrix, summary)
+        kb = build_leaderboard_keyboard(scope, entity, "all", "all", "all", "total", "none", [], 0)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
-    elif action == "geo_grade_detail":
-        await query.answer()
-        grade = int(d_id)
-        from src.database import db_get_grade_detail
-        from src.rendering.html_views import build_geo_grade_detail_text, build_geo_grade_detail_keyboard
-        detail = await asyncio.to_thread(db_get_grade_detail, grade)
-        text = build_geo_grade_detail_text(grade, detail)
-        kb = build_geo_grade_detail_keyboard()
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
+    
+    # elif action == "menu_leaderboard":
+        #     profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        #     if not profile or not profile.get("grade"):
+        #         await query.answer("Please set your grade first via /start.", show_alert=True)
+        #         return
+        #     await query.answer()
+        #     rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
+        #     text = build_leaderboard_text("grade", rows, profile)
+        #     kb = build_leaderboard_keyboard("grade")
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
 
-    elif action == "geo_country_detail":
-        await query.answer()
-        country = d_id
-        from src.database import db_get_country_detail
-        from src.rendering.html_views import build_geo_country_detail_text, build_geo_country_detail_keyboard
-        detail = await asyncio.to_thread(db_get_country_detail, country)
-        text = build_geo_country_detail_text(country, detail)
-        kb = build_geo_country_detail_keyboard(country, detail)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
+    # elif action == "lb_filter":
+        #     await query.answer()
+        #     scope = d_id
+        #     profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        #     if scope == "grade":
+        #         active_grade = profile.get('grade') if profile else None
+        #         rows = await asyncio.to_thread(db_get_weekly_leaderboard, active_grade) if active_grade else []
+        #         text = build_leaderboard_text(scope, rows, profile)
+        #         kb = build_leaderboard_keyboard(scope, active_grade)
+        #     elif scope == "school":
+        #         rows = await asyncio.to_thread(db_get_alliance_leaderboard)
+        #         text = build_leaderboard_text(scope, rows, profile)
+        #         kb = build_leaderboard_keyboard(scope)
+        #     elif scope == "city":
+        #         from src.database import db_get_active_cities
+        #         cities = await asyncio.to_thread(db_get_active_cities, None)
+        #         text = "🌆 <b>PICK A CITY</b>"
+        #         kb = build_geo_picker_keyboard(cities, "city") if cities else build_leaderboard_keyboard(scope)
+        #     elif scope == "country":
+        #         from src.database import db_get_active_countries
+        #         countries = await asyncio.to_thread(db_get_active_countries)
+        #         text = "🌍 <b>PICK A COUNTRY</b>"
+        #         kb = build_geo_picker_keyboard(countries, "country") if countries else build_leaderboard_keyboard(scope)
 
-    elif action == "geo_city_detail":
-        await query.answer()
-        city = d_id
-        country = data[2] if len(data) > 2 else None
-        from src.database import db_get_city_detail
-        from src.rendering.html_views import build_geo_city_detail_text, build_geo_city_detail_keyboard
-        detail = await asyncio.to_thread(db_get_city_detail, city, country)
-        text = build_geo_city_detail_text(city, country, detail)
-        kb = build_geo_city_detail_keyboard(city, country, detail)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
+        #     elif scope == "country_overall":
+        #         from src.database import db_get_country_leaderboard
+        #         rows = await asyncio.to_thread(db_get_country_leaderboard)
+        #         text = build_leaderboard_text(scope, rows, profile)
+        #         kb = build_leaderboard_keyboard(scope)
 
-    elif action == "geo_school_list":
-        await query.answer()
-        city = d_id
-        country = data[2] if len(data) > 2 else "all"
-        offset = int(data[3]) if len(data) > 3 else 0
-        city_arg = None if city == "all" else city
-        country_arg = None if country == "all" else country
-        from src.database import db_get_schools_ranked, db_count_schools_ranked
-        from src.rendering.html_views import build_geo_school_list_text, build_geo_school_list_keyboard
-        rows = await asyncio.to_thread(db_get_schools_ranked, city_arg, country_arg, 15, offset)
-        total = await asyncio.to_thread(db_count_schools_ranked, city_arg, country_arg)
-        text = build_geo_school_list_text(rows, city, country, offset, total)
-        kb = build_geo_school_list_keyboard(rows, city, country, offset, total)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-        return
+        #     elif scope == "school_branch":
+        #         from src.database import db_get_school_with_branches_leaderboard
+        #         schools_with_branches = await asyncio.to_thread(db_get_school_with_branches_leaderboard, 10)
+        #         text = _build_school_branch_leaderboard_text(schools_with_branches)
+        #         kb = build_leaderboard_keyboard(scope)
+        #         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #         return
+
+        #     else:  # city_overall
+        #         from src.database import db_get_city_leaderboard
+        #         rows = await asyncio.to_thread(db_get_city_leaderboard)
+        #         text = build_leaderboard_text(scope, rows, profile)
+        #         kb = build_leaderboard_keyboard(scope)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "lb_grade":
+        #     await query.answer()
+        #     grade = int(d_id)
+        #     profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        #     rows = await asyncio.to_thread(db_get_weekly_leaderboard, grade)
+        #     text = build_leaderboard_text("grade", rows, profile, label_override=str(grade))
+        #     kb = build_leaderboard_keyboard("grade", grade)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "lb_city_pick":
+        #     await query.answer()
+        #     from src.database import db_get_top_users_by_city
+        #     rows = await asyncio.to_thread(db_get_top_users_by_city, d_id)
+        #     text = build_leaderboard_text("city", rows, None, label_override=d_id)
+        #     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 CITIES", callback_data="lb_filter|city")]])
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "lb_country_pick":
+        #     await query.answer()
+        #     from src.database import db_get_top_users_by_country
+        #     rows = await asyncio.to_thread(db_get_top_users_by_country, d_id)
+        #     text = build_leaderboard_text("country", rows, None, label_override=d_id)
+        #     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 COUNTRIES", callback_data="lb_filter|country")]])
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "geo_country_list":
+        #     await query.answer()
+        #     offset = int(d_id)
+        #     from src.database import db_get_countries_ranked, db_count_countries_ranked
+        #     from src.rendering.html_views import build_geo_country_list_text, build_geo_country_list_keyboard
+        #     rows = await asyncio.to_thread(db_get_countries_ranked, 15, offset)
+        #     total = await asyncio.to_thread(db_count_countries_ranked)
+        #     text = build_geo_country_list_text(rows, offset, total)
+        #     kb = build_geo_country_list_keyboard(rows, offset, total)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "wr":
+        #     await query.answer()
+        #     scope = d_id
+        #     grade = data[2] if len(data) > 2 else "all"
+
+        #     from src.database import db_get_rank_matrix, db_get_world_summary_counts
+
+        #     grade_val = None if grade == "all" else int(grade)
+        #     matrix = await asyncio.to_thread(db_get_rank_matrix, scope, grade_val, 10)
+        #     summary = await asyncio.to_thread(db_get_world_summary_counts, grade_val)
+
+        #     text = build_world_rank_text(scope, grade, matrix, summary)
+        #     kb = build_world_rank_keyboard(scope, grade)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "geo_grade_list":
+        #     await query.answer()
+        #     from src.database import db_get_grade_world_ranked
+        #     from src.rendering.html_views import build_geo_grade_list_text, build_geo_grade_list_keyboard
+        #     rows = await asyncio.to_thread(db_get_grade_world_ranked, 10, 0)
+        #     text = build_geo_grade_list_text(rows)
+        #     kb = build_geo_grade_list_keyboard(rows)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "geo_grade_detail":
+        #     await query.answer()
+        #     grade = int(d_id)
+        #     from src.database import db_get_grade_detail
+        #     from src.rendering.html_views import build_geo_grade_detail_text, build_geo_grade_detail_keyboard
+        #     detail = await asyncio.to_thread(db_get_grade_detail, grade)
+        #     text = build_geo_grade_detail_text(grade, detail)
+        #     kb = build_geo_grade_detail_keyboard()
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "geo_country_detail":
+        #     await query.answer()
+        #     country = d_id
+        #     from src.database import db_get_country_detail
+        #     from src.rendering.html_views import build_geo_country_detail_text, build_geo_country_detail_keyboard
+        #     detail = await asyncio.to_thread(db_get_country_detail, country)
+        #     text = build_geo_country_detail_text(country, detail)
+        #     kb = build_geo_country_detail_keyboard(country, detail)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "geo_city_detail":
+        #     await query.answer()
+        #     city = d_id
+        #     country = data[2] if len(data) > 2 else None
+        #     from src.database import db_get_city_detail
+        #     from src.rendering.html_views import build_geo_city_detail_text, build_geo_city_detail_keyboard
+        #     detail = await asyncio.to_thread(db_get_city_detail, city, country)
+        #     text = build_geo_city_detail_text(city, country, detail)
+        #     kb = build_geo_city_detail_keyboard(city, country, detail)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
+
+    # elif action == "geo_school_list":
+        #     await query.answer()
+        #     city = d_id
+        #     country = data[2] if len(data) > 2 else "all"
+        #     offset = int(data[3]) if len(data) > 3 else 0
+        #     city_arg = None if city == "all" else city
+        #     country_arg = None if country == "all" else country
+        #     from src.database import db_get_schools_ranked, db_count_schools_ranked
+        #     from src.rendering.html_views import build_geo_school_list_text, build_geo_school_list_keyboard
+        #     rows = await asyncio.to_thread(db_get_schools_ranked, city_arg, country_arg, 15, offset)
+        #     total = await asyncio.to_thread(db_count_schools_ranked, city_arg, country_arg)
+        #     text = build_geo_school_list_text(rows, city, country, offset, total)
+        #     kb = build_geo_school_list_keyboard(rows, city, country, offset, total)
+        #     await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        #     return
 
     elif action == "menu_invite":
         await query.answer()

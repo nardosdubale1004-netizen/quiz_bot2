@@ -1016,23 +1016,42 @@ async def name_command(update: Update, context):
             nav_kb
         )
 
+# async def leaderboard_command(update: Update, context):
+    #     user = update.effective_user
+    #     user_id = user.id
+    #     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+    #     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
+
+    #     from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
+    #     profile = await asyncio.to_thread(db_get_user_profile, user_id)
+    #     if not profile or not profile.get("grade"):
+    #         await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Please register your grade first by typing /start.")
+    #         return
+
+    #     rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
+    #     text = build_leaderboard_text("grade", rows, profile)
+    #     kb = build_leaderboard_keyboard("grade", profile['grade'])
+    #     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
+
 async def leaderboard_command(update: Update, context):
     user = update.effective_user
     user_id = user.id
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
-    from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
     if not profile or not profile.get("grade"):
         await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Please register your grade first by typing /start.")
         return
 
-    rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
-    text = build_leaderboard_text("grade", rows, profile)
-    kb = build_leaderboard_keyboard("grade", profile['grade'])
+    from src.database import db_get_rank_matrix, db_get_scope_summary
+    from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
+    matrix = await asyncio.to_thread(db_get_rank_matrix, "world", None, "all", "all", "all", "total", 10)
+    summary = await asyncio.to_thread(db_get_scope_summary, "world", None, "all")
+    text = build_leaderboard_text("world", None, "all", "all", "all", "total", matrix, summary)
+    kb = build_leaderboard_keyboard("world", None, "all", "all", "all", "total", "none", [], 0)
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
-
+    
 async def invite_command(update: Update, context):
     """Generates the student's personal referral deep-link."""
     user = update.effective_user
