@@ -603,16 +603,32 @@ def build_profile_main_keyboard(has_team: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")]
     ])
 
-def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeyboardMarkup:
-    consent_label = "🔴 GO PRIVATE" if public_consent_granted else "🟢 GO PUBLIC"
-    consent_target = "0" if public_consent_granted else "1"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(consent_label, callback_data=f"toggle_consent|{consent_target}")],
-        [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
-         InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
-        [InlineKeyboardButton("📍 LOCATIONS & SCHOOL", callback_data="regloc_start|0")],
-        [InlineKeyboardButton("🔙 PROFILE", callback_data="privacy_menu|0")]
-    ])
+def build_location_status_text(profile: dict) -> str:
+    city = profile.get("personal_city")
+    country = profile.get("personal_country")
+    city_status = profile.get("personal_city_status") or "approved"
+    org_name = profile.get("org_name")
+    org_tag = profile.get("org_tag")
+
+    country_line = f"🌍 <b>Country:</b> {html.escape(country)}" if country else "🌍 <b>Country:</b> <i>Not set</i>"
+
+    if city:
+        note = " ⏳ <i>(pending approval)</i>" if city_status == "pending" else ""
+        city_line = f"🏙️ <b>City:</b> {html.escape(city)}{note}"
+    else:
+        city_line = "🏙️ <b>City:</b> <i>Not set</i>"
+
+    school_line = (
+        f"🏫 <b>School:</b> {html.escape(org_name)} <code>#{org_tag}</code>"
+        if org_name else
+        "🏫 <b>School:</b> <i>Not a student on any team yet</i>"
+    )
+
+    return (
+        "<h2>📍 LOCATIONS &amp; SCHOOL</h2>\n<hr/>\n"
+        f"{country_line}\n{city_line}\n{school_line}\n<hr/>\n"
+        "<i>Tap below to set or change any of these.</i>"
+    )
 
 def build_alliance_info_text() -> str:
     """Single explainer card: how to reference/join a team, how scoring works, and roles."""

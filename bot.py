@@ -1391,6 +1391,53 @@ async def handle_fsm_message(update: Update, context):
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid formal name.\n\n<i>Try again, or /cancel.</i>", local_cancel_kb)
                 return
 
+            if is_regloc:
+                # Schools and study-alliance TEAMS both live in `organizations`, but they're
+                # conceptually separate — a school just needs a name, and schools legitimately
+                # share common name fragments ("Noone Primary" vs "Noone High"). The fuzzy
+                # ILIKE "similar teams" check below is for TEAM creation only; a school only
+                # gets blocked on an EXACT name+city match (a genuine duplicate), never a
+                # partial one.
+                from src.database import db_search_schools, _generate_unique_org_tag
+                reg_city = session.get("reg_city")
+                reg_country = session.get("reg_country")
+                exact_candidates = await asyncio.to_thread(db_search_schools, clean_org_name, reg_city, reg_country, 5)
+                exact_hit = next((s for s in exact_candidates if s['org_name'].strip().lower() == clean_org_name.lower()), None)
+
+                if exact_hit:
+                    USER_STATES[user_id] = "IDLE"
+                    dup_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"🏫 USE {exact_hit['org_name']}", callback_data=f"regloc_school|{exact_hit['org_id']}")],
+                        [InlineKeyboardButton("🔙 BACK", callback_data=back_target)]
+                    ])
+                    await _fsm_advance(
+                        context, update.message.chat_id, edit_mid,
+                        (
+                            f"⚠️ <b>{html.escape(exact_hit['org_name'])}</b> is already registered in "
+                            f"{html.escape(reg_city or '')} — that's the same school, not a new one. "
+                            f"Tap below to use it instead."
+                        ),
+                        dup_kb
+                    )
+                    return
+
+                # Regloc-created schools never enter a tag — one is derived from the
+                # name automatically, and the user goes straight to the review screen.
+                auto_tag = await asyncio.to_thread(_generate_unique_org_tag, clean_org_name)
+                USER_PAYLOADS[user_id] = {
+                    **USER_PAYLOADS.get(user_id, {}),
+                    "org_name": clean_org_name,
+                    "org_tag": auto_tag,
+                    "reg_school_name": clean_org_name,
+                    "reg_school_is_new": True,
+                    "reg_school_org_id": None,
+                    "reg_new_org_tag": auto_tag,
+                }
+                USER_STATES[user_id] = "IDLE"
+                from src.callbacks import _regloc_show_review
+                await _regloc_show_review(context, update.message.chat_id, edit_mid, user_id)
+                return
+
             similar = await asyncio.to_thread(db_find_similar_organizations, clean_org_name)
             if similar:
                 USER_PAYLOADS[user_id] = {**USER_PAYLOADS.get(user_id, {}), "org_name": clean_org_name, "edit_mid": edit_mid}
@@ -1407,25 +1454,6 @@ async def handle_fsm_message(update: Update, context):
                 lines.append("\n<i>Joining an existing team keeps everyone's scores together instead of splitting them across duplicates.</i>")
 
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "\n".join(lines), InlineKeyboardMarkup(buttons))
-                return
-
-            if is_regloc:
-                # Regloc-created schools never enter a tag — one is derived from the
-                # name automatically, and the user goes straight to the review screen.
-                from src.database import _generate_unique_org_tag
-                auto_tag = await asyncio.to_thread(_generate_unique_org_tag, clean_org_name)
-                USER_PAYLOADS[user_id] = {
-                    **USER_PAYLOADS.get(user_id, {}),
-                    "org_name": clean_org_name,
-                    "org_tag": auto_tag,
-                    "reg_school_name": clean_org_name,
-                    "reg_school_is_new": True,
-                    "reg_school_org_id": None,
-                    "reg_new_org_tag": auto_tag,
-                }
-                USER_STATES[user_id] = "IDLE"
-                from src.callbacks import _regloc_show_review
-                await _regloc_show_review(context, update.message.chat_id, edit_mid, user_id)
                 return
 
             USER_PAYLOADS[user_id] = {**USER_PAYLOADS.get(user_id, {}), "org_name": clean_org_name}
@@ -1811,7 +1839,7 @@ async def handle_fsm_message(update: Update, context):
             results = await asyncio.to_thread(db_search_schools, text_input, session.get("reg_city"), session.get("reg_country"), 8)
             USER_STATES[user_id] = "IDLE"
             if results:
-                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🏫 <b>Results:</b>", _build_school_kb(results))
+                await _fsm_advance(context, update.message.chat_id, edit_mid, f"🏫 <b>Results:</b>", _build_school_kb(results, 0, len(results), session.get("reg_country")))
             else:
                 no_match_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("✨ CREATE NEW", callback_data="regloc_school_create|0")],

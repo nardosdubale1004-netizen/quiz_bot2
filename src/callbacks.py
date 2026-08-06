@@ -21,7 +21,7 @@ from src.database import (
     db_update_user_consent_state,
     db_leave_organization,
     db_join_organization,
-    db_join_organization_by_id as _dummy_unused,
+    db_join_organization_by_id,
     db_create_organization,
     db_get_organization_roster,
     db_get_user_organizations,
@@ -75,6 +75,7 @@ from src.rendering.html_views import (
     build_leaderboard_keyboard,
     build_entity_picker_text,
     build_entity_picker_keyboard,
+    build_location_status_text,
     format_public_name,
 )
 
@@ -146,7 +147,7 @@ def _build_country_index_kb() -> InlineKeyboardMarkup:
             rows.append(row); row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton("⏭ SKIP", callback_data="regloc_skip_all|0")])
+    rows.append([InlineKeyboardButton("🔙 BACK", callback_data="settings_menu|0")])
     return InlineKeyboardMarkup(rows)
 
 _WR_FAV_TYPE_FOR_PURPOSE = {"nav_country": "country", "nav_city": "city", "nav_school": "school"}
@@ -199,7 +200,7 @@ def _build_city_kb(cities: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def _build_school_kb(schools: list, offset: int = 0, total: int = None) -> InlineKeyboardMarkup:
+def _build_school_kb(schools: list, offset: int = 0, total: int = None, country: str = None) -> InlineKeyboardMarkup:
     total = total if total is not None else len(schools)
     rows = [[InlineKeyboardButton(f"🏫 {s['org_name']}", callback_data=f"regloc_school|{s['org_id']}")] for s in schools]
     nav_row = []
@@ -211,7 +212,13 @@ def _build_school_kb(schools: list, offset: int = 0, total: int = None) -> Inlin
         rows.append(nav_row)
     rows.append([InlineKeyboardButton("✨ REGISTER SCHOOL", callback_data="regloc_school_create|0")])
     rows.append([InlineKeyboardButton("🚫 NOT A STUDENT", callback_data="regloc_school_skip|0")])
+    back_cb = f"regloc_country|{country}" if country else "regloc_start|0"
+    rows.append([InlineKeyboardButton("🔙 BACK", callback_data=back_cb)])
     return InlineKeyboardMarkup(rows)
+
+
+def _school_kb_back_country(session: dict) -> str:
+    return session.get("reg_country") or ""
 
 
 async def _regloc_show_school_step(context, chat_id, message_id, user_id, offset: int = 0):
@@ -226,7 +233,8 @@ async def _regloc_show_school_step(context, chat_id, message_id, user_id, offset
     else:
         html_content = f"<h2>🏫 Schools in {html.escape(city or '')}</h2>\n\nNo schools on file yet — register yours below:"
 
-    kb = _build_school_kb(page, offset, len(all_schools))
+    new_str:
+    kb = _build_school_kb(page, offset, len(all_schools), country)
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
 
 async def _regloc_show_review(context, chat_id, message_id, user_id):
@@ -750,6 +758,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("🔙 BACK TO ALLIANCE PORTAL", callback_data="alliance_portal|0")
         ]])
         await query.edit_message_text(text, reply_markup=back_kb, parse_mode="HTML")
+        return
+
+    elif action == "loc_status_menu":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 SET / CHANGE LOCATION", callback_data="regloc_start|0")],
+            [InlineKeyboardButton("🔙 BACK TO SETTINGS", callback_data="settings_menu|0")]
+        ])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_location_status_text(profile), reply_markup=kb
+        )
         return
 
     elif action == "set_location_fsm":
