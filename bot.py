@@ -1772,7 +1772,7 @@ async def handle_fsm_message(update: Update, context):
             except Exception:
                 pass
 
-       elif state == "AWAITING_USER_LOCATION_REPLY":
+        elif state == "AWAITING_USER_LOCATION_REPLY":
             from src.database import db_add_location_suggestion_message, db_get_all_admin_ids, db_get_location_suggestion, db_get_location_suggestion_thread
             from src.rendering.html_views import build_location_suggestion_item_text
             sid = session.get("suggestion_id")
