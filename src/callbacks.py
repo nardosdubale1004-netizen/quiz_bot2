@@ -536,8 +536,26 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     if action == "set_grade":
         grade = int(d_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        # Grade no longer requires a school on file — it's a fully optional attribute
-        # anyone can set (student or not), purely for the challenge-bonus multiplier.
+
+        if not profile or not profile.get("org_id"):
+            # Grade is optional overall — city/country alone unlock answering — but
+            # the moment someone WANTS a grade, they're declaring themselves a student,
+            # and a student needs a school on file. This is the opposite of the "grade
+            # requires nothing" pass from earlier — that one over-corrected; the real
+            # rule is: no school → no grade, but no grade → still totally fine.
+            await query.answer()
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 REGISTER MY SCHOOL", callback_data="regloc_start|0")]])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=(
+                    "🎒 <b>Grade requires a school on file first</b>\n\n"
+                    "Grade only matters for registered students — if you're not currently "
+                    "a student, you simply don't need one and can skip this entirely.\n\n"
+                    "Register your school, then come back here."
+                ),
+                reply_markup=nav_kb
+            )
+            return
         previous_grade = profile.get("grade") if profile else None
 
         if previous_grade and grade < previous_grade:

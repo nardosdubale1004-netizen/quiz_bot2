@@ -45,10 +45,18 @@ BEGIN
         v_first_try := false;
         v_marks := v_existing_marks;
     ELSE
-        SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by,
-               us.personal_city, us.personal_country
-          INTO v_last_active, v_streak, v_user_grade, v_referrer_t1, v_city, v_country
+        SELECT us.last_active_at, COALESCE(us.current_streak, 0), us.grade, us.referred_by
+          INTO v_last_active, v_streak, v_user_grade, v_referrer_t1
           FROM user_stats us WHERE us.user_id = p_user_id;
+
+        -- THE FIX: this used to read us.personal_city/personal_country directly — stale
+        -- legacy columns that were never gated on approval status. A city sitting in
+        -- 'pending' review was earning full city/country leaderboard credit the entire
+        -- time. Now only an APPROVED user_locations row contributes geo credit; while
+        -- pending, v_city/v_country simply stay NULL and the two inserts below
+        -- (guarded by `IF v_city IS NOT NULL` / `IF v_country IS NOT NULL`) are skipped.
+        SELECT ul.city, ul.country INTO v_city, v_country
+          FROM user_locations ul WHERE ul.user_id = p_user_id AND ul.status = 'approved';
 
         IF v_last_active IS NULL THEN
             v_streak := 1;
@@ -3523,11 +3531,20 @@ def db_get_cities_for_country(country: str):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # THE FIX: was reading user_stats.personal_city/personal_country — a legacy pair of
+            # columns nobody writes to anymore, permanently stuck at their DEFAULT 'Addis Ababa'/
+            # 'Ethiopia' for every user row. That's why the picker kept surfacing the same default
+            # city regardless of what anyone actually registered. Now reads the real source of
+            # truth (user_locations) and — critically — only rows with status = 'approved', so a
+            # pending city can never appear as a selectable option for anyone else.
             cur.execute("""
                 SELECT DISTINCT city FROM (
-                    SELECT personal_city AS city FROM user_stats WHERE personal_country = %s AND personal_city IS NOT NULL
+                    SELECT l.city AS city FROM user_locations l
+                    WHERE l.country = %s AND l.city IS NOT NULL AND l.status = 'approved'
                     UNION
-                    SELECT city FROM organizations WHERE country = %s AND city IS NOT NULL
+                    SELECT o.city FROM organizations o
+                    WHERE o.country = %s AND o.city IS NOT NULL AND o.deleted_at IS NULL
+                      AND (o.status IS NULL OR o.status = 'approved')
                 ) t
                 WHERE city != ''
                 ORDER BY city ASC
@@ -4788,8 +4805,8 @@ def db_get_active_cities(country: str = None):
                     SELECT DISTINCT COALESCE(o.city, l.city) AS city
                     FROM user_stats u
                     LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                    LEFT JOIN organizations o ON m.org_id = o.org_id
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    LEFT JOIN organizations o ON m.org_id = o.org_id AND (o.status IS NULL OR o.status = 'approved')
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE COALESCE(o.country, l.country) = %s AND COALESCE(o.city, l.city) IS NOT NULL
                     ORDER BY city ASC
                     LIMIT 40;
@@ -4799,8 +4816,8 @@ def db_get_active_cities(country: str = None):
                     SELECT DISTINCT COALESCE(o.city, l.city) AS city
                     FROM user_stats u
                     LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                    LEFT JOIN organizations o ON m.org_id = o.org_id
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    LEFT JOIN organizations o ON m.org_id = o.org_id AND (o.status IS NULL OR o.status = 'approved')
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE COALESCE(o.city, l.city) IS NOT NULL
                     ORDER BY city ASC
                     LIMIT 40;

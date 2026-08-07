@@ -1735,45 +1735,70 @@ async def handle_fsm_message(update: Update, context):
             )
 
         elif state == "AWAITING_ADMIN_LOCATION_REPLY":
-            from src.database import db_add_location_suggestion_message
+            from src.database import db_add_location_suggestion_message, db_get_location_suggestion, db_get_location_suggestion_thread, db_get_user_timezone
+            from src.rendering.html_views import build_location_suggestion_item_text
             sid = session.get("suggestion_id")
             target_user_id = session.get("target_user_id")
             q_text = text_input[:500].strip()
             if not q_text:
                 return
             await asyncio.to_thread(db_add_location_suggestion_message, sid, "admin", user_id, q_text)
-            USER_STATES[user_id] = "IDLE"
-            USER_PAYLOADS.pop(user_id, None)
 
-            reply_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 REPLY", callback_data=f"loc_user_reply|{sid}")]])
+            # THE FIX: this used to drop straight to IDLE with a dead-end "sent" message —
+            # the admin had to re-tap "ASK USER" from the queue every single time to say
+            # anything else, and had no way to see the conversation so far without leaving
+            # this screen. Now it loops back into the same threaded item view (with the
+            # student's message and this one both visible, timestamped) and stays in the
+            # SAME reply state, so typing again just keeps the conversation going.
+            ls = await asyncio.to_thread(db_get_location_suggestion, sid)
+            thread = await asyncio.to_thread(db_get_location_suggestion_thread, sid)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            thread_text = build_location_suggestion_item_text(ls, thread, viewer_tz) if ls else "✅ Sent."
+
+            USER_PAYLOADS[user_id] = {"suggestion_id": sid, "target_user_id": target_user_id, "edit_mid": edit_mid}
+            reply_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 SEND ANOTHER MESSAGE", callback_data=f"loc_review_msg|{sid}")],
+                [InlineKeyboardButton("🔙 QUEUE", callback_data="loc_admin_browse|all|pending:0")]
+            ])
+            await _fsm_advance(context, update.message.chat_id, edit_mid, thread_text, reply_kb)
+
+            student_thread_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 REPLY", callback_data=f"loc_user_reply|{sid}")]])
             try:
                 await send_rich_message_safe(
                     context.bot, chat_id=int(target_user_id),
                     html_content=f"📍 <b>A question about your location:</b>\n\n<blockquote>{html.escape(q_text)}</blockquote>",
-                    reply_markup=reply_kb
+                    reply_markup=student_thread_kb
                 )
             except Exception:
                 pass
-            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
-            await _fsm_advance(context, update.message.chat_id, edit_mid, "✅ Question sent to the student.", nav_kb)
 
-        elif state == "AWAITING_USER_LOCATION_REPLY":
-            from src.database import db_add_location_suggestion_message, db_get_all_admin_ids
+       elif state == "AWAITING_USER_LOCATION_REPLY":
+            from src.database import db_add_location_suggestion_message, db_get_all_admin_ids, db_get_location_suggestion, db_get_location_suggestion_thread
+            from src.rendering.html_views import build_location_suggestion_item_text
             sid = session.get("suggestion_id")
             reply_text = text_input[:500].strip()
             if not reply_text:
                 return
             await asyncio.to_thread(db_add_location_suggestion_message, sid, "user", user_id, reply_text)
-            USER_STATES[user_id] = "IDLE"
-            USER_PAYLOADS.pop(user_id, None)
-            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
-            await _fsm_advance(context, update.message.chat_id, edit_mid, "✅ Reply sent to the admin team.", nav_kb)
+
+            # Same continuity fix as the admin side — loop back into the thread with a
+            # REPLY button instead of a dead end, so the student can keep the conversation
+            # going without re-navigating from their profile every time.
+            ls = await asyncio.to_thread(db_get_location_suggestion, sid)
+            thread = await asyncio.to_thread(db_get_location_suggestion_thread, sid)
+            thread_text = build_location_suggestion_item_text(ls, thread, "UTC") if ls else "✅ Sent."
+            USER_PAYLOADS[user_id] = {"suggestion_id": sid, "edit_mid": edit_mid}
+            reply_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 REPLY AGAIN", callback_data=f"loc_user_reply|{sid}")],
+                [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
+            ])
+            await _fsm_advance(context, update.message.chat_id, edit_mid, thread_text, reply_kb)
+
             admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
             for admin_id in admin_ids:
                 try:
                     review_kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
-                        InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+                        InlineKeyboardButton("💬 VIEW CONVERSATION", callback_data=f"loc_admin_item|{sid}|all:pending:0")
                     ]])
                     await context.bot.send_message(chat_id=int(admin_id), text=f"💬 <b>Student replied on suggestion #{sid}:</b>\n\n<blockquote>{html.escape(reply_text)}</blockquote>", parse_mode="HTML", reply_markup=review_kb)
                 except Exception:
