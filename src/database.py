@@ -2269,18 +2269,23 @@ def db_find_similar_organizations(name: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_organization_roster(org_id: int):
-    """Active roster only (pending/rejected are admin-only, via db_get_org_membership_log)."""
+    """Active roster only (pending/rejected are admin-only, via db_get_org_membership_log).
+    total_marks here is the member's CONTRIBUTION TO THIS TEAM specifically (from the ledger),
+    not their lifetime score — a student on 2 teams shows a different number on each roster,
+    split evenly between however many teams they're currently active on."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks,
+                SELECT u.user_id, u.nickname, u.username, u.first_name,
+                       COALESCE(c.marks, 0)::int AS total_marks,
                        m.org_role, m.joined_at, u.public_consent_granted
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
+                LEFT JOIN user_org_contributions c ON c.user_id = m.user_id AND c.org_id = m.org_id
                 WHERE m.org_id = %s AND m.org_role NOT IN ('pending', 'rejected', 'left')
-                ORDER BY u.total_marks DESC;
+                ORDER BY total_marks DESC;
             """, (int(org_id),))
             return cur.fetchall()
     except Exception as e:
@@ -3053,13 +3058,14 @@ def db_get_org_rank_summary(org_id: int):
                 return {"city_rank": None, "country_rank": None, "world_rank": None}
 
             def _rank(scope_clause, scope_params):
+                # Ranked by the ledger (user_org_contributions), which is frozen per-team —
+                # never by live u.total_marks, which would double-count a student on 2 teams.
                 cur.execute(f"""
                     WITH ranked AS (
-                        SELECT o.org_id, SUM(u.total_marks) AS total_score,
-                               RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS rnk
+                        SELECT o.org_id, SUM(c.marks) AS total_score,
+                               RANK() OVER (ORDER BY SUM(c.marks) DESC) AS rnk
                         FROM organizations o
-                        JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
-                        JOIN user_stats u ON m.user_id = u.user_id
+                        JOIN user_org_contributions c ON c.org_id = o.org_id
                         WHERE o.deleted_at IS NULL {scope_clause}
                         GROUP BY o.org_id
                     )
@@ -3079,6 +3085,26 @@ def db_get_org_rank_summary(org_id: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
+def db_get_org_contribution_total(org_id: int) -> int:
+    """The team's ledger total — frozen contributions from every member who ever earned marks
+    while active on this team, including ones who've since left (their marks stay counted here,
+    they just stop growing)."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(marks), 0)::int AS total FROM user_org_contributions WHERE org_id = %s;", (int(org_id),))
+            row = cur.fetchone()
+            return int(row['total']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] db_get_org_contribution_total: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_get_grade_world_ranked(limit: int = 10, offset: int = 0):
     """All registered grades, ranked by combined student marks — the entry list for the
     grade drill-down, mirroring db_get_countries_ranked."""
@@ -4671,6 +4697,18 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
             """, (grade_val, grade_val) + tuple(entity_params))
             summary = dict(cur.fetchone())
             summary["team_count"] = summary["school_count"]
+
+            # City/country totals come from the frozen ledger, not the live student sum —
+            # a student who's since moved elsewhere still counts here for what they earned
+            # while they were part of this place, and doesn't count toward it going forward.
+            if scope in ("country", "city") and entity:
+                geo_type = "country" if scope == "country" else "city"
+                cur.execute("""
+                    SELECT COALESCE(SUM(marks), 0) AS total FROM user_geo_contributions
+                    WHERE geo_type = %s AND geo_value = %s;
+                """, (geo_type, entity))
+                ledger_row = cur.fetchone()
+                summary["total_marks"] = int(ledger_row["total"]) if ledger_row else summary["total_marks"]
 
             summary["parent_ranks"] = {}
             if scope == "country" and entity:

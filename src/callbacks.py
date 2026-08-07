@@ -237,8 +237,10 @@ async def _regloc_show_school_step(context, chat_id, message_id, user_id, offset
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=html_content, reply_markup=kb)
 
 async def _regloc_show_review(context, chat_id, message_id, user_id):
-    """Final confirm screen — shows exactly what's about to be saved, flags anything that
-    will land as pending, and requires an explicit CONFIRM before anything is written."""
+    """Final confirm screen — shows exactly what's about to be saved, WITH a clear before → after
+    for anything that's actually changing, flags anything that will land as pending, warns about
+    what happens to old scores, and requires an explicit CONFIRM before anything is written."""
+    from src.database import db_get_user_profile
     session = USER_PAYLOADS.get(user_id, {})
     city = session.get("reg_city") or "Not set"
     country = session.get("reg_country") or "Not set"
@@ -246,22 +248,47 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
     school_name = session.get("reg_school_name")
     school_is_new = session.get("reg_school_is_new", False)
     school_org_id = session.get("reg_school_org_id")
+    leaving_school = session.get("reg_leave_school", False)
+
+    profile = await asyncio.to_thread(db_get_user_profile, user_id)
+    old_country = profile.get("personal_country") if profile else None
+    old_city = profile.get("personal_city") if profile else None
+    old_org_name = profile.get("org_name") if profile else None
 
     lines = ["📋 <b>REVIEW YOUR PROFILE SETUP</b>\n"]
-    lines.append(f"🌍 <b>Country:</b> {html.escape(country)}")
 
-    if city_is_new:
+    if old_country and old_country != country:
+        lines.append(f"🌍 <b>Country:</b> {html.escape(old_country)} → <b>{html.escape(country)}</b>")
+    else:
+        lines.append(f"🌍 <b>Country:</b> {html.escape(country)}")
+
+    if old_city and old_city != city:
+        pending_tag = " — ⏳ <i>pending admin approval</i>" if city_is_new else " — ✅ recognized"
+        lines.append(f"🏙️ <b>City:</b> {html.escape(old_city)} → <b>{html.escape(city)}</b>{pending_tag}")
+    elif city_is_new:
         lines.append(f"🏙️ <b>City:</b> {html.escape(city)} — ⏳ <i>pending admin approval</i>")
     else:
         lines.append(f"🏙️ <b>City:</b> {html.escape(city)} — ✅ recognized")
 
-    if school_name:
-        if school_is_new:
-            lines.append(f"🏫 <b>School:</b> {html.escape(school_name)} — ⏳ <i>pending admin approval</i>")
-        else:
-            lines.append(f"🏫 <b>School:</b> {html.escape(school_name)} — ✅ recognized")
+    if leaving_school and old_org_name:
+        lines.append(f"🏫 <b>School:</b> {html.escape(old_org_name)} → <b>Removed</b>")
+    elif school_name and old_org_name and school_name != old_org_name:
+        pending_tag = " — ⏳ <i>pending admin approval</i>" if school_is_new else " — ✅ recognized"
+        lines.append(f"🏫 <b>School:</b> {html.escape(old_org_name)} → <b>{html.escape(school_name)}</b>{pending_tag}")
+    elif school_name:
+        pending_tag = " — ⏳ <i>pending admin approval</i>" if school_is_new else " — ✅ recognized"
+        lines.append(f"🏫 <b>School:</b> {html.escape(school_name)}{pending_tag}")
     else:
         lines.append("🏫 <b>School:</b> <i>Not a student — you can add this anytime from 📍 LOCATIONS & SCHOOL</i>")
+
+    changing_something = (old_country and old_country != country) or (old_city and old_city != city) or leaving_school or (school_name and old_org_name and school_name != old_org_name)
+    if changing_something:
+        lines.append(
+            "\n<blockquote>📌 <b>Your marks always stay where you earned them.</b> Whatever you scored "
+            "under your old city/country/school stays credited there exactly as it is — it never moves. "
+            "From the moment you confirm, only your NEW correct answers count toward whatever's shown "
+            "above. Nothing about your personal total changes either way.</blockquote>"
+        )
 
     if city_is_new or school_is_new:
         lines.append(
@@ -281,9 +308,21 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
 
 async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str = None):
     """Actually commits the reviewed selections. Only ever called from the regloc_confirm branch."""
-    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids
+    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids, db_leave_organization
     session = USER_PAYLOADS.pop(user_id, {})
     USER_STATES[user_id] = "IDLE"
+
+    if session.get("reg_leave_school"):
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        old_org_id = profile.get("org_id") if profile else None
+        old_org_name = profile.get("org_name") if profile else None
+        if old_org_id:
+            await asyncio.to_thread(db_leave_organization, user_id, old_org_id)
+            school_msg = (
+                f"🚪 <b>Removed from {html.escape(old_org_name or 'your previous team')}.</b> "
+                f"Everything you earned there stays on that team's board."
+            )
+
     city, country = session.get("reg_city"), session.get("reg_country")
     city_is_new = session.get("reg_city_is_new", False)
     existing_sid = session.get("reg_city_suggestion_id")
@@ -301,7 +340,8 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
                 InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
                 InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
             ], [
-                InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"loc_review|{sid}|-1")
+                InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}"),
+                InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{sid}|-1")
             ]])
             for admin_id in admin_ids:
                 try:
@@ -898,8 +938,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "regloc_school_skip":
         await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
         USER_PAYLOADS.setdefault(user_id, {})
         USER_PAYLOADS[user_id]["reg_school_name"] = None
+        USER_PAYLOADS[user_id]["reg_school_org_id"] = None
+        USER_PAYLOADS[user_id]["reg_school_is_new"] = False
+        # If they already have a school and just picked "Not a student", that's an
+        # explicit removal — flagged here so the review screen shows it clearly and
+        # _regloc_finish actually acts on it (leaving the old team).
+        USER_PAYLOADS[user_id]["reg_leave_school"] = bool(profile and profile.get("org_id"))
         await _regloc_show_review(context, query.message.chat_id, query.message.message_id, user_id)
         return
 
@@ -976,7 +1023,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                     InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
                     InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
                 ], [
-                    InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"loc_review|{sid}|-1")
+                    InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}"),
+                    InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{sid}|-1")
                 ]])
                 for admin_id in admin_ids:
                     try:
@@ -1292,7 +1340,23 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
         sid, decision = int(d_id), data[2]
         if decision == "-1":
-            await query.answer("Left pending — no action taken.")
+            await query.answer("Left pending.")
+            from src.database import db_get_location_suggestions_list, db_count_location_suggestions
+            from src.rendering.html_views import build_location_suggestions_browse_list_text
+            items = await asyncio.to_thread(db_get_location_suggestions_list, "pending", "all", 6, 0)
+            total = await asyncio.to_thread(db_count_location_suggestions, "pending", "all")
+            text = build_location_suggestions_browse_list_text(items, "all", "pending", 0, total)
+            item_rows = [[InlineKeyboardButton(f"#{ls['id']} · {ls['name'][:26]}", callback_data=f"loc_admin_item|{ls['id']}|all:pending:0")] for ls in items]
+            nav_row = []
+            if total > 6:
+                nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data="loc_admin_browse|all|pending:6"))
+            if nav_row:
+                item_rows.append(nav_row)
+            item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+            try:
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+            except Exception:
+                await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
             return
         approve = (decision == "1")
         result = await asyncio.to_thread(db_resolve_location_suggestion, sid, user_id, approve)
@@ -1407,8 +1471,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"),
                 InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")
             ])
-            rows.append([InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"loc_review|{ls_id}|-1")])
-        rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+            rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+            rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
+        else:
+            rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
         rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
         return
