@@ -2333,8 +2333,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "process_req":
         org_id, target_user_id, decision = int(d_id), data[2], data[3]
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        if profile.get("org_role") not in ("creator", "admin") or int(profile.get("org_id") or 0) != org_id:
+        from src.database import db_get_user_org_role
+        actor_role = await asyncio.to_thread(db_get_user_org_role, user_id, org_id)
+        if actor_role not in ("creator", "admin"):
             await query.answer("Only team admins can process requests.", show_alert=True)
             return
 

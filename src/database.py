@@ -1160,7 +1160,7 @@ def db_get_alliance_leaderboard():
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
                 JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_role != 'pending'
+                WHERE m.state = 'active'
                 GROUP BY o.org_id, o.org_tag, o.org_name
                 ORDER BY total_score DESC
                 LIMIT 10;
@@ -2342,7 +2342,7 @@ def db_check_team_scope_eligibility(user_id, org_id: int) -> dict:
                 SELECT COALESCE(o.country, u.personal_country) AS country,
                        COALESCE(o.city, u.personal_city) AS city
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
                 WHERE u.user_id = %s
                 LIMIT 1;
@@ -2478,7 +2478,7 @@ def db_leave_organization(user_id, org_id: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 
 def db_get_user_organizations(user_id):
     """Retrieves all school teams a student is actively mapped to."""
@@ -2490,7 +2490,7 @@ def db_get_user_organizations(user_id):
                 SELECT o.*, m.org_role
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
-                WHERE m.user_id = %s AND o.deleted_at IS NULL AND m.org_role NOT IN ('rejected', 'left') AND o.org_type = 'Team';
+                WHERE m.user_id = %s AND o.deleted_at IS NULL AND m.state = 'active' AND o.org_type = 'Team';
             """, (str(user_id),))
             return cur.fetchall()
     except Exception as e:
@@ -2555,7 +2555,7 @@ def db_get_organization_roster(org_id: int):
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
                 LEFT JOIN user_org_contributions c ON c.user_id = m.user_id AND c.org_id = m.org_id
-                WHERE m.org_id = %s AND m.org_role NOT IN ('pending', 'rejected', 'left')
+                WHERE m.org_id = %s AND m.state = 'active'
                 ORDER BY total_marks DESC;
             """, (int(org_id),))
             return cur.fetchall()
@@ -2891,7 +2891,7 @@ def db_get_pending_org_requests(org_id: int):
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.total_marks
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_id = %s AND m.org_role = 'pending'
+                WHERE m.org_id = %s AND m.state = 'pending'
                 ORDER BY m.joined_at ASC;
             """, (int(org_id),))
             return cur.fetchall()
@@ -3036,7 +3036,7 @@ def db_get_world_summary_counts(grade: int = None):
                     COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS country_count,
                     COUNT(DISTINCT COALESCE(o.city, u.personal_city)) AS city_count
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
                 WHERE (%s::int IS NULL OR u.grade = %s);
             """, (grade, grade))
@@ -3045,7 +3045,7 @@ def db_get_world_summary_counts(grade: int = None):
             cur.execute("""
                 SELECT COUNT(DISTINCT o.org_id) AS school_count, COUNT(DISTINCT b.branch_id) AS team_count
                 FROM organizations o
-                LEFT JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
                 LEFT JOIN user_stats u ON m.user_id = u.user_id AND (%s::int IS NULL OR u.grade = %s)
                 LEFT JOIN school_branches b ON b.org_id = o.org_id AND b.deleted_at IS NULL
                 WHERE o.deleted_at IS NULL AND (%s::int IS NULL OR u.grade IS NOT NULL);
@@ -3089,7 +3089,7 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
             cur.execute(f"""
                 SELECT b.branch_name AS name, {agg}(u.total_marks)::int AS score
                 FROM school_branches b
-                JOIN org_memberships m ON m.branch_id = b.branch_id AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN org_memberships m ON m.branch_id = b.branch_id AND m.state = 'active'
                 JOIN user_stats u ON u.user_id = m.user_id
                 WHERE b.deleted_at IS NULL AND (%s::int IS NULL OR u.grade = %s)
                 GROUP BY b.branch_id, b.branch_name
@@ -3102,7 +3102,7 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
             cur.execute(f"""
                 SELECT o.org_name AS name, {agg}(u.total_marks)::int AS score
                 FROM organizations o
-                JOIN org_memberships m ON m.org_id = o.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                JOIN org_memberships m ON m.org_id = o.org_id AND m.state = 'active'
                 JOIN user_stats u ON u.user_id = m.user_id
                 WHERE o.deleted_at IS NULL AND (%s::int IS NULL OR u.grade = %s)
                 GROUP BY o.org_id, o.org_name
@@ -3115,7 +3115,7 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
             cur.execute(f"""
                 SELECT COALESCE(o.city, u.personal_city) AS name, {agg}(u.total_marks)::int AS score
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
                 WHERE COALESCE(o.city, u.personal_city) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
                 GROUP BY name
@@ -3128,7 +3128,7 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
             cur.execute(f"""
                 SELECT COALESCE(o.country, u.personal_country) AS name, {agg}(u.total_marks)::int AS score
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
                 WHERE COALESCE(o.country, u.personal_country) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
                 GROUP BY name
@@ -4666,7 +4666,7 @@ def db_get_org_admin_ids(org_id: int):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT user_id FROM org_memberships
-                WHERE org_id = %s AND org_role IN ('creator', 'admin');
+                WHERE org_id = %s AND org_role IN ('creator', 'admin') AND state = 'active';
             """, (int(org_id),))
             return [r['user_id'] for r in cur.fetchall()]
     except Exception as e:
@@ -4808,50 +4808,6 @@ def db_get_all_subjects():
             GLOBAL_ENGINE.release_connection(conn)
 
 
-# def db_get_rank_matrix(scope: str = "world", grade=None, limit: int = 10):
-#     """Unified matrix for World/Country/City/School — always SUM(total_marks), grade optional."""
-#     from src.rendering.html_views import format_public_name
-#     conn = None
-#     try:
-#         conn = GLOBAL_ENGINE.get_db_connection()
-#         with conn.cursor() as cur:
-#             grade_val = None if grade in (None, "all") else int(grade)
-
-#             cur.execute("""
-#                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks AS score
-#                 FROM user_stats u
-#                 WHERE (%s::int IS NULL OR u.grade = %s)
-#                 ORDER BY u.total_marks DESC LIMIT %s;
-#             """, (grade_val, grade_val, limit))
-#             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
-
-#             def _group(label_col, join_clause, require_org=False):
-#                 cur.execute(f"""
-#                     SELECT {label_col} AS name, SUM(u.total_marks)::int AS score
-#                     FROM user_stats u
-#                     {join_clause}
-#                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
-#                     GROUP BY name ORDER BY score DESC LIMIT %s;
-#                 """, (grade_val, grade_val, limit))
-#                 return [dict(r) for r in cur.fetchall()]
-
-#             org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
-#                         "LEFT JOIN organizations o ON m.org_id = o.org_id")
-#             org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
-#                        "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
-
-#             teams = _group("o.org_name", org_req)
-#             schools = _group("o.org_name", org_req)
-#             cities = _group("COALESCE(o.city, u.personal_city)", org_left)
-#             countries = _group("COALESCE(o.country, u.personal_country)", org_left)
-
-#             return {"students": students, "teams": teams, "schools": schools, "cities": cities, "countries": countries}
-#     except Exception as e:
-#         print(f"[DB ERROR] db_get_rank_matrix({scope}): {e}", flush=True)
-#         return {"students": [], "teams": [], "schools": [], "cities": [], "countries": []}
-#     finally:
-#         if conn:
-#             GLOBAL_ENGINE.release_connection(conn)
 def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, difficulty=None, mode="total", limit=10):
     """
     scope: world|country|city|school. entity: selected country/city name, or org_id (str) for school, or None.
@@ -4877,9 +4833,9 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 extra_params = [difficulty_val]
                 score_col = "dm.marks"
 
-            org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+            org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
                         "LEFT JOIN organizations o ON m.org_id = o.org_id")
-            org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+            org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
                        "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
 
             entity_clause, entity_params = "", []
@@ -4941,9 +4897,9 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             grade_val = None if grade in (None, "all") else int(grade)
-            org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+            org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
                         "LEFT JOIN organizations o ON m.org_id = o.org_id")
-            org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left') "
+            org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
                        "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
 
             entity_clause, entity_params, join_sql = "", [], org_left
@@ -4985,7 +4941,7 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
                 cur.execute("""
                     WITH ranked AS (SELECT COALESCE(o.country, u.personal_country) AS c, SUM(u.total_marks) AS s,
                         RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS r
-                        FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                        FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                         LEFT JOIN organizations o ON m.org_id=o.org_id WHERE COALESCE(o.country,u.personal_country) IS NOT NULL GROUP BY c)
                     SELECT r FROM ranked WHERE c = %s;
                 """, (entity,))
@@ -5019,7 +4975,7 @@ def db_get_entity_list(scope, parent_entity=None, limit=40):
             if scope == "country":
                 cur.execute("""
                     SELECT DISTINCT COALESCE(o.country, u.personal_country) AS name
-                    FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id=o.org_id
                     WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
                     ORDER BY name ASC LIMIT %s;
@@ -5027,7 +4983,7 @@ def db_get_entity_list(scope, parent_entity=None, limit=40):
             elif scope == "city":
                 cur.execute("""
                     SELECT DISTINCT COALESCE(o.city, u.personal_city) AS name
-                    FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id=o.org_id
                     WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
                     ORDER BY name ASC LIMIT %s;
@@ -5354,7 +5310,7 @@ def db_get_team_geo_ownership(org_id: int) -> dict:
                 JOIN organizations o ON o.org_id = m.org_id
                 LEFT JOIN school_branches b ON b.branch_id = m.branch_id
                 WHERE m.org_id = %s
-                  AND m.org_role NOT IN ('pending', 'rejected', 'left')
+                  AND m.state = 'active'
                   AND o.deleted_at IS NULL;
             """, (int(org_id),))
             rows = cur.fetchall()
@@ -5417,7 +5373,7 @@ def db_get_school_with_branches_leaderboard(limit: int = 10):
                        COUNT(DISTINCT m.user_id) AS member_count
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
-                  AND m.org_role NOT IN ('pending','rejected','left')
+                  AND m.state = 'active'
                 JOIN user_stats u ON m.user_id = u.user_id
                 WHERE o.deleted_at IS NULL
                 GROUP BY o.org_id, o.org_name, o.org_tag, o.city, o.country
@@ -5434,7 +5390,7 @@ def db_get_school_with_branches_leaderboard(limit: int = 10):
                            COUNT(DISTINCT m.user_id) AS member_count
                     FROM school_branches b
                     JOIN org_memberships m ON m.branch_id = b.branch_id
-                      AND m.org_role NOT IN ('pending','rejected','left')
+                      AND m.state = 'active'
                     JOIN user_stats u ON m.user_id = u.user_id
                     WHERE b.org_id = %s AND b.deleted_at IS NULL
                     GROUP BY b.branch_id, b.branch_name, b.city, b.country
@@ -5474,7 +5430,7 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                     JOIN user_stats u ON u.user_id = m.user_id
                     JOIN organizations o ON o.org_id = m.org_id
                     LEFT JOIN school_branches b ON b.branch_id = m.branch_id
-                    WHERE m.org_role NOT IN ('pending','rejected','left')
+                    WHERE m.state = 'active'
                       AND o.deleted_at IS NULL
                     GROUP BY m.org_id
                 ),
@@ -5492,7 +5448,7 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                     FROM team_geo tg
                     JOIN organizations o ON o.org_id = tg.org_id
                     JOIN org_memberships m ON m.org_id = tg.org_id
-                      AND m.org_role NOT IN ('pending','rejected','left')
+                      AND m.state = 'active'
                     JOIN user_stats u ON u.user_id = m.user_id
                     GROUP BY tg.org_id, o.org_name, o.org_tag,
                              tg.member_count, tg.solo_country, tg.solo_city,
@@ -5602,8 +5558,8 @@ def db_get_teams_affected_by_location_change(user_id, new_city: str = None, new_
                 SELECT o.org_id, o.org_name, o.org_tag, o.team_scope, o.scope_value
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
-                WHERE m.user_id = %s AND m.org_role NOT IN ('pending','rejected','left')
-                  AND o.team_scope IN ('country','city','school') AND o.deleted_at IS NULL;
+                WHERE m.user_id = %s AND m.state = 'active'
+                    AND o.team_scope IN ('country','city','school') AND o.deleted_at IS NULL;
             """, (str(user_id),))
             affected = []
             for r in cur.fetchall():
@@ -5671,7 +5627,7 @@ def db_get_user_rank_summary(user_id) -> dict:
             def _live_rank(where_clause, params):
                 cur.execute(f"""
                     WITH ranked AS (SELECT u.user_id, RANK() OVER (ORDER BY u.total_marks DESC) AS rnk
-                                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                                      LEFT JOIN organizations o ON m.org_id=o.org_id {where_clause})
                     SELECT rnk FROM ranked WHERE user_id = %s;
                 """, (*params, str(user_id)))
@@ -5685,7 +5641,7 @@ def db_get_user_rank_summary(user_id) -> dict:
             def _org_rank(org_type):
                 cur.execute("""
                     SELECT o.org_id FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
-                    WHERE m.user_id = %s AND m.org_role NOT IN ('pending','rejected','left') AND o.org_type = %s AND o.deleted_at IS NULL
+                    WHERE m.user_id = %s AND m.state = 'active' AND o.org_type = %s AND o.deleted_at IS NULL
                     ORDER BY m.joined_at DESC LIMIT 1;
                 """, (str(user_id), org_type))
                 org = cur.fetchone()
