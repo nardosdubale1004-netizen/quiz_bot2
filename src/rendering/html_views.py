@@ -549,18 +549,21 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
     )
 
 
-def build_profile_card_text(profile: dict, roster: list = None, subject_marks: list = None) -> str:
+def build_profile_card_text(profile: dict, roster: list = None, subject_marks: list = None, top_topic: dict = None, rank_summary: dict = None) -> str:
     name = format_public_name(profile)
-    grade = profile.get("grade") or "—"
+    has_school = bool(profile.get("org_id"))
+    grade_line = f"Grade {profile.get('grade')}" if (has_school and profile.get("grade")) else "Not a Student"
     marks = profile.get("total_marks", 0)
     streak = profile.get("current_streak", 0)
     total = profile.get("total", 0)
     correct = profile.get("correct", 0)
     accuracy = int((correct / total) * 100) if total > 0 else 0
+    avg_mark = round(marks / total, 1) if total > 0 else 0
     mastery = get_grade_mastery_title(marks)
     next_rank = get_next_rank_info(marks)
     visibility = "🟢 Public" if profile.get("public_consent_granted") else "🕵️ Private"
     city = profile.get("personal_city") or "Not set"
+    country = profile.get("personal_country") or "Not set"
 
     org_tag = profile.get("org_tag")
     org_name = profile.get("org_name")
@@ -581,18 +584,34 @@ def build_profile_card_text(profile: dict, roster: list = None, subject_marks: l
     if subject_marks:
         top = sorted(subject_marks, key=lambda s: s['marks'], reverse=True)[:2]
         names = [html.escape(str(s['subject']).title()) for s in top]
-        subj_line = f"\n📚 <b>Top:</b> {' · '.join(names)}"
+        subj_line = f"\n📚 <b>Top Subjects:</b> {' · '.join(names)}"
+
+    topic_line = f"\n🔎 <b>Most Answered Topic:</b> {html.escape(top_topic['topic'])} ({top_topic['cnt']}×)" if top_topic else ""
+
+    rank_block = ""
+    if rank_summary:
+        def _r(v): return f"#{v}" if v else "—"
+        rank_block = (
+            f"\n<hr/>\n<h3>🏆 Your Rank</h3>\n<table>"
+            f"<tr><td>🏰 Team</td><td>{_r(rank_summary.get('team_rank'))}</td></tr>"
+            f"<tr><td>🏫 School</td><td>{_r(rank_summary.get('school_rank'))}</td></tr>"
+            f"<tr><td>🌆 City</td><td>{_r(rank_summary.get('city_rank'))}</td></tr>"
+            f"<tr><td>🌍 Country</td><td>{_r(rank_summary.get('country_rank'))}</td></tr>"
+            f"<tr><td>🌐 World</td><td>{_r(rank_summary.get('world_rank'))}</td></tr>"
+            f"</table>"
+        )
 
     return (
-        f"👤 <b>{name}</b>  ·  Grade {grade}\n"
+        f"👤 <b>{name}</b>  ·  {grade_line}\n"
         f"{mastery}\n"
         f"<hr/>\n"
-        f"<b>{marks} Marks</b>  ·  🔥 {streak}d streak  ·  🎯 {accuracy}%\n"
-        f"<i>{next_rank}</i>{subj_line}\n"
+        f"<b>{marks} Marks</b>  ·  📈 Avg {avg_mark}/q  ·  🔥 {streak}d streak  ·  🎯 {accuracy}%\n"
+        f"<i>{next_rank}</i>{subj_line}{topic_line}\n"
         f"<hr/>\n"
-        f"{visibility}  ·  📍 {city}\n"
+        f"{visibility}  ·  📍 {city}, {country}\n"
         f"{school_line}\n"
         f"{team_line}"
+        f"{rank_block}"
     )
 
 

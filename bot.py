@@ -935,9 +935,11 @@ async def profile_command(update: Update, context):
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
 
     org_id = profile.get("org_id")
-    from src.database import db_get_user_subject_marks
+    from src.database import db_get_user_subject_marks, db_get_user_top_topic, db_get_user_rank_summary
     subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-    text = build_profile_card_text(profile, None, subject_marks)
+    top_topic = await asyncio.to_thread(db_get_user_top_topic, user_id)
+    rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
+    text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
     from src.rendering.html_views import build_profile_main_keyboard
     kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
@@ -1601,6 +1603,9 @@ async def handle_fsm_message(update: Update, context):
                 if team_scope != "open":
                     await asyncio.to_thread(db_create_dedicated_organization, org_name, org_tag, user_id, team_scope, scope_value, clean_desc, org_city, org_country)
                 else:
+                    # BUG FIX: was hardcoding org_type="School" for every open TEAM —
+                    # that's exactly why a newly created/joined team showed up in the
+                    # SCHOOL slot on the profile instead of the team slot.
                     from src.database import GLOBAL_ENGINE as _GE
                     new_org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "Team", True, org_city, org_country)
                     conn2 = _GE.get_db_connection()
@@ -1624,6 +1629,8 @@ async def handle_fsm_message(update: Update, context):
                     profile_nav_kb
                 )
             except Exception as e:
+                traceback.print_exc()
+                print(f"[TEAM-CREATE-ERROR] team_scope={team_scope}, org_tag={org_tag}: {e}", flush=True)
                 if "unique" in str(e).lower() or "duplicate" in str(e).lower():
                     await _fsm_advance(context, update.message.chat_id, edit_mid, f"⚠️ Error: <code>#{org_tag}</code> is already taken. Enter a unique tag:", cancel_kb)
                 else:

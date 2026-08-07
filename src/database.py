@@ -5468,3 +5468,123 @@ def db_remove_favorite(user_id, fav_type, fav_value) -> bool:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_teams_affected_by_location_change(user_id, new_city: str = None, new_country: str = None, new_school_name: str = None, leaving_school: bool = False) -> list:
+    """Every ACTIVE dedicated team (country/city/school scoped) this user is currently on that
+    they'd no longer be eligible for under the proposed new city/country/school. Open teams
+    are never affected."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT o.org_id, o.org_name, o.org_tag, o.team_scope, o.scope_value
+                FROM organizations o
+                JOIN org_memberships m ON o.org_id = m.org_id
+                WHERE m.user_id = %s AND m.org_role NOT IN ('pending','rejected','left')
+                  AND o.team_scope IN ('country','city','school') AND o.deleted_at IS NULL;
+            """, (str(user_id),))
+            affected = []
+            for r in cur.fetchall():
+                scope, sv = r['team_scope'], r['scope_value']
+                if scope == 'country' and sv != new_country:
+                    affected.append(r)
+                elif scope == 'city' and sv != new_city:
+                    affected.append(r)
+                elif scope == 'school' and (leaving_school or sv != new_school_name):
+                    affected.append(r)
+            return affected
+    except Exception as e:
+        print(f"[DB ERROR] db_get_teams_affected_by_location_change: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_clear_user_grade(user_id):
+    """No school → no grade (students-only phase). Called when a user goes 'Not a Student'."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE user_stats SET grade = NULL WHERE user_id = %s;", (str(user_id),))
+            conn.commit()
+            user_profile_cache.invalidate(f"profile:{user_id}")
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_clear_user_grade: {e}", flush=True)
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_user_top_topic(user_id):
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT q.topic, COUNT(*) AS cnt
+                FROM user_responses ur JOIN questions q ON q.id = ur.q_id
+                WHERE ur.user_id = %s
+                GROUP BY q.topic ORDER BY cnt DESC LIMIT 1;
+            """, (str(user_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"[DB ERROR] db_get_user_top_topic: {e}", flush=True)
+        return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_rank_summary(user_id) -> dict:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT personal_city, personal_country FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            p = cur.fetchone() or {}
+            city, country = p.get("personal_city"), p.get("personal_country")
+
+            def _live_rank(where_clause, params):
+                cur.execute(f"""
+                    WITH ranked AS (SELECT u.user_id, RANK() OVER (ORDER BY u.total_marks DESC) AS rnk
+                                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                                     LEFT JOIN organizations o ON m.org_id=o.org_id {where_clause})
+                    SELECT rnk FROM ranked WHERE user_id = %s;
+                """, (*params, str(user_id)))
+                r = cur.fetchone()
+                return r['rnk'] if r else None
+
+            world_rank = _live_rank("", ())
+            country_rank = _live_rank("WHERE COALESCE(o.country,u.personal_country) = %s", (country,)) if country else None
+            city_rank = _live_rank("WHERE COALESCE(o.city,u.personal_city) = %s", (city,)) if city else None
+
+            def _org_rank(org_type):
+                cur.execute("""
+                    SELECT o.org_id FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
+                    WHERE m.user_id = %s AND m.org_role NOT IN ('pending','rejected','left') AND o.org_type = %s AND o.deleted_at IS NULL
+                    ORDER BY m.joined_at DESC LIMIT 1;
+                """, (str(user_id), org_type))
+                org = cur.fetchone()
+                if not org:
+                    return None
+                cur.execute("""
+                    WITH ranked AS (SELECT c.user_id, RANK() OVER (ORDER BY c.marks DESC) AS rnk
+                                     FROM user_org_contributions c WHERE c.org_id = %s)
+                    SELECT rnk FROM ranked WHERE user_id = %s;
+                """, (org['org_id'], str(user_id)))
+                r = cur.fetchone()
+                return r['rnk'] if r else None
+
+            return {
+                "team_rank": _org_rank("Team"), "school_rank": _org_rank("School"),
+                "city_rank": city_rank, "country_rank": country_rank, "world_rank": world_rank,
+            }
+    except Exception as e:
+        print(f"[DB ERROR] db_get_user_rank_summary: {e}", flush=True)
+        return {"team_rank": None, "school_rank": None, "city_rank": None, "country_rank": None, "world_rank": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

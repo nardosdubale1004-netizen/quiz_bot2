@@ -281,6 +281,24 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
     else:
         lines.append("🏫 <b>School:</b> <i>Not a student — you can add this anytime from 📍 LOCATIONS & SCHOOL</i>")
 
+    from src.database import db_get_teams_affected_by_location_change
+    affected_teams = await asyncio.to_thread(
+        db_get_teams_affected_by_location_change, user_id,
+        new_city=None if city == "Not set" else city,
+        new_country=None if country == "Not set" else country,
+        new_school_name=None if leaving_school else school_name,
+        leaving_school=leaving_school
+    )
+    if affected_teams:
+        team_list = "\n".join(f"  • <b>{html.escape(t['org_name'])}</b> (#{t['org_tag']})" for t in affected_teams)
+        lines.append(
+            f"\n<blockquote>🔒 <b>You'll be removed from these dedicated teams</b> — they're "
+            f"restricted to your OLD city/country/school:\n{team_list}\n\n"
+            f"Everything you earned on them stays on their board exactly as it is; you just "
+            f"stop contributing going forward. Confirming below removes you automatically."
+            f"</blockquote>"
+        )
+
     changing_something = (old_country and old_country != country) or (old_city and old_city != city) or leaving_school or (school_name and old_org_name and school_name != old_org_name)
     if changing_something:
         lines.append(
@@ -308,11 +326,30 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
 
 async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str = None):
     """Actually commits the reviewed selections. Only ever called from the regloc_confirm branch."""
-    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids, db_leave_organization
+    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids, db_leave_organization, db_get_teams_affected_by_location_change, db_clear_user_grade
     session = USER_PAYLOADS.pop(user_id, {})
     USER_STATES[user_id] = "IDLE"
 
+    _city = session.get("reg_city")
+    _country = session.get("reg_country")
+    _school_name = session.get("reg_school_name")
+    _leaving_school = session.get("reg_leave_school", False)
+
+    removed_teams_msg = ""
+    affected = await asyncio.to_thread(
+        db_get_teams_affected_by_location_change, user_id,
+        new_city=_city, new_country=_country,
+        new_school_name=(None if _leaving_school else _school_name),
+        leaving_school=_leaving_school
+    )
+    for t in affected:
+        await asyncio.to_thread(db_leave_organization, user_id, t['org_id'])
+    if affected:
+        names = ", ".join(f"<b>{html.escape(t['org_name'])}</b>" for t in affected)
+        removed_teams_msg = f"\n\n🔒 <i>Removed from {names} — no longer matches your new location/school.</i>"
+
     if session.get("reg_leave_school"):
+        await asyncio.to_thread(db_clear_user_grade, user_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         old_org_id = profile.get("org_id") if profile else None
         old_org_name = profile.get("org_name") if profile else None
@@ -359,7 +396,8 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     await edit_rich_message_safe(
         context.bot, chat_id=chat_id, message_id=message_id,
         html_content=(
-            f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'} ({status_line})\n{school_msg or ''}\n\n"
+            f"✅ <b>Setup complete!</b>\n\n📍 {city or '—'}, {country or '—'} ({status_line})\n{school_msg or ''}"
+            f"{removed_teams_msg}\n\n"
             f"📌 <i>Your marks always stay with the city/country/school you earned them in — changing any of "
             f"these later never moves old marks, it just starts a fresh total on the new one.</i>"
         ),
@@ -468,6 +506,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     if action == "set_grade":
         grade = int(d_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
+
+        if not profile or not profile.get("org_id"):
+            await query.answer()
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 REGISTER MY SCHOOL", callback_data="regloc_start|0")]])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=(
+                    "🎒 <b>Grade requires a school on file first</b>\n\n"
+                    "Grade selection is only for registered students right now — if you're not "
+                    "currently a student, you simply don't need one.\n\n"
+                    "Register your school, then come back here."
+                ),
+                reply_markup=nav_kb
+            )
+            return
         previous_grade = profile.get("grade") if profile else None
 
         if previous_grade and grade < previous_grade:
@@ -535,8 +588,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         from src.database import db_set_last_utility_mid
         await asyncio.to_thread(db_set_last_utility_mid, user_id, query.message.message_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        from src.database import db_get_user_top_topic, db_get_user_rank_summary
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-        text = build_profile_card_text(profile, None, subject_marks)
+        top_topic = await asyncio.to_thread(db_get_user_top_topic, user_id)
+        rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
+        text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
