@@ -552,7 +552,9 @@ def build_tournament_announcement_text(meta: dict, remaining_delay: int = None) 
 def build_profile_card_text(profile: dict, roster: list = None, subject_marks: list = None, top_topic: dict = None, rank_summary: dict = None) -> str:
     name = format_public_name(profile)
     has_school = bool(profile.get("org_id"))
-    grade_line = f"Grade {profile.get('grade')}" if (has_school and profile.get("grade")) else "Not a Student"
+    # Grade is independent of school membership now — show it whenever it's set, regardless of
+    # whether the user is on a school team. "Not a Student" only means "no grade set."
+    grade_line = f"Grade {profile.get('grade')}" if profile.get("grade") else "Not a Student"
     marks = profile.get("total_marks", 0)
     streak = profile.get("current_streak", 0)
     total = profile.get("total", 0)
@@ -1832,11 +1834,11 @@ def build_leaderboard_text(scope, entity, grade, subject, difficulty, mode, matr
     lines.append(f"🏆 Cumulative: <b>{s.get('total_marks', 0):,}</b> · 📈 Average: <b>{int(s.get('avg_marks', 0))}</b>")
 
     stat_cols = {
-        "world": [("student_count", " Students 👨‍🎓  |"), ("team_count", " Teams 👥|"), ("school_count", " Schools 🏫 |"), ("city_count", "🏙"), ("country_count", " Country 🌍 |")],
-        "country": [("student_count", "Students 👨‍🎓 |"), ("team_count", " Teams 👥 |"), ("school_count", "Schools 🏫 |"), ("city_count", " City 🏙 |")],
-        "city": [("student_count", "Students 👨‍🎓 | "), ("team_count", " Teams 👥 |"), ("school_count", "Schools 🏫 |")],
-        "school": [("student_count", "Students 👨‍🎓 |"), ("team_count", " Teams 👥 |")],
-    }.get(scope, [("student_count", "Students 👨‍🎓 |")])
+        "world": [("student_count", "👨‍🎓"), ("team_count", "👥"), ("school_count", "🏫"), ("city_count", "🏙"), ("country_count", "🌍")],
+        "country": [("student_count", "👨‍🎓"), ("team_count", "👥"), ("school_count", "🏫"), ("city_count", "🏙")],
+        "city": [("student_count", "👨‍🎓"), ("team_count", "👥"), ("school_count", "🏫")],
+        "school": [("student_count", "👨‍🎓"), ("team_count", "👥")],
+    }.get(scope, [("student_count", "👨‍🎓")])
     lines.append("  ".join(f"{icon} <b>{s.get(key, 0):,}</b>" for key, icon in stat_cols))
     lines.append("<hr/>")
 
