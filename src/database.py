@@ -2639,22 +2639,24 @@ def db_get_organization_roster(org_id: int):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_org_membership_log(org_id: int, limit: int = 40):
-    """Full roster + request history: members, admins, pending, and rejected."""
+    """Full roster + request history: members, admins, pending, and rejected.
+    THE FIX: pending join requests live on m.state now, NOT m.org_role (org_role is only
+    ever 'creator'/'admin'/'member'). This query never selected state at all, so every
+    pending request was structurally invisible to build_org_history_text and org_history's
+    own filter — "approve later" had nothing to find."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted,
-                       u.total_marks, m.org_role, m.joined_at
+                       u.total_marks, m.org_role, m.state, m.joined_at
                 FROM org_memberships m
                 JOIN user_stats u ON m.user_id = u.user_id
-                WHERE m.org_id = %s
+                WHERE m.org_id = %s AND m.state != 'left'
                 ORDER BY
-                    CASE m.org_role
-                        WHEN 'creator' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2
-                        WHEN 'pending' THEN 3 ELSE 4
-                    END,
+                    CASE m.state WHEN 'pending' THEN 0 ELSE 1 END,
+                    CASE m.org_role WHEN 'creator' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
                     m.joined_at DESC
                 LIMIT %s;
             """, (int(org_id), limit))
@@ -4991,7 +4993,7 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 {extra_join}
                 {join_for_scope if entity_clause else ''}
                 LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
-                WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause}
+                WHERE (%s::int IS NULL OR u.grade = %s) AND {score_col} > 0 {entity_clause}
                 ORDER BY score DESC LIMIT %s;
             """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]

@@ -844,6 +844,9 @@ async def _start_command_inner(update: Update, context):
             msg = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
         elif join_data["role_assigned"] == "pending":
             msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
+            # THE FIX: this deep-link join path computed "pending" but never told any
+            # admin — the request just sat in the database with nobody notified.
+            await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
         else:
             msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
 
@@ -1553,10 +1556,28 @@ async def handle_fsm_message(update: Update, context):
                 )
                 return
 
+            # THE FIX: an "open" team is open to EVERYONE regardless of location — it never
+            # had any business asking for a city/country at all. Only a dedicated team
+            # (already returned above) needs one.
+            if USER_PAYLOADS[user_id].get("team_scope") == "open":
+                USER_PAYLOADS[user_id]["org_city"] = None
+                USER_PAYLOADS[user_id]["org_country"] = None
+                USER_STATES[user_id] = "AWAITING_ORG_DESCRIPTION"
+                vis_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🌐 OPEN (anyone can join instantly)", callback_data="team_visibility|1")],
+                    [InlineKeyboardButton("🔒 APPROVAL REQUIRED (review each request)", callback_data="team_visibility|0")]
+                ])
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
+                    "🎛️ <b>Who can join this team?</b>\n\n"
+                    "🌐 <b>Open</b> — anyone can join instantly, no approval needed.\n"
+                    "🔒 <b>Approval Required</b> — you (or your admins) approve each join request.",
+                    vis_kb
+                )
+                return
+
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
-            # THE FIX: this state is only ever reached by TEAM creation (schools always
-            # skip past it with a prefilled location), but the wording still said "school
-            # or academy" — this was the literal source of "it asks for school name."
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
                 (
@@ -1615,8 +1636,8 @@ async def handle_fsm_message(update: Update, context):
 
             org_name = USER_PAYLOADS[user_id]["org_name"]
             org_tag = USER_PAYLOADS[user_id]["org_tag"]
-            org_city = USER_PAYLOADS[user_id]["org_city"]
-            org_country = USER_PAYLOADS[user_id]["org_country"]
+            org_city = USER_PAYLOADS[user_id].get("org_city")
+            org_country = USER_PAYLOADS[user_id].get("org_country")
             team_scope = USER_PAYLOADS[user_id].get("team_scope", "open")
             scope_value = USER_PAYLOADS[user_id].get("scope_value")
             is_public_choice = USER_PAYLOADS[user_id].get("is_public", True)
@@ -1639,12 +1660,13 @@ async def handle_fsm_message(update: Update, context):
                 USER_PAYLOADS.pop(user_id, None)
                 visibility_line = "🌐 Open — anyone can join instantly" if is_public_choice else "🔒 Approval required to join"
                 scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value))}</b>\n{visibility_line}" if team_scope != "open" else visibility_line
+                location_line = f"📍 {org_city}, {org_country}\n" if org_city and org_country else "🌍 Open to everyone — no location restriction\n"
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
                     f"✅ <b>Team Registered!</b>\n\n"
                     f"✨ <b>{org_name}</b> <code>#{org_tag}</code>\n"
                     f"{scope_line}\n"
-                    f"📍 {org_city}, {org_country}\n\n"
+                    f"{location_line}\n"
                     f"Share your team's invite link (from the team page) so students can join directly.",
                     profile_nav_kb
                 )

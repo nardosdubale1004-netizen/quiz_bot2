@@ -1633,7 +1633,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         if not ls:
             await query.answer("Not found.", show_alert=True)
             return
-        await query.answer()
         try:
             thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
             viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
@@ -1654,12 +1653,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             if ls['kind'] == 'school' and ls.get('org_id'):
                 rows.append([InlineKeyboardButton("🏫 VIEW SCHOOL DETAILS", callback_data=f"view_org|{ls['org_id']}")])
             rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
-            # THE DIAGNOSTIC: if this returns None, Telegram silently rejected the edit
-            # as "not modified" — that IS the "not responding" symptom. Retry once with
-            # a zero-width marker to force distinct content through.
-            result = await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
-            if result is None:
-                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + "\n<i>​</i>", reply_markup=InlineKeyboardMarkup(rows))
+            import time as _t
+            nonce = f"\n<i>​{int(_t.time()*1000) % 100000}</i>"
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + nonce, reply_markup=InlineKeyboardMarkup(rows))
+            # Same double-answer bug as fb_item — was calling answer() up front AND
+            # again in the except, so a failure here was completely silent. This screen
+            # IS the dedicated admin↔student conversation page (full thread + REPLY,
+            # which loops back here via _fsm_advance) — it was just never rendering.
+            await query.answer()
         except Exception as item_err:
             traceback.print_exc()
             print(f"[LOC-ITEM-ERROR] ls_id={ls_id}: {item_err}", flush=True)
@@ -1982,6 +1983,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             text = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
         elif join_data["role_assigned"] == "pending":
             text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
+            await _notify_org_admins_pending_request(context, org_id, join_data['org_name'], query.from_user)
         else:
             text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=return_kb)
@@ -2197,21 +2199,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
-        await query.answer()
         try:
             stats = await asyncio.to_thread(db_get_feedback_stats)
             recent_by_status = await asyncio.to_thread(db_get_feedback_recent_by_status, 3)
             from src.rendering.html_views import build_feedback_kanban_text, build_feedback_kanban_keyboard
             text = build_feedback_kanban_text(stats, recent_by_status)
             kb = build_feedback_kanban_keyboard()
-            result = await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-            if result is None:
-                # THE DIAGNOSTIC: edit_rich_message_safe returns None silently when
-                # Telegram rejects the edit as "not modified" — that's the exact
-                # "nothing happens" symptom. Force it through by adding a hidden
-                # timestamp so the content is never byte-identical to what's showing.
-                import time as _t
-                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + f"\n<i>​</i>", reply_markup=kb)
+            import time as _t
+            nonce = f"\n<i>​{int(_t.time()*1000) % 100000}</i>"
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + nonce, reply_markup=kb)
+            # Same double-answer bug — this is the confirmed root cause behind
+            # "Kanban isn't even interactive." It IS its own message/page; it just
+            # never got to show you why it was failing.
+            await query.answer()
         except Exception as kanban_err:
             traceback.print_exc()
             print(f"[KANBAN-ERROR] {kanban_err}", flush=True)
@@ -2295,7 +2295,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
-        await query.answer()
         fb_id = int(d_id)
         return_state = data[2] if len(data) > 2 else None
         fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
@@ -2307,9 +2306,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
             kb = _build_feedback_detail_keyboard(fb_id, return_state)
             text = build_feedback_thread_text(fb, thread, viewer_tz)
-            result = await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
-            if result is None:
-                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + "\n<i>​</i>", reply_markup=kb)
+            import time as _t
+            nonce = f"\n<i>​{int(_t.time()*1000) % 100000}</i>"
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + nonce, reply_markup=kb)
+            # THE FIX: query.answer() was called ONCE up front, unconditionally, then
+            # AGAIN inside this except block on failure. Telegram rejects a second
+            # answer() on the same callback outright, which silently swallowed the exact
+            # error alert this code was trying to show — a real rendering failure here
+            # produced ZERO visible feedback. That is the entire "not responding" bug.
+            # Now answered exactly once, only after the work actually succeeds.
+            await query.answer()
         except Exception as fb_item_err:
             traceback.print_exc()
             print(f"[FB-ITEM-ERROR] fb_id={fb_id}: {fb_item_err}", flush=True)
@@ -2423,7 +2429,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
         text = build_org_history_text(org_details, log_rows, viewer_tz)
 
-        pending_rows = [r for r in log_rows if r['org_role'] == 'pending']
+        pending_rows = [r for r in log_rows if r.get('state') == 'pending']
         kb_rows = []
         for r in pending_rows[:8]:
             nm_short = format_public_name(r)[:16]

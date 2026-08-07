@@ -1383,15 +1383,18 @@ def build_org_history_text(org: dict, log_rows: list, viewer_tz: str = "UTC") ->
     from src.geo import format_local_time
     name = html.escape(org.get("org_name", "TEAM"))
     tag = org.get("org_tag", "")
-    role_icon = {"creator": "👑", "admin": "🛡️", "member": "👤", "pending": "📥", "rejected": "🚫"}
+    role_icon = {"creator": "👑", "admin": "🛡️", "member": "👤"}
 
-    active = [r for r in log_rows if r['org_role'] not in ("pending", "rejected")]
-    pending = [r for r in log_rows if r['org_role'] == "pending"]
+    # THE FIX: pending/active status lives on m.state, not m.org_role (org_role is only ever
+    # creator/admin/member). Splitting on org_role meant every pending request was silently
+    # sorted into "active roster," indistinguishable from a real member.
+    active = [r for r in log_rows if r.get('state') == 'active']
+    pending = [r for r in log_rows if r.get('state') == 'pending']
 
     def _table(rows):
         body = ["<tr><td><b>Scholar</b></td><td><b>Role</b></td><td><b>Since</b></td></tr>"]
         for r in rows:
-            icon = role_icon.get(r['org_role'], "•")
+            icon = role_icon.get(r['org_role'], "👤")
             when = format_local_time(r['joined_at'], viewer_tz, fmt="%b %d, %Y") if r.get('joined_at') else "—"
             body.append(f"<tr><td>{html.escape(format_public_name(r))}</td><td>{icon} {r['org_role'].title()}</td><td>{when}</td></tr>")
         return "<table>" + "".join(body) + "</table>"
