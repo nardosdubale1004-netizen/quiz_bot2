@@ -1584,10 +1584,18 @@ def db_get_user_profile(user_id):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT u.*,
-                       (SELECT o.org_name FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_name,
-                       (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_tag,
-                       (SELECT m.org_role FROM org_memberships m WHERE m.user_id = u.user_id LIMIT 1) AS org_role,
-                       (SELECT o.org_id FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id WHERE m.user_id = u.user_id LIMIT 1) AS org_id
+                   (SELECT o.org_name FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
+                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    ORDER BY m.joined_at DESC LIMIT 1) AS org_name,
+                   (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
+                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    ORDER BY m.joined_at DESC LIMIT 1) AS org_tag,
+                   (SELECT m.org_role FROM org_memberships m
+                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    ORDER BY m.joined_at DESC LIMIT 1) AS org_role,
+                   (SELECT o.org_id FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
+                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    ORDER BY m.joined_at DESC LIMIT 1) AS org_id
                 FROM user_stats u
                 WHERE u.user_id = %s;
             """, (str(user_id),))
@@ -2025,6 +2033,7 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(creator_id)))
 
             conn.commit()
+            user_profile_cache.invalidate(f"profile:{creator_id}")
             return org_id
     except Exception as e:
         if conn: conn.rollback()
@@ -2071,6 +2080,7 @@ def db_join_organization(user_id, org_tag: str) -> dict:
             """, (str(user_id), org_id, role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
             conn.commit()
+            user_profile_cache.invalidate(f"profile:{user_id}")
             return {"org_id": org_id, "org_name": org_name, "role_assigned": role, "creator_id": creator_id}
     except Exception as e:
         if conn: conn.rollback()
@@ -2135,6 +2145,7 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
             """, (str(user_id), int(org_id), role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
+            user_profile_cache.invalidate(f"profile:{user_id}")
             return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
     except Exception as e:
         if conn: conn.rollback()
@@ -2210,6 +2221,7 @@ def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: st
                 ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
             """, (str(creator_id), org_id))
             conn.commit()
+            user_profile_cache.invalidate(f"profile:{creator_id}")
             return org_id
     except Exception as e:
         if conn: conn.rollback()
@@ -2247,6 +2259,7 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
             """, (str(user_id), row["org_id"], role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
+            user_profile_cache.invalidate(f"profile:{user_id}")
             return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
     except Exception as e:
         if conn: conn.rollback()
@@ -2268,10 +2281,10 @@ def db_leave_organization(user_id, org_id: int):
             row = cur.fetchone()
             was_creator = bool(row and row['org_role'] == 'creator')
 
-            cur.execute(
-                "UPDATE org_memberships SET org_role = 'left', deleted_at = NOW() WHERE user_id = %s AND org_id = %s;",
+            cur.execute("UPDATE org_memberships SET org_role = 'left', deleted_at = NOW() WHERE user_id = %s AND org_id = %s;",
                 (str(user_id), int(org_id))
             )
+            user_profile_cache.invalidate(f"profile:{user_id}")
 
             promoted_id = None
             if was_creator:

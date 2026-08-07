@@ -1030,6 +1030,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reg_city = session.get("reg_city")
             reg_country = session.get("reg_country")
             try:
+                # Same fix as the "join existing school" branch above — creating a new
+                # school otherwise leaves the user in BOTH the old and new org, and the
+                # profile's un-ordered LIMIT-1 org lookup would keep showing whichever
+                # one it happened to grab (usually the OLD one) — this was the actual
+                # "school never changes" bug.
+                profile_before = await asyncio.to_thread(db_get_user_profile, user_id)
+                old_org_id = profile_before.get("org_id") if profile_before else None
+                if old_org_id:
+                    await asyncio.to_thread(db_leave_organization, user_id, old_org_id)
+
                 new_org_id = await asyncio.to_thread(
                     db_create_organization, school_name, org_tag, user_id,
                     "School", True, reg_city, reg_country, "pending"
