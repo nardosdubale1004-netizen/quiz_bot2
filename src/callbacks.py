@@ -2195,7 +2195,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "fb_kanban":
-        from src.database import db_is_admin, db_get_feedback_recent_by_status
+        from src.database import db_is_admin, db_get_feedback_recent_by_status, db_get_feedback_stats
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
@@ -2423,7 +2423,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Team not found.", reply_markup=return_kb)
             return
 
-        from src.database import db_get_org_membership_log, db_get_user_timezone
+        # THE FIX: db_get_user_timezone is already imported at the top of this file.
+        # Re-importing it locally HERE made Python treat it as a local variable for
+        # the ENTIRE _handle_callback_inner function (all elif branches share one
+        # scope) — so any other branch (loc_admin_item, fb_view, "My Feedback &
+        # Requests") that used it WITHOUT its own local import crashed with
+        # UnboundLocalError before this line ever ran. Removing the redundant import
+        # here restores the normal module-level reference everywhere.
+        from src.database import db_get_org_membership_log
         from src.rendering.html_views import build_org_history_text
         log_rows = await asyncio.to_thread(db_get_org_membership_log, org_id)
         viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
@@ -2451,6 +2458,37 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         if decision == "-1":
             await query.answer("Left pending — no action taken.")
+            # THE FIX: this used to just answer and abandon the message as-is — "does
+            # nothing" from the admin's perspective, with no way back to the request
+            # list. Now it redraws the same MEMBERS & REQUESTS screen (with this
+            # request still pending, still showing its own ✅/❌ buttons) so the admin
+            # can come back and approve/reject it later from the exact same place.
+            from src.database import db_get_org_membership_log, db_get_user_org_role
+            actor_role = await asyncio.to_thread(db_get_user_org_role, user_id, org_id)
+            if actor_role not in ("creator", "admin"):
+                return
+            conn = engine.get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM organizations WHERE org_id = %s;", (org_id,))
+                    org_details = cur.fetchone()
+            finally:
+                engine.release_connection(conn)
+            if not org_details:
+                return
+            from src.rendering.html_views import build_org_history_text
+            log_rows = await asyncio.to_thread(db_get_org_membership_log, org_id)
+            text = build_org_history_text(org_details, log_rows, "UTC")
+            pending_rows = [r for r in log_rows if r.get('state') == 'pending']
+            kb_rows = []
+            for r in pending_rows[:8]:
+                nm_short = format_public_name(r)[:16]
+                kb_rows.append([
+                    InlineKeyboardButton(f"✅ {nm_short}", callback_data=f"process_req|{org_id}|{r['user_id']}|1"),
+                    InlineKeyboardButton("❌", callback_data=f"process_req|{org_id}|{r['user_id']}|0")
+                ])
+            kb_rows.append([InlineKeyboardButton("🔙 TEAM", callback_data=f"view_org|{org_id}")])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(kb_rows))
             return
 
         approve = (decision == "1")

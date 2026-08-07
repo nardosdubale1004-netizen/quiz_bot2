@@ -5022,10 +5022,13 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 result["schools"] = _group("o.org_name", org_req, require_positive=True)
             if scope in ("world", "country", "city", "school"):
                 result["teams"] = _group("o.org_name", org_req, require_positive=True)
+            # THE FIX: cities/countries were the only groups still exempt from the
+            # require_positive filter — a city/country with SUM(marks) = 0 (e.g. every
+            # student there is still pending review, or has 0 marks) was still listed.
             if scope in ("world", "country"):
-                result["cities"] = _group("COALESCE(o.city, l.city)", org_left)
+                result["cities"] = _group("COALESCE(o.city, l.city)", org_left, require_positive=True)
             if scope == "world":
-                result["countries"] = _group("COALESCE(o.country, l.country)", org_left)
+                result["countries"] = _group("COALESCE(o.country, l.country)", org_left, require_positive=True)
 
             return result
     except Exception as e:
