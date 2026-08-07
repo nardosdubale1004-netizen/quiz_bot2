@@ -564,10 +564,17 @@ def build_profile_card_text(profile: dict, roster: list = None, subject_marks: l
 
     org_tag = profile.get("org_tag")
     org_name = profile.get("org_name")
-    team_line = (
+    school_line = (
         f"🏫 <b>{html.escape(org_name)}</b> <code>#{org_tag}</code>"
         if org_tag else
-        "🏫 <i>No team yet — tap MY TEAM to join or create one</i>"
+        "🏫 <i>No school set — 📍 Locations &amp; School to add one</i>"
+    )
+    team_tag = profile.get("team_tag")
+    team_name = profile.get("team_name")
+    team_line = (
+        f"🏰 <b>{html.escape(team_name)}</b> <code>#{team_tag}</code>"
+        if team_tag else
+        "🏰 <i>No team yet — tap 🏰 STUDY ALLIANCE to join or create one</i>"
     )
 
     subj_line = ""
@@ -584,6 +591,7 @@ def build_profile_card_text(profile: dict, roster: list = None, subject_marks: l
         f"<i>{next_rank}</i>{subj_line}\n"
         f"<hr/>\n"
         f"{visibility}  ·  📍 {city}\n"
+        f"{school_line}\n"
         f"{team_line}"
     )
 

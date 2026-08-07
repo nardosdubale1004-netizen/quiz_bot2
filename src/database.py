@@ -1574,6 +1574,10 @@ def db_set_user_grade(user_id, grade: int):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_user_profile(user_id):
+    """`org_id`/`org_name`/`org_tag`/`org_role` = the user's SCHOOL only (org_type='School').
+    `team_id`/`team_name`/`team_tag`/`team_role` = their most-recently-joined TEAM only
+    (org_type='Team'). These are two independent rows now — joining/leaving a team never
+    touches the school fields, and vice versa. Both exclude pending/rejected/left rows."""
     cache_key = f"profile:{user_id}"
     cached = user_profile_cache.get(cache_key)
     if cached is not None:
@@ -1583,26 +1587,35 @@ def db_get_user_profile(user_id):
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT u.*,
-                   (SELECT o.org_name FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
-                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                    ORDER BY m.joined_at DESC LIMIT 1) AS org_name,
-                   (SELECT o.org_tag FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
-                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                    ORDER BY m.joined_at DESC LIMIT 1) AS org_tag,
-                   (SELECT m.org_role FROM org_memberships m
-                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                    ORDER BY m.joined_at DESC LIMIT 1) AS org_role,
-                   (SELECT o.org_id FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
-                    WHERE m.user_id = u.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                    ORDER BY m.joined_at DESC LIMIT 1) AS org_id
-                FROM user_stats u
-                WHERE u.user_id = %s;
-            """, (str(user_id),))
+                        SELECT u.*,
+                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.org_role)
+                                FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
+                                WHERE m.user_id = u.user_id AND o.org_type = 'School' AND o.deleted_at IS NULL
+                                  AND m.org_role NOT IN ('pending','rejected','left')
+                                ORDER BY m.joined_at DESC LIMIT 1) AS school_info,
+                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.org_role)
+                                FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
+                                WHERE m.user_id = u.user_id AND o.org_type = 'Team' AND o.deleted_at IS NULL
+                                  AND m.org_role NOT IN ('pending','rejected','left')
+                                ORDER BY m.joined_at DESC LIMIT 1) AS team_info
+                        FROM user_stats u
+                        WHERE u.user_id = %s;
+                    """, (str(user_id),))
             row = cur.fetchone()
-            result = dict(row) if row else None
-            if result:
-                user_profile_cache.set(cache_key, result)
+            if not row:
+                return None
+            result = dict(row)
+            school_info = result.pop("school_info", None) or {}
+            team_info = result.pop("team_info", None) or {}
+            result["org_id"] = school_info.get("org_id")
+            result["org_name"] = school_info.get("org_name")
+            result["org_tag"] = school_info.get("org_tag")
+            result["org_role"] = school_info.get("org_role")
+            result["team_id"] = team_info.get("org_id")
+            result["team_name"] = team_info.get("org_name")
+            result["team_tag"] = team_info.get("org_tag")
+            result["team_role"] = team_info.get("org_role")
+            user_profile_cache.set(cache_key, result)
             return result
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch user profile: {e}")
@@ -2212,7 +2225,7 @@ def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: st
             cur.execute("""
                 INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country,
                                             join_token, team_scope, scope_value, description)
-                VALUES (%s, UPPER(%s), %s, 'School', TRUE, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, UPPER(%s), %s, 'Team', TRUE, %s, %s, %s, %s, %s, %s)
                 RETURNING org_id;
             """, (org_name, org_tag, str(creator_id), city, country, secrets.token_hex(16), team_scope, scope_value, description))
             org_id = cur.fetchone()['org_id']
@@ -2318,7 +2331,7 @@ def db_get_user_organizations(user_id):
                 SELECT o.*, m.org_role
                 FROM organizations o
                 JOIN org_memberships m ON o.org_id = m.org_id
-                WHERE m.user_id = %s AND o.deleted_at IS NULL AND m.org_role NOT IN ('rejected', 'left');
+                WHERE m.user_id = %s AND o.deleted_at IS NULL AND m.org_role NOT IN ('rejected', 'left') AND o.org_type = 'Team';
             """, (str(user_id),))
             return cur.fetchall()
     except Exception as e:
@@ -2356,7 +2369,7 @@ def db_find_similar_organizations(name: str):
             cur.execute("""
                 SELECT org_id, org_name, org_tag, city, country
                 FROM organizations
-                WHERE org_name ILIKE %s AND deleted_at IS NULL
+                WHERE org_name ILIKE %s AND deleted_at IS NULL AND org_type = 'Team'
                 LIMIT 5;
             """, (f"%{core}%",))
             return cur.fetchall()
@@ -3337,7 +3350,7 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            clauses, params = ["deleted_at IS NULL", "status = 'approved'"], []
+            clauses, params = ["deleted_at IS NULL", "status = 'approved'", "org_type = 'School'"], []
             if query:
                 clauses.append("org_name ILIKE %s")
                 params.append(f"%{query.strip()}%")

@@ -66,6 +66,7 @@ from src.database import (
     db_get_feedback_thread,
     db_get_bot_state,
     db_get_user_timezone,
+    db_create_dedicated_organization,
 )
 from src.rendering import get_grade_mastery_title, UIFactory, fetch_kroki_image
 from src.rendering.html_views import get_next_rank_info, format_public_name, build_profile_card_text, build_feedback_stats_text, build_feedback_item_text, build_user_feedback_list_text
@@ -938,7 +939,7 @@ async def profile_command(update: Update, context):
     subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
     text = build_profile_card_text(profile, None, subject_marks)
     from src.rendering.html_views import build_profile_main_keyboard
-    kb = build_profile_main_keyboard(has_team=bool(org_id))
+    kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 
 async def school_command(update: Update, context):
@@ -1601,7 +1602,7 @@ async def handle_fsm_message(update: Update, context):
                     await asyncio.to_thread(db_create_dedicated_organization, org_name, org_tag, user_id, team_scope, scope_value, clean_desc, org_city, org_country)
                 else:
                     from src.database import GLOBAL_ENGINE as _GE
-                    new_org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "School", True, org_city, org_country)
+                    new_org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "Team", True, org_city, org_country)
                     conn2 = _GE.get_db_connection()
                     try:
                         with conn2.cursor() as cur2:
