@@ -133,9 +133,9 @@ BEGIN
                 FROM org_memberships m
                 CROSS JOIN (
                     SELECT COUNT(*) AS active_count FROM org_memberships
-                    WHERE user_id = p_user_id AND org_role NOT IN ('pending','rejected','left')
+                    WHERE user_id = p_user_id AND state = 'active'
                 ) cnt
-                WHERE m.user_id = p_user_id AND m.org_role NOT IN ('pending','rejected','left')
+                WHERE m.user_id = p_user_id AND m.state = 'active'
                 ON CONFLICT (user_id, org_id) DO UPDATE SET marks = user_org_contributions.marks + EXCLUDED.marks;
 
                 IF v_city IS NOT NULL THEN
@@ -1642,12 +1642,12 @@ def db_get_user_profile(user_id):
         with conn.cursor() as cur:
             cur.execute("""
                         SELECT u.*,
-                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.role)
+                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.org_role)
                                 FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
                                 WHERE m.user_id = u.user_id AND o.org_type = 'School' AND o.deleted_at IS NULL
                                   AND m.state = 'active'
                                 ORDER BY m.joined_at DESC LIMIT 1) AS school_info,
-                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.role)
+                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.org_role)
                                 FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
                                 WHERE m.user_id = u.user_id AND o.org_type = 'Team' AND o.deleted_at IS NULL
                                   AND m.state = 'active'
@@ -2098,9 +2098,9 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
             org_id = cur.fetchone()['org_id']
 
             cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, 'creator')
-                ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
+                INSERT INTO org_memberships (user_id, org_id, org_role, state)
+                VALUES (%s, %s, 'creator', 'active')
+                ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role, state = 'active';
             """, (str(creator_id), org_id))
 
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(creator_id)))
@@ -2133,33 +2133,30 @@ def db_join_organization(user_id, org_tag: str) -> dict:
                 if not elig["eligible"]:
                     return {"scope_blocked": True, "reason": elig["reason"], "org_name": org_name}
 
-            cur.execute("SELECT org_role, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
+            cur.execute("SELECT org_role, state, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
             existing = cur.fetchone()
-            if existing and existing['org_role'] in ('creator', 'admin', 'member'):
+            if existing and existing['state'] == 'active':
                 return {"org_id": org_id, "org_name": org_name, "role_assigned": existing['org_role'], "creator_id": creator_id, "already_member": True}
-            if existing and existing['org_role'] == 'pending':
+            if existing and existing['state'] == 'pending':
                 return {
                     "org_id": org_id, "org_name": org_name, "role_assigned": "pending", "creator_id": creator_id,
                     "already_pending": True, "request_count": existing['request_count'], "last_requested_at": existing['last_requested_at']
                 }
 
-            role = "pending" if is_public else "member"
-            # BUG FIX: db_leave_organization sets org_role='left' — the old WHERE clause
-            # here only matched 'rejected', so re-joining anything you'd previously LEFT
-            # silently did nothing (conflict hit, UPDATE skipped, row stayed 'left'
-            # forever). That's the root cause of "switched school but it shows no school."
+            role = "member"
+            state = "pending" if is_public else "active"
             cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role, request_count, last_requested_at)
-                VALUES (%s, %s, %s, 1, NOW())
+                INSERT INTO org_memberships (user_id, org_id, org_role, state, request_count, last_requested_at)
+                VALUES (%s, %s, %s, %s, 1, NOW())
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW(), request_count = 1,
+                    org_role = EXCLUDED.org_role, state = EXCLUDED.state, joined_at = NOW(), request_count = 1,
                     last_requested_at = NOW(), deleted_at = NULL
-                WHERE org_memberships.org_role IN ('rejected', 'left');
-            """, (str(user_id), org_id, role))
+                WHERE org_memberships.state IN ('rejected', 'left');
+            """, (str(user_id), org_id, role, state))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
-            return {"org_id": org_id, "org_name": org_name, "role_assigned": role, "creator_id": creator_id}
+            return {"org_id": org_id, "org_name": org_name, "role_assigned": state, "creator_id": creator_id}
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Join failed: {e}", flush=True)
@@ -2176,7 +2173,7 @@ def db_resend_join_request(user_id, org_id: int) -> bool:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE org_memberships SET request_count = COALESCE(request_count, 1) + 1, last_requested_at = NOW()
-                WHERE user_id = %s AND org_id = %s AND org_role = 'pending';
+                WHERE user_id = %s AND org_id = %s AND state = 'pending';
             """, (str(user_id), int(org_id)))
             conn.commit()
             return cur.rowcount > 0
@@ -2203,27 +2200,25 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
                 if not elig["eligible"]:
                     return {"scope_blocked": True, "reason": elig["reason"], "org_name": row['org_name']}
 
-            cur.execute("SELECT org_role, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            cur.execute("SELECT org_role, state, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
             existing = cur.fetchone()
-            if existing and existing['org_role'] in ('creator', 'admin', 'member'):
+            if existing and existing['state'] == 'active':
                 return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": existing['org_role'], "creator_id": row['creator_id'], "already_member": True}
-            if existing and existing['org_role'] == 'pending':
+            if existing and existing['state'] == 'pending':
                 return {
                     "org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": "pending", "creator_id": row['creator_id'],
                     "already_pending": True, "request_count": existing['request_count'], "last_requested_at": existing['last_requested_at']
                 }
 
-            role = "pending" if row['is_public'] else "member"
-            # Same fix as db_join_organization — must also match 'left', not just
-            # 'rejected', or re-joining a school/team you'd previously switched away
-            # from silently fails and you end up with NO active school.
+            role = "member"
+            state = "pending" if row['is_public'] else "active"
             cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, %s)
+                INSERT INTO org_memberships (user_id, org_id, org_role, state)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW(), deleted_at = NULL
-                WHERE org_memberships.org_role IN ('rejected', 'left');
-            """, (str(user_id), int(org_id), role))
+                    org_role = EXCLUDED.org_role, state = EXCLUDED.state, joined_at = NOW(), deleted_at = NULL
+                WHERE org_memberships.state IN ('rejected', 'left');
+            """, (str(user_id), int(org_id), role, state))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
@@ -2298,8 +2293,8 @@ def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: st
             """, (org_name, org_tag, str(creator_id), city, country, secrets.token_hex(16), team_scope, scope_value, description))
             org_id = cur.fetchone()['org_id']
             cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role) VALUES (%s, %s, 'creator')
-                ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
+                INSERT INTO org_memberships (user_id, org_id, org_role, state) VALUES (%s, %s, 'creator', 'active')
+                ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role, state = 'active';
             """, (str(creator_id), org_id))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{creator_id}")
@@ -2323,22 +2318,22 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
             if not row:
                 return None
 
-            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), row['org_id']))
+            cur.execute("SELECT org_role, state FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), row['org_id']))
             existing = cur.fetchone()
-            if existing and existing['org_role'] in ('creator', 'admin', 'member'):
+            if existing and existing['state'] == 'active':
                 return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": existing['org_role'], "creator_id": row["creator_id"], "already_member": True}
-            if existing and existing['org_role'] == 'pending':
+            if existing and existing['state'] == 'pending':
                 return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": "pending", "creator_id": row["creator_id"], "already_pending": True}
 
-            role = "pending" if row["is_public"] else "member"
-            # Same fix as the other two join functions — must also match 'left'.
+            role = "member"
+            state = "pending" if row["is_public"] else "active"
             cur.execute("""
-                INSERT INTO org_memberships (user_id, org_id, org_role)
-                VALUES (%s, %s, %s)
+                INSERT INTO org_memberships (user_id, org_id, org_role, state)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW(), deleted_at = NULL
-                WHERE org_memberships.org_role IN ('rejected', 'left');
-            """, (str(user_id), row["org_id"], role))
+                    org_role = EXCLUDED.org_role, state = EXCLUDED.state, joined_at = NOW(), deleted_at = NULL
+                WHERE org_memberships.state IN ('rejected', 'left');
+            """, (str(user_id), row["org_id"], role, state))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
@@ -2359,21 +2354,21 @@ def db_leave_organization(user_id, org_id: int):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            cur.execute("SELECT org_role, state FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
             row = cur.fetchone()
-            was_creator = bool(row and row['org_role'] == 'creator')
+            was_creator = bool(row and row['org_role'] == 'creator' and row['state'] == 'active')
 
-            cur.execute("UPDATE org_memberships SET org_role = 'left', deleted_at = NOW() WHERE user_id = %s AND org_id = %s;",
+            cur.execute("UPDATE org_memberships SET state = 'left', deleted_at = NOW() WHERE user_id = %s AND org_id = %s;",
                 (str(user_id), int(org_id))
             )
             user_profile_cache.invalidate(f"profile:{user_id}")
 
             promoted_id = None
             if was_creator:
-                cur.execute("SELECT user_id FROM org_memberships WHERE org_id = %s AND org_role = 'admin' ORDER BY joined_at ASC LIMIT 1;", (int(org_id),))
+                cur.execute("SELECT user_id FROM org_memberships WHERE org_id = %s AND org_role = 'admin' AND state = 'active' ORDER BY joined_at ASC LIMIT 1;", (int(org_id),))
                 nxt = cur.fetchone()
                 if not nxt:
-                    cur.execute("SELECT user_id FROM org_memberships WHERE org_id = %s AND org_role = 'member' ORDER BY joined_at ASC LIMIT 1;", (int(org_id),))
+                    cur.execute("SELECT user_id FROM org_memberships WHERE org_id = %s AND org_role = 'member' AND state = 'active' ORDER BY joined_at ASC LIMIT 1;", (int(org_id),))
                     nxt = cur.fetchone()
                 if nxt:
                     promoted_id = nxt['user_id']
@@ -2389,6 +2384,8 @@ def db_leave_organization(user_id, org_id: int):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+            
 
 def db_get_user_organizations(user_id):
     """Retrieves all school teams a student is actively mapped to."""
@@ -2819,12 +2816,12 @@ def db_approve_member_request(user_id, org_id: int, approve: bool) -> bool:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            new_role = "member" if approve else "rejected"
+            new_state = "active" if approve else "rejected"
             cur.execute("""
                 UPDATE org_memberships
-                SET org_role = %s, joined_at = NOW()
+                SET org_role = 'member', state = %s, joined_at = NOW()
                 WHERE user_id = %s AND org_id = %s;
-            """, (new_role, str(user_id), int(org_id)))
+            """, (new_state, str(user_id), int(org_id)))
             conn.commit()
             return True
     except Exception as e:
