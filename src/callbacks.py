@@ -593,9 +593,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if not profile or not profile.get("grade"):
+            # Was missing entirely on this action — every other profile entry point
+            # (profile_popup, /profile) had this guard, this one didn't, which is why
+            # tapping 👤 PROFILE silently "did nothing" after a failed school setup:
+            # build_profile_card_text(None, ...) threw, caught by the outer wrapper.
+            setup_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎒 FINISH SETUP", callback_data="regloc_start|0")]])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content="🎒 You haven't finished setup yet — set your grade and location first.",
+                reply_markup=setup_kb
+            )
+            return
         from src.database import db_set_last_utility_mid
         await asyncio.to_thread(db_set_last_utility_mid, user_id, query.message.message_id)
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
         from src.database import db_get_user_top_topic, db_get_user_rank_summary
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         top_topic = await asyncio.to_thread(db_get_user_top_topic, user_id)
@@ -1095,12 +1107,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             org_tag = session.get("reg_new_org_tag")
             reg_city = session.get("reg_city")
             reg_country = session.get("reg_country")
+            new_org_id = None
+
+            # Step 1 — ONLY the actual org creation. If this fails, the school genuinely
+            # wasn't created and the error message below is now accurate. Logged with the
+            # real exception instead of being swallowed silently, so this is diagnosable
+            # from the next boot's logs instead of guessing.
             try:
-                # Same fix as the "join existing school" branch above — creating a new
-                # school otherwise leaves the user in BOTH the old and new org, and the
-                # profile's un-ordered LIMIT-1 org lookup would keep showing whichever
-                # one it happened to grab (usually the OLD one) — this was the actual
-                # "school never changes" bug.
                 profile_before = await asyncio.to_thread(db_get_user_profile, user_id)
                 old_org_id = profile_before.get("org_id") if profile_before else None
                 if old_org_id:
@@ -1110,28 +1123,46 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                     db_create_organization, school_name, org_tag, user_id,
                     "School", True, reg_city, reg_country, "pending"
                 )
-                sid = await asyncio.to_thread(db_create_location_suggestion, "school", school_name, reg_country, user_id, new_org_id)
-                admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
-                req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
-                review_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
-                    InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
-                ], [
-                    InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}"),
-                    InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{sid}|-1")
-                ]])
-                for admin_id in admin_ids:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=int(admin_id),
-                            text=f"🏫 <b>NEW SCHOOL SUGGESTION</b>\n\n<b>{req_name}</b> created <b>{html.escape(school_name)}</b> ({html.escape(reg_city or '')}, {html.escape(reg_country or '')}).",
-                            reply_markup=review_kb, parse_mode="HTML"
-                        )
-                    except Exception:
-                        pass
-                school_msg = f"🏫 <b>{html.escape(school_name)}</b> submitted for review — you'll be linked once approved."
-            except Exception:
-                school_msg = "⚠️ Could not create the new school team — please try again from 📍 LOCATIONS &amp; SCHOOL."
+            except Exception as e:
+                traceback.print_exc()
+                print(f"[REGLOC-SCHOOL-CREATE-ERROR] user={user_id} name={school_name!r} tag={org_tag!r} city={reg_city!r} country={reg_country!r}: {e}", flush=True)
+                school_msg = (
+                    f"⚠️ Could not create the new school team — please try again from 📍 LOCATIONS &amp; SCHOOL.\n"
+                    f"<code>{html.escape(str(e))[:150]}</code>"
+                )
+
+            # Step 2 — location suggestion + admin notify. Separated so a failure HERE
+            # (e.g. admin notify) never gets blamed on org creation, which succeeded.
+            if new_org_id:
+                try:
+                    sid = await asyncio.to_thread(db_create_location_suggestion, "school", school_name, reg_country, user_id, new_org_id)
+                    admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+                    req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
+                    review_kb = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
+                        InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+                    ], [
+                        InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}"),
+                        InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{sid}|-1")
+                    ]])
+                    for admin_id in admin_ids:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=int(admin_id),
+                                text=f"🏫 <b>NEW SCHOOL SUGGESTION</b>\n\n<b>{req_name}</b> created <b>{html.escape(school_name)}</b> ({html.escape(reg_city or '')}, {html.escape(reg_country or '')}).",
+                                reply_markup=review_kb, parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+                    school_msg = f"🏫 <b>{html.escape(school_name)}</b> submitted for review — you'll be linked once approved."
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f"[REGLOC-SCHOOL-NOTIFY-ERROR] org_id={new_org_id} created OK, but suggestion/notify failed: {e}", flush=True)
+                    school_msg = (
+                        f"✅ School created, but the review request failed to send — an admin can still "
+                        f"approve <code>{new_org_id}</code> manually.\n"
+                        f"<code>{html.escape(str(e))[:150]}</code>"
+                    )
 
         await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg=school_msg)
         return
