@@ -2278,9 +2278,11 @@ def db_join_organization(user_id, org_tag: str) -> dict:
                 }
 
             role = "member"
-            # THE FIX: schools always join active/instant — the is_public approval-gate
-            # only ever applies to Teams.
-            state = "active" if is_school else ("pending" if is_public else "active")
+            # THE FIX (finally correct direction): is_public=True means "🌐 OPEN — join instantly"
+            # per the team_visibility picker; is_public=False means "🔒 APPROVAL REQUIRED". The
+            # ternary here was backwards — Open teams were requiring approval and Approval-Required
+            # teams were joining instantly. This is the exact bug you reported.
+            state = "active" if is_school else ("active" if is_public else "pending")
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state, request_count, last_requested_at)
                 VALUES (%s, %s, %s, %s, 1, NOW())
@@ -2360,9 +2362,12 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
                 }
 
             role = "member"
-            # THE FIX: schools always join active/instant — the is_public approval-gate
-            # only ever applies to Teams. This one line was the entire root cause.
-            state = "active" if is_school else ("pending" if row['is_public'] else "active")
+            # THE ACTUAL FIX: the previous pass fixed schools correctly but got the
+            # Team direction backwards. is_public=True = "🌐 OPEN — join instantly" per
+            # the team_visibility picker; is_public=False = "🔒 APPROVAL REQUIRED". This
+            # is exactly why private/approval-required teams were letting anyone in
+            # instantly, and open teams were sitting in a pending queue no one checks.
+            state = "active" if is_school else ("active" if row['is_public'] else "pending")
             print(f"[DEBUG-SCHOOL-JOIN] user={user_id} org={org_id} org_type={row.get('org_type')} is_public={row['is_public']} -> state={state}", flush=True)
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state)
@@ -2486,7 +2491,7 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
                 return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": "pending", "creator_id": row["creator_id"], "already_pending": True}
 
             role = "member"
-            state = "active" if is_school else ("pending" if row["is_public"] else "active")
+            state = "active" if is_school else ("active" if row["is_public"] else "pending")
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state)
                 VALUES (%s, %s, %s, %s)
@@ -4992,16 +4997,19 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
 
             def _group(label_col, join_clause, require_positive=False):
-                # require_positive=True is the "a team/school must have earned at least 1
-                # mark to exist on the board" rule — a brand-new org, or one whose only
-                # members are still pending, is excluded rather than shown as a hollow 0.
+                # THE FIX: this HAVING clause never existed — every team/school with a
+                # SUM of exactly 0 marks (a brand-new one, or one whose members' marks
+                # net to zero) was still listed on the board. require_positive=True is
+                # only applied to teams/schools (per your "must have 1 mark" rule) —
+                # cities/countries stay unfiltered since a city legitimately can be 0
+                # and still be a meaningful "no one's scored here yet" entry.
                 having = f"HAVING {agg}({score_col}) > 0" if require_positive else ""
                 cur.execute(f"""
                     SELECT {label_col} AS name, {agg}({score_col})::int AS score
                     FROM user_stats u
                     {extra_join}
                     {join_clause}
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause}
                     GROUP BY name {having} ORDER BY score DESC LIMIT %s;
                 """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))

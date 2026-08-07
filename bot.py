@@ -1521,7 +1521,10 @@ async def handle_fsm_message(update: Update, context):
 
             prefilled_city = USER_PAYLOADS[user_id].get("org_city")
             prefilled_country = USER_PAYLOADS[user_id].get("org_country")
-            is_dedicated_creation = bool(USER_PAYLOADS[user_id].get("team_scope"))
+            # THE FIX: bool("open") is True in Python — a plain truthiness check treated
+            # "open" team creation the exact same as a genuinely dedicated (country/city/
+            # school-restricted) team. Must explicitly exclude "open".
+            is_dedicated_creation = bool(USER_PAYLOADS[user_id].get("team_scope")) and USER_PAYLOADS[user_id].get("team_scope") != "open"
 
             if prefilled_city and prefilled_country and not is_dedicated_creation:
                 org_name = USER_PAYLOADS[user_id]["org_name"]

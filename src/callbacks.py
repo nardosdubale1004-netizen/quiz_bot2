@@ -368,37 +368,54 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     existing_sid = session.get("reg_city_suggestion_id")
 
     location_write_ok = True
+    city_sid = None
     if city or country:
         if city_is_new and not existing_sid:
-            sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
-            location_write_ok = await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
+            city_sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
+            location_write_ok = await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, city_sid)
             if not location_write_ok:
-                print(f"[REGLOC-FINISH-ERROR] db_set_user_pending_city FAILED for user={user_id} city={city!r} country={country!r} sid={sid}", flush=True)
-
+                print(f"[REGLOC-FINISH-ERROR] db_set_user_pending_city FAILED for user={user_id} city={city!r} country={country!r} sid={city_sid}", flush=True)
             if school_sid:
-                await asyncio.to_thread(db_link_location_suggestions, sid, school_sid)
-
-            admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
-            req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
-            linked_note = "\n\n🔗 <i>A new school request from the same student is linked to this — approving or rejecting either one resolves both.</i>" if school_sid else ""
-            review_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
-                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
-            ], [
-                InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}"),
-                InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{sid}|-1")
-            ]])
-            for admin_id in admin_ids:
-                try:
-                    await context.bot.send_message(chat_id=int(admin_id),
-                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(city)}, {html.escape(country)}</b>.{linked_note}",
-                        reply_markup=review_kb, parse_mode="HTML")
-                except Exception:
-                    pass
+                await asyncio.to_thread(db_link_location_suggestions, city_sid, school_sid)
         elif not city_is_new:
             location_write_ok = await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
             if not location_write_ok:
                 print(f"[REGLOC-FINISH-ERROR] db_update_user_location FAILED for user={user_id} city={city!r} country={country!r}", flush=True)
+
+    # THE FIX ("must confirm both at the same time"): ONE combined admin message covering
+    # whatever is actually new THIS confirm — city only, school only, or both. Resolving via
+    # the first item's buttons cascades to the linked item automatically (db_resolve_location_
+    # suggestion already does this), so admin only ever taps once regardless of how many items
+    # are bundled. When only one of the two changed, pending_items naturally has just that one —
+    # so single-item submissions are still treated completely separately, as required.
+    pending_items = []
+    if city_sid:
+        pending_items.append(("📍", city_sid, f"{city}, {country}", "city"))
+    if school_sid:
+        pending_items.append(("🏫", school_sid, session.get("reg_school_name"), "school"))
+
+    if pending_items:
+        admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
+        req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
+        primary_sid = pending_items[0][1]
+        combo_note = "\n\n🔗 <i>Approving or rejecting below resolves everything above together.</i>" if len(pending_items) > 1 else ""
+        item_lines = "\n".join(f"{icon} <b>{html.escape(str(label))}</b>" for icon, _, label, _ in pending_items)
+        review_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{primary_sid}|1"),
+            InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{primary_sid}|0")
+        ], [
+            InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{primary_sid}"),
+            InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{primary_sid}|-1")
+        ]])
+        for admin_id in admin_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(admin_id),
+                    text=f"📥 <b>NEW REGISTRATION REQUEST</b>\n\n<b>{req_name}</b> submitted:\n{item_lines}{combo_note}",
+                    reply_markup=review_kb, parse_mode="HTML"
+                )
+            except Exception:
+                pass
 
     profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
 
@@ -1161,36 +1178,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
             if new_org_id:
                 try:
+                    # THE FIX: no longer sends its own admin message here. _regloc_finish
+                    # (called right after this) is now the SINGLE place that notifies
+                    # admins — it collects whatever is actually new this confirm (city,
+                    # school, or both) and sends exactly ONE combined message instead of
+                    # two separate ones. This is what "must confirm both at the same
+                    # time" needed.
                     school_sid = await asyncio.to_thread(db_create_location_suggestion, "school", school_name, reg_country, user_id, new_org_id)
-                    admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
-                    req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
-                    # THE FIX: if this same confirm ALSO submits a new city, note the link here —
-                    # _regloc_finish is what actually creates the city suggestion and links the two
-                    # together via db_link_location_suggestions.
-                    city_also_new = bool(session.get("reg_city_is_new") and not session.get("reg_city_suggestion_id"))
-                    linked_note = "\n\n🔗 <i>This student's city is also new and pending — linked, so approving or rejecting either resolves both.</i>" if city_also_new else ""
-                    review_kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{school_sid}|1"),
-                        InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{school_sid}|0")
-                    ], [
-                        InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{school_sid}"),
-                        InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{school_sid}|-1")
-                    ]])
-                    for admin_id in admin_ids:
-                        try:
-                            await context.bot.send_message(
-                                chat_id=int(admin_id),
-                                text=f"🏫 <b>NEW SCHOOL SUGGESTION</b>\n\n<b>{req_name}</b> created <b>{html.escape(school_name)}</b> ({html.escape(reg_city or '')}, {html.escape(reg_country or '')}).{linked_note}",
-                                reply_markup=review_kb, parse_mode="HTML"
-                            )
-                        except Exception:
-                            pass
                     school_msg = f"🏫 <b>{html.escape(school_name)}</b> submitted for review — you'll be linked once approved."
                 except Exception as e:
                     traceback.print_exc()
-                    print(f"[REGLOC-SCHOOL-NOTIFY-ERROR] org_id={new_org_id} created OK, but suggestion/notify failed: {e}", flush=True)
+                    print(f"[REGLOC-SCHOOL-NOTIFY-ERROR] org_id={new_org_id} created OK, but suggestion creation failed: {e}", flush=True)
                     school_msg = (
-                        f"✅ School created, but the review request failed to send — an admin can still "
+                        f"✅ School created, but the review request failed to save — an admin can still "
                         f"approve <code>{new_org_id}</code> manually.\n"
                         f"<code>{html.escape(str(e))[:150]}</code>"
                     )
@@ -1634,32 +1634,36 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Not found.", show_alert=True)
             return
         await query.answer()
-        thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
-        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        try:
+            thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
 
-        from src.rendering.html_views import build_location_suggestion_item_text
-        text = build_location_suggestion_item_text(ls, thread, viewer_tz)
+            from src.rendering.html_views import build_location_suggestion_item_text
+            text = build_location_suggestion_item_text(ls, thread, viewer_tz)
 
-        rows = []
-        if ls['status'] == 'pending':
-            rows.append([
-                InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"),
-                InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")
-            ])
-            rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
-            rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
-        else:
-            rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
-        # THE FIX: for a school-kind suggestion, there was previously no button that
-        # actually opened that school's real org card (roster, member count, invite
-        # link, dissolve) — this screen was a dead end for "communicate and see the
-        # overall details." view_org already exists and works fine for a pending
-        # school (the creator's membership is active from the moment they created it,
-        # regardless of the school's own approval status) — it just was never linked here.
-        if ls['kind'] == 'school' and ls.get('org_id'):
-            rows.append([InlineKeyboardButton("🏫 VIEW SCHOOL DETAILS", callback_data=f"view_org|{ls['org_id']}")])
-        rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
+            rows = []
+            if ls['status'] == 'pending':
+                rows.append([
+                    InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"),
+                    InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")
+                ])
+                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+                rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
+            else:
+                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+            if ls['kind'] == 'school' and ls.get('org_id'):
+                rows.append([InlineKeyboardButton("🏫 VIEW SCHOOL DETAILS", callback_data=f"view_org|{ls['org_id']}")])
+            rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
+            # THE DIAGNOSTIC: if this returns None, Telegram silently rejected the edit
+            # as "not modified" — that IS the "not responding" symptom. Retry once with
+            # a zero-width marker to force distinct content through.
+            result = await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
+            if result is None:
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + "\n<i>​</i>", reply_markup=InlineKeyboardMarkup(rows))
+        except Exception as item_err:
+            traceback.print_exc()
+            print(f"[LOC-ITEM-ERROR] ls_id={ls_id}: {item_err}", flush=True)
+            await query.answer(f"Error: {type(item_err).__name__}: {str(item_err)[:150]}", show_alert=True)
         return
 
     elif action == "fsm_create_org":
@@ -2194,12 +2198,24 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()
-        stats = await asyncio.to_thread(db_get_feedback_stats)
-        recent_by_status = await asyncio.to_thread(db_get_feedback_recent_by_status, 3)
-        from src.rendering.html_views import build_feedback_kanban_text, build_feedback_kanban_keyboard
-        text = build_feedback_kanban_text(stats, recent_by_status)
-        kb = build_feedback_kanban_keyboard()
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        try:
+            stats = await asyncio.to_thread(db_get_feedback_stats)
+            recent_by_status = await asyncio.to_thread(db_get_feedback_recent_by_status, 3)
+            from src.rendering.html_views import build_feedback_kanban_text, build_feedback_kanban_keyboard
+            text = build_feedback_kanban_text(stats, recent_by_status)
+            kb = build_feedback_kanban_keyboard()
+            result = await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            if result is None:
+                # THE DIAGNOSTIC: edit_rich_message_safe returns None silently when
+                # Telegram rejects the edit as "not modified" — that's the exact
+                # "nothing happens" symptom. Force it through by adding a hidden
+                # timestamp so the content is never byte-identical to what's showing.
+                import time as _t
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + f"\n<i>​</i>", reply_markup=kb)
+        except Exception as kanban_err:
+            traceback.print_exc()
+            print(f"[KANBAN-ERROR] {kanban_err}", flush=True)
+            await query.answer(f"Kanban error: {type(kanban_err).__name__}: {str(kanban_err)[:150]}", show_alert=True)
         return
 
     elif action == "admin_users":
@@ -2286,10 +2302,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         if not fb:
             await query.answer("Not found.", show_alert=True)
             return
-        thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
-        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
-        kb = _build_feedback_detail_keyboard(fb_id, return_state)
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb)
+        try:
+            thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            kb = _build_feedback_detail_keyboard(fb_id, return_state)
+            text = build_feedback_thread_text(fb, thread, viewer_tz)
+            result = await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            if result is None:
+                await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text + "\n<i>​</i>", reply_markup=kb)
+        except Exception as fb_item_err:
+            traceback.print_exc()
+            print(f"[FB-ITEM-ERROR] fb_id={fb_id}: {fb_item_err}", flush=True)
+            await query.answer(f"Error: {type(fb_item_err).__name__}: {str(fb_item_err)[:150]}", show_alert=True)
         return
 
     elif action == "fb_view":
