@@ -556,7 +556,6 @@ class QuizEngine:
                 cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS request_count INT DEFAULT 1;")
                 cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS last_requested_at TIMESTAMPTZ DEFAULT NOW();")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
-                cur.execute("ALTER TABLE channel_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
                 cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
                 # One-time backfill: earliest send per question becomes its first_shown_at
                 cur.execute("""
@@ -595,6 +594,9 @@ class QuizEngine:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+                # Moved here from earlier in the function — must run AFTER the CREATE
+                # TABLE directly above it, never before.
+                cur.execute("ALTER TABLE channel_campaigns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status VARCHAR(15) DEFAULT 'approved';")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS personal_city_status VARCHAR(15) DEFAULT 'approved';")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS pending_city_suggestion_id INT;")

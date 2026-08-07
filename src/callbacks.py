@@ -621,7 +621,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         if not profile or not profile.get("grade"):
-            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎒 SET UP MY PROFILE", callback_data="regloc_start_new|0")]])
+            # "regloc_start_new" matched no handler at all — every tap silently fell
+            # through to the bottom-of-function fallback, which crashed on a None
+            # profile ("Something went wrong"). "regloc_start" is the real handler.
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎒 SET UP MY PROFILE", callback_data="regloc_start|0")]])
             await _open_utility_view(
                 context, user_id, query.message.chat_id,
                 "🎒 You haven't finished setup yet. Type /start to register your grade first.",
