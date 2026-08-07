@@ -648,6 +648,7 @@ class QuizEngine:
                         resolved_at TIMESTAMPTZ
                     );
                 """)
+                cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS linked_suggestion_id INT;")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS location_suggestion_messages (
                         id SERIAL PRIMARY KEY,
@@ -2432,7 +2433,8 @@ def db_check_team_scope_eligibility(user_id, org_id: int) -> dict:
 
 
 def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: str, team_scope: str,
-                                      scope_value: str, description: str, city: str, country: str) -> int:
+                                      scope_value: str, description: str, city: str, country: str,
+                                      is_public: bool = True) -> int:
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -2440,9 +2442,9 @@ def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: st
             cur.execute("""
                 INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country,
                                             join_token, team_scope, scope_value, description)
-                VALUES (%s, UPPER(%s), %s, 'Team', TRUE, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, UPPER(%s), %s, 'Team', %s, %s, %s, %s, %s, %s, %s)
                 RETURNING org_id;
-            """, (org_name, org_tag, str(creator_id), city, country, secrets.token_hex(16), team_scope, scope_value, description))
+            """, (org_name, org_tag, str(creator_id), bool(is_public), city, country, secrets.token_hex(16), team_scope, scope_value, description))
             org_id = cur.fetchone()['org_id']
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state) VALUES (%s, %s, 'creator', 'active')
@@ -3974,7 +3976,11 @@ def db_get_admin_dashboard_stats():
 
 
 def db_get_recent_users(limit: int = 15, offset: int = 0):
-    """Retrieves the most recently active users with key profile details for the admin dashboard."""
+    """Admin directory listing. Sorted by user_id (never changes) instead of last_active_at —
+    sorting a paginated OFFSET query by a column that updates on every answered question meant
+    the page window shifted under you as other students answered in real time between page
+    loads, which is exactly what caused the same user to reappear on a later page.
+    last_active_at is still shown as a column, it's just no longer the sort key."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -3989,7 +3995,7 @@ def db_get_recent_users(limit: int = 15, offset: int = 0):
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
                 LEFT JOIN user_locations l ON l.user_id = u.user_id
-                ORDER BY u.last_active_at DESC NULLS LAST, u.user_id ASC
+                ORDER BY u.user_id ASC
                 LIMIT %s OFFSET %s;
             """, (limit, offset))
             return cur.fetchall()
@@ -4381,17 +4387,16 @@ def db_get_pending_location_suggestions(kind: str = None, limit: int = 20):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) -> dict:
+def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool, _cascade: bool = True) -> dict:
     """Approves or rejects a city/school suggestion.
 
-    Reject (city): the city is REMOVED from the profile entirely (city/country/status/pending-id
-    all cleared) so db_user_location_complete() re-triggers and blocks new answers until they
-    register again — never left half-set with a rejected value silently lingering.
+    Reject (city): the city is REMOVED from the profile entirely so db_user_location_complete()
+    re-triggers and blocks new answers until the student registers again.
+    Reject (school): the requesting student is removed from that org and the org is soft-deleted.
 
-    Reject (school): the requesting student is removed from that org and the org itself is
-    soft-deleted — it only ever existed for this one pending review and was never a real,
-    approved team — so the student is back to "not a student" and free to try again.
-    """
+    _cascade (new): if this suggestion has a linked_suggestion_id (set when a city+school were
+    submitted together), the SAME decision is automatically applied to the linked one too —
+    the admin only has to act once."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -4400,6 +4405,9 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
             sug = cur.fetchone()
             if not sug:
                 return None
+            if sug['status'] != 'pending':
+                # Already resolved — most likely via cascade from its linked partner a moment ago.
+                return {"suggestion": dict(sug), "affected_users": [], "already_resolved": True}
 
             new_status = "approved" if approve else "rejected"
             cur.execute("""
@@ -4409,9 +4417,6 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
 
             affected_users = []
             if sug['kind'] == 'city':
-                # Single writer, single call — structurally impossible now to update
-                # only 2 of the 4 related fields and leave the record inconsistent,
-                # which is exactly what caused the original bug.
                 submitter = sug['submitted_by']
                 if approve:
                     cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s AND suggestion_id = %s;",
@@ -4442,7 +4447,16 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
                 affected_users = [sug['submitted_by']]
 
             conn.commit()
-            return {"suggestion": dict(sug), "affected_users": affected_users}
+            result = {"suggestion": dict(sug), "affected_users": affected_users}
+
+            linked_id = sug.get('linked_suggestion_id')
+            if _cascade and linked_id:
+                linked_result = db_resolve_location_suggestion(linked_id, admin_id, approve, _cascade=False)
+                if linked_result:
+                    result["linked_suggestion"] = linked_result["suggestion"]
+                    result["affected_users"] = list(set(result["affected_users"] + linked_result.get("affected_users", [])))
+
+            return result
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to resolve location suggestion: {e}", flush=True)
@@ -4450,7 +4464,6 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_user_location_complete(user_id) -> bool:
     """Gate check against the single source of truth: a student must have BOTH a city and
@@ -4947,10 +4960,12 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 extra_params = [difficulty_val]
                 score_col = "dm.marks"
 
+            # THE FIX: a school/team still sitting in 'pending' review must never surface on
+            # any leaderboard — only on the owner's own profile card.
             org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
-                        "LEFT JOIN organizations o ON m.org_id = o.org_id")
+                        "LEFT JOIN organizations o ON m.org_id = o.org_id AND (o.status IS NULL OR o.status = 'approved')")
             org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
-                       "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
+                       "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL AND (o.status IS NULL OR o.status = 'approved')")
 
             entity_clause, entity_params = "", []
             if scope == "country" and entity:
@@ -4970,29 +4985,33 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 FROM user_stats u
                 {extra_join}
                 {join_for_scope if entity_clause else ''}
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause}
                 ORDER BY score DESC LIMIT %s;
             """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
 
-            def _group(label_col, join_clause):
+            def _group(label_col, join_clause, require_positive=False):
+                # require_positive=True is the "a team/school must have earned at least 1
+                # mark to exist on the board" rule — a brand-new org, or one whose only
+                # members are still pending, is excluded rather than shown as a hollow 0.
+                having = f"HAVING {agg}({score_col}) > 0" if require_positive else ""
                 cur.execute(f"""
                     SELECT {label_col} AS name, {agg}({score_col})::int AS score
                     FROM user_stats u
                     {extra_join}
                     {join_clause}
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause}
-                    GROUP BY name ORDER BY score DESC LIMIT %s;
+                    GROUP BY name {having} ORDER BY score DESC LIMIT %s;
                 """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
                 return [dict(r) for r in cur.fetchall()]
 
             result = {"students": students}
             if scope in ("world", "country", "city"):
-                result["schools"] = _group("o.org_name", org_req)
+                result["schools"] = _group("o.org_name", org_req, require_positive=True)
             if scope in ("world", "country", "city", "school"):
-                result["teams"] = _group("o.org_name", org_req)
+                result["teams"] = _group("o.org_name", org_req, require_positive=True)
             if scope in ("world", "country"):
                 result["cities"] = _group("COALESCE(o.city, l.city)", org_left)
             if scope == "world":
@@ -5014,9 +5033,9 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
         with conn.cursor() as cur:
             grade_val = None if grade in (None, "all") else int(grade)
             org_left = ("LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
-                        "LEFT JOIN organizations o ON m.org_id = o.org_id")
+                        "LEFT JOIN organizations o ON m.org_id = o.org_id AND (o.status IS NULL OR o.status = 'approved')")
             org_req = ("JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active' "
-                       "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL")
+                       "JOIN organizations o ON m.org_id = o.org_id AND o.deleted_at IS NULL AND (o.status IS NULL OR o.status = 'approved')")
 
             entity_clause, entity_params, join_sql = "", [], org_left
             if scope == "country" and entity:
@@ -5035,15 +5054,12 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
                        COUNT(DISTINCT COALESCE(o.country, l.country)) AS country_count
                 FROM user_stats u
                 {join_sql}
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause};
             """, (grade_val, grade_val) + tuple(entity_params))
             summary = dict(cur.fetchone())
             summary["team_count"] = summary["school_count"]
 
-            # City/country totals come from the frozen ledger, not the live student sum —
-            # a student who's since moved elsewhere still counts here for what they earned
-            # while they were part of this place, and doesn't count toward it going forward.
             if scope in ("country", "city") and entity:
                 geo_type = "country" if scope == "country" else "city"
                 cur.execute("""
@@ -5056,10 +5072,12 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
             summary["parent_ranks"] = {}
             if scope == "country" and entity:
                 cur.execute("""
-                    WITH ranked AS (SELECT COALESCE(o.country, u.personal_country) AS c, SUM(u.total_marks) AS s,
+                    WITH ranked AS (SELECT COALESCE(o.country, l.country) AS c, SUM(u.total_marks) AS s,
                         RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS r
                         FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
-                        LEFT JOIN organizations o ON m.org_id=o.org_id WHERE COALESCE(o.country,u.personal_country) IS NOT NULL GROUP BY c)
+                        LEFT JOIN organizations o ON m.org_id=o.org_id AND (o.status IS NULL OR o.status = 'approved')
+                        LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
+                        WHERE COALESCE(o.country,l.country) IS NOT NULL GROUP BY c)
                     SELECT r FROM ranked WHERE c = %s;
                 """, (entity,))
                 row = cur.fetchone()
@@ -5836,6 +5854,27 @@ def db_set_user_location(user_id, city: str = None, country: str = None, status:
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] db_set_user_location: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_link_location_suggestions(sid_a: int, sid_b: int) -> bool:
+    """Links a new city + a new school submitted in the SAME setup confirm so a single
+    admin decision (approve/reject) on either one cascades to both — this is what makes
+    'city pending -> school pending too' actually hold together instead of drifting
+    into two unrelated requests."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE location_suggestions SET linked_suggestion_id = %s WHERE id = %s;", (int(sid_b), int(sid_a)))
+            cur.execute("UPDATE location_suggestions SET linked_suggestion_id = %s WHERE id = %s;", (int(sid_a), int(sid_b)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_link_location_suggestions: {e}", flush=True)
         return False
     finally:
         if conn:

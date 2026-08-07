@@ -324,9 +324,11 @@ async def _regloc_show_review(context, chat_id, message_id, user_id):
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content="\n".join(lines), reply_markup=kb)
 
 
-async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str = None):
-    """Actually commits the reviewed selections. Only ever called from the regloc_confirm branch."""
-    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids, db_leave_organization, db_get_teams_affected_by_location_change, db_clear_user_grade
+async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str = None, school_sid: int = None):
+    """Commits the reviewed selections. school_sid: the location_suggestions id created for a
+    BRAND NEW school in this same confirm action, if any — when both a new city AND a new
+    school are submitted together, they get linked so a single admin decision resolves both."""
+    from src.database import db_update_user_location, db_create_location_suggestion, db_set_user_pending_city, db_get_all_admin_ids, db_leave_organization, db_get_teams_affected_by_location_change, db_clear_user_grade, db_link_location_suggestions
     session = USER_PAYLOADS.pop(user_id, {})
     USER_STATES[user_id] = "IDLE"
 
@@ -348,13 +350,6 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
         names = ", ".join(f"<b>{html.escape(t['org_name'])}</b>" for t in affected)
         removed_teams_msg = f"\n\n🔒 <i>Removed from {names} — no longer matches your new location/school.</i>"
 
-    # BUG FIX: reg_leave_school is set True the instant the user taps "Not a Student"
-    # anywhere in this wizard session — but nothing cleared it if they then went BACK
-    # and picked an actual school. This block used to fire unconditionally on that
-    # stale flag, silently un-joining the school the user had JUST joined a moment
-    # earlier in regloc_confirm — exactly "confirmed a school but profile shows none."
-    # Now it only runs the leave-logic when the user genuinely ends this session with
-    # no school selected at all.
     genuinely_no_school_selected = not session.get("reg_school_org_id") and not session.get("reg_school_name")
     if session.get("reg_leave_school") and genuinely_no_school_selected:
         await asyncio.to_thread(db_clear_user_grade, user_id)
@@ -372,18 +367,20 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     city_is_new = session.get("reg_city_is_new", False)
     existing_sid = session.get("reg_city_suggestion_id")
 
-    location_write_ok = True  # only set False if a real write attempt fails below
+    location_write_ok = True
     if city or country:
         if city_is_new and not existing_sid:
-            # This IS the single point where a new city gets created and admins get notified —
-            # only ever reached from the final regloc_confirm tap, after the user has reviewed
-            # the whole setup (city + school together) on the review screen.
             sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
             location_write_ok = await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
             if not location_write_ok:
                 print(f"[REGLOC-FINISH-ERROR] db_set_user_pending_city FAILED for user={user_id} city={city!r} country={country!r} sid={sid}", flush=True)
+
+            if school_sid:
+                await asyncio.to_thread(db_link_location_suggestions, sid, school_sid)
+
             admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
             req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
+            linked_note = "\n\n🔗 <i>A new school request from the same student is linked to this — approving or rejecting either one resolves both.</i>" if school_sid else ""
             review_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
                 InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
@@ -394,7 +391,7 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
             for admin_id in admin_ids:
                 try:
                     await context.bot.send_message(chat_id=int(admin_id),
-                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(city)}, {html.escape(country)}</b>.",
+                        text=f"📍 <b>NEW CITY SUGGESTION</b>\n\n<b>{req_name}</b> set their city to <b>{html.escape(city)}, {html.escape(country)}</b>.{linked_note}",
                         reply_markup=review_kb, parse_mode="HTML")
                 except Exception:
                     pass
@@ -402,13 +399,10 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
             location_write_ok = await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
             if not location_write_ok:
                 print(f"[REGLOC-FINISH-ERROR] db_update_user_location FAILED for user={user_id} city={city!r} country={country!r}", flush=True)
-        # else: city_is_new and existing_sid — already created & admins already notified at accept-pending. No-op.
 
     profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
 
     if not location_write_ok:
-        # Never claim success on a failed write again — this was the exact bug: a hardcoded
-        # "✅ saved" regardless of what the database actually did.
         retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data="regloc_start|0")]])
         await edit_rich_message_safe(
             context.bot, chat_id=chat_id, message_id=message_id,
@@ -436,9 +430,12 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
-    """Thin safety wrapper — any exception in any action branch below used to make a
-    tap look like it silently did nothing (this was the exact cause behind REF 549
-    not responding). Now it always answers the user instead of crashing invisibly."""
+    """Every action branch answers its callback query EARLY (before doing the real work), so
+    by the time an exception fires here, query.answer() has usually already been called once —
+    Telegram silently rejects a second answer() call, and the old `except: pass` around that
+    swallowed it completely. THIS is the actual cause behind Kanban / feedback details / request
+    details all going quiet: the error WAS happening, it just had nowhere left to surface.
+    Now falls back to editing the message with the real error instead of failing silently."""
     try:
         await _handle_callback_inner(update, context, engine)
     except Exception as e:
@@ -446,7 +443,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, en
         try:
             await update.callback_query.answer("⚠️ Something went wrong. Please try again.", show_alert=True)
         except Exception:
-            pass
+            try:
+                err_detail = f"⚠️ <b>Something went wrong.</b>\n\n🛠️ <code>{type(e).__name__}: {html.escape(str(e))[:200]}</code>"
+                await update.callback_query.message.edit_text(err_detail, parse_mode="HTML")
+            except Exception:
+                pass
 
 async def _notify_org_admins_pending_request(context, org_id, org_name, requester):
     from src.database import db_get_org_admin_ids, db_get_pending_org_requests
@@ -1115,11 +1116,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         school_org_id = session.get("reg_school_org_id")
         school_name = session.get("reg_school_name")
         school_msg = ""
+        school_sid = None  # set below only when a BRAND NEW school suggestion is created this confirm
 
-        # If the user picked a DIFFERENT existing school than the one they're
-        # currently on, leave the old one first — otherwise they end up with two
-        # active memberships and the profile's LIMIT-1 org lookup shows whichever
-        # one it happens to grab, which is exactly the "school didn't change" bug.
         if school_org_id:
             profile_before = await asyncio.to_thread(db_get_user_profile, user_id)
             old_org_id = profile_before.get("org_id") if profile_before else None
@@ -1136,7 +1134,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 school_msg = f"📥 Request sent to <b>{html.escape(join_data['org_name'])}</b> — awaiting admin approval."
             else:
                 school_msg = f"✅ Joined <b>{html.escape(join_data['org_name'])}</b>!"
-            school_msg = f"✅ Joined <b>{join_data['org_name']}</b>!" if join_data else "⚠️ Could not join school."
         elif school_name and session.get("reg_school_is_new"):
             from src.database import db_create_location_suggestion, db_get_all_admin_ids
             org_tag = session.get("reg_new_org_tag")
@@ -1144,10 +1141,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reg_country = session.get("reg_country")
             new_org_id = None
 
-            # Step 1 — ONLY the actual org creation. If this fails, the school genuinely
-            # wasn't created and the error message below is now accurate. Logged with the
-            # real exception instead of being swallowed silently, so this is diagnosable
-            # from the next boot's logs instead of guessing.
             try:
                 profile_before = await asyncio.to_thread(db_get_user_profile, user_id)
                 old_org_id = profile_before.get("org_id") if profile_before else None
@@ -1166,25 +1159,28 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                     f"<code>{html.escape(str(e))[:150]}</code>"
                 )
 
-            # Step 2 — location suggestion + admin notify. Separated so a failure HERE
-            # (e.g. admin notify) never gets blamed on org creation, which succeeded.
             if new_org_id:
                 try:
-                    sid = await asyncio.to_thread(db_create_location_suggestion, "school", school_name, reg_country, user_id, new_org_id)
+                    school_sid = await asyncio.to_thread(db_create_location_suggestion, "school", school_name, reg_country, user_id, new_org_id)
                     admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
                     req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
+                    # THE FIX: if this same confirm ALSO submits a new city, note the link here —
+                    # _regloc_finish is what actually creates the city suggestion and links the two
+                    # together via db_link_location_suggestions.
+                    city_also_new = bool(session.get("reg_city_is_new") and not session.get("reg_city_suggestion_id"))
+                    linked_note = "\n\n🔗 <i>This student's city is also new and pending — linked, so approving or rejecting either resolves both.</i>" if city_also_new else ""
                     review_kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{sid}|1"),
-                        InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{sid}|0")
+                        InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{school_sid}|1"),
+                        InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{school_sid}|0")
                     ], [
-                        InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{sid}"),
-                        InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{sid}|-1")
+                        InlineKeyboardButton("💬 ASK USER", callback_data=f"loc_review_msg|{school_sid}"),
+                        InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{school_sid}|-1")
                     ]])
                     for admin_id in admin_ids:
                         try:
                             await context.bot.send_message(
                                 chat_id=int(admin_id),
-                                text=f"🏫 <b>NEW SCHOOL SUGGESTION</b>\n\n<b>{req_name}</b> created <b>{html.escape(school_name)}</b> ({html.escape(reg_city or '')}, {html.escape(reg_country or '')}).",
+                                text=f"🏫 <b>NEW SCHOOL SUGGESTION</b>\n\n<b>{req_name}</b> created <b>{html.escape(school_name)}</b> ({html.escape(reg_city or '')}, {html.escape(reg_country or '')}).{linked_note}",
                                 reply_markup=review_kb, parse_mode="HTML"
                             )
                         except Exception:
@@ -1199,7 +1195,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                         f"<code>{html.escape(str(e))[:150]}</code>"
                     )
 
-        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg=school_msg)
+        await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg=school_msg, school_sid=school_sid)
         return
 
     elif action == "loc_user_reply":
@@ -1582,7 +1578,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-
     elif action == "loc_admin_browse":
         from src.database import db_is_admin, db_get_location_suggestions_list, db_count_location_suggestions
         if not await asyncio.to_thread(db_is_admin, user_id):
@@ -1667,7 +1662,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
         return
 
-
     elif action == "fsm_create_org":
         await query.answer()
         kb = InlineKeyboardMarkup([
@@ -1749,6 +1743,18 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=f"✍️ <b>NEW TEAM — dedicated to {html.escape(str(scope_value))}</b>\n\nType the full formal name of your team:" + FSM_INPUT_HINT,
+            reply_markup=cancel_kb
+        )
+        return
+
+    elif action == "team_visibility":
+        await query.answer()
+        is_public = (d_id == "1")
+        USER_PAYLOADS.setdefault(user_id, {})["is_public"] = is_public
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|alliance_portal")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="✍️ <b>ONE LAST THING — Team Description</b>\n\nWrite a short, amazing description so other students know what your team is about:" + FSM_INPUT_HINT,
             reply_markup=cancel_kb
         )
         return

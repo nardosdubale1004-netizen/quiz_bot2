@@ -1502,9 +1502,10 @@ async def handle_fsm_message(update: Update, context):
 
             USER_PAYLOADS[user_id] = {**USER_PAYLOADS.get(user_id, {}), "org_name": clean_org_name}
             USER_STATES[user_id] = "AWAITING_ORG_TAG"
+            name_icon = "✨" if session.get("team_scope") else "🏫"
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                f"🏫 Name Accepted: <b>{clean_org_name}</b>\n\n"
+                f"{name_icon} Name Accepted: <b>{clean_org_name}</b>\n\n"
                 "✍ Enter a short, uppercase Code Tag identifier (2-15 characters, no spaces):\n"
                 "<i>(Example: ABYSSINIA)</i>",
                 cancel_kb
@@ -1524,8 +1525,6 @@ async def handle_fsm_message(update: Update, context):
 
             if prefilled_city and prefilled_country and not is_dedicated_creation:
                 org_name = USER_PAYLOADS[user_id]["org_name"]
-                # Nothing is written to the DB yet — stage it and let the user confirm
-                # on the review screen (matches every other pending-approval path).
                 USER_PAYLOADS[user_id]["reg_school_name"] = org_name
                 USER_PAYLOADS[user_id]["reg_school_is_new"] = True
                 USER_PAYLOADS[user_id]["reg_school_org_id"] = None
@@ -1538,21 +1537,29 @@ async def handle_fsm_message(update: Update, context):
 
             if prefilled_city and prefilled_country and is_dedicated_creation:
                 USER_STATES[user_id] = "AWAITING_ORG_DESCRIPTION"
+                vis_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🌐 OPEN (anyone can join instantly)", callback_data="team_visibility|1")],
+                    [InlineKeyboardButton("🔒 APPROVAL REQUIRED (review each request)", callback_data="team_visibility|0")]
+                ])
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
-                    "✍️ <b>ONE LAST THING — Team Description</b>\n\n"
-                    "Write a short, amazing description so other students know what your team is about:" + FSM_INPUT_HINT,
-                    cancel_kb
+                    "🎛️ <b>Who can join this team?</b>\n\n"
+                    "🌐 <b>Open</b> — anyone can join instantly, no approval needed.\n"
+                    "🔒 <b>Approval Required</b> — you (or your admins) approve each join request.",
+                    vis_kb
                 )
                 return
 
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
+            # THE FIX: this state is only ever reached by TEAM creation (schools always
+            # skip past it with a prefilled location), but the wording still said "school
+            # or academy" — this was the literal source of "it asks for school name."
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
                 (
                     f"🔑 Short Domain Code accepted: <code>#{clean_tag}</code>\n\n"
                     "✍ <b>PROMPT: Team City Location</b>\n"
-                    "Please enter the city where your school or academy is located:\n"
+                    "Please enter the city where your team is based:\n"
                     "<i>(Example: Addis Ababa)</i>"
                 ) + FSM_INPUT_HINT,
                 cancel_kb
@@ -1571,7 +1578,7 @@ async def handle_fsm_message(update: Update, context):
                 (
                     f"🌆 City Accepted: <b>{clean_city}</b>\n\n"
                     "✍ <b>PROMPT: Team Country Location</b>\n"
-                    "Please enter the country where your school or academy is located:\n"
+                    "Please enter the country where your team is based:\n"
                     "<i>(Example: Ethiopia)</i>"
                 ) + FSM_INPUT_HINT,
                 cancel_kb
@@ -1585,11 +1592,16 @@ async def handle_fsm_message(update: Update, context):
 
             USER_PAYLOADS[user_id]["org_country"] = clean_country
             USER_STATES[user_id] = "AWAITING_ORG_DESCRIPTION"
+            vis_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌐 OPEN (anyone can join instantly)", callback_data="team_visibility|1")],
+                [InlineKeyboardButton("🔒 APPROVAL REQUIRED (review each request)", callback_data="team_visibility|0")]
+            ])
             await _fsm_advance(
                 context, update.message.chat_id, edit_mid,
-                "✍️ <b>ONE LAST THING — Team Description</b>\n\n"
-                "Write a short, amazing description so other students know what your team is about:" + FSM_INPUT_HINT,
-                cancel_kb
+                "🎛️ <b>Who can join this team?</b>\n\n"
+                "🌐 <b>Open</b> — anyone can join instantly, no approval needed.\n"
+                "🔒 <b>Approval Required</b> — you (or your admins) approve each join request.",
+                vis_kb
             )
 
         elif state == "AWAITING_ORG_DESCRIPTION":
@@ -1604,16 +1616,14 @@ async def handle_fsm_message(update: Update, context):
             org_country = USER_PAYLOADS[user_id]["org_country"]
             team_scope = USER_PAYLOADS[user_id].get("team_scope", "open")
             scope_value = USER_PAYLOADS[user_id].get("scope_value")
+            is_public_choice = USER_PAYLOADS[user_id].get("is_public", True)
 
             try:
                 if team_scope != "open":
-                    await asyncio.to_thread(db_create_dedicated_organization, org_name, org_tag, user_id, team_scope, scope_value, clean_desc, org_city, org_country)
+                    await asyncio.to_thread(db_create_dedicated_organization, org_name, org_tag, user_id, team_scope, scope_value, clean_desc, org_city, org_country, is_public_choice)
                 else:
-                    # BUG FIX: was hardcoding org_type="School" for every open TEAM —
-                    # that's exactly why a newly created/joined team showed up in the
-                    # SCHOOL slot on the profile instead of the team slot.
                     from src.database import GLOBAL_ENGINE as _GE
-                    new_org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "Team", True, org_city, org_country)
+                    new_org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "Team", is_public_choice, org_city, org_country)
                     conn2 = _GE.get_db_connection()
                     try:
                         with conn2.cursor() as cur2:
@@ -1624,11 +1634,12 @@ async def handle_fsm_message(update: Update, context):
 
                 USER_STATES[user_id] = "IDLE"
                 USER_PAYLOADS.pop(user_id, None)
-                scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value))}</b>" if team_scope != "open" else "🌐 Open to everyone"
+                visibility_line = "🌐 Open — anyone can join instantly" if is_public_choice else "🔒 Approval required to join"
+                scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value))}</b>\n{visibility_line}" if team_scope != "open" else visibility_line
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
                     f"✅ <b>Team Registered!</b>\n\n"
-                    f"🏫 <b>{org_name}</b> <code>#{org_tag}</code>\n"
+                    f"✨ <b>{org_name}</b> <code>#{org_tag}</code>\n"
                     f"{scope_line}\n"
                     f"📍 {org_city}, {org_country}\n\n"
                     f"Share your team's invite link (from the team page) so students can join directly.",
@@ -1652,7 +1663,14 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
 
-            if join_data.get("already_member"):
+            # THE FIX: db_join_organization can return {"scope_blocked": True, ...} for a
+            # dedicated team you don't match — a dict with NO "role_assigned" key at all.
+            # The old code jumped straight to join_data["role_assigned"] once
+            # already_member/already_pending were ruled out, raising exactly
+            # KeyError: 'role_assigned' in this state.
+            if join_data.get("scope_blocked"):
+                response_text = f"🔒 <b>{html.escape(join_data['org_name'])}</b> is a dedicated team.\n\n{join_data['reason']}"
+            elif join_data.get("already_member"):
                 response_text = f"ℹ️ You're already registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>) as <b>{join_data['role_assigned'].title()}</b>."
             elif join_data.get("already_pending"):
                 response_text = f"📥 Your request to join <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>) is already pending."
