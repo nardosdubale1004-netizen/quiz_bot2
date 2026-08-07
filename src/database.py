@@ -710,8 +710,14 @@ class QuizEngine:
                   AND (team_scope IN ('country', 'city', 'school') OR (team_scope = 'open' AND description IS NOT NULL));
             """)
 
-            # --- Phase 1: single source-of-truth location table ---
-            _safe_migrate(cur, conn, "CREATE user_locations", """
+                # --- Phase 1: single source-of-truth location table ---
+                # VERIFIED FIX: these calls were sitting one indent level OUTSIDE the
+                # `with conn.cursor() as cur:` block above, so every one of them ran on
+                # an already-closed cursor and failed silently via _safe_migrate's own
+                # except clause ("cursor already closed" in the logs). Now indented to
+                # match the block above — same level as `_safe_migrate(cur, conn,
+                # "backfill org_type=Team"...)` — so it actually executes on a live cursor.
+                _safe_migrate(cur, conn, "CREATE user_locations", """
                 CREATE TABLE IF NOT EXISTS user_locations (
                     user_id VARCHAR(20) PRIMARY KEY REFERENCES user_stats(user_id) ON DELETE CASCADE,
                     city VARCHAR(50),
@@ -721,12 +727,10 @@ class QuizEngine:
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
             """)
-            _safe_migrate(cur, conn, "idx_user_locations_country", "CREATE INDEX IF NOT EXISTS idx_user_locations_country ON user_locations(country);")
-            _safe_migrate(cur, conn, "idx_user_locations_city", "CREATE INDEX IF NOT EXISTS idx_user_locations_city ON user_locations(city);")
+                _safe_migrate(cur, conn, "idx_user_locations_country", "CREATE INDEX IF NOT EXISTS idx_user_locations_country ON user_locations(country);")
+                _safe_migrate(cur, conn, "idx_user_locations_city", "CREATE INDEX IF NOT EXISTS idx_user_locations_city ON user_locations(city);")
 
-            # One-time backfill from the old scattered columns on user_stats — only runs while
-            # those columns still exist; safe no-op once they're dropped in a later pass.
-            _safe_migrate(cur, conn, "backfill user_locations", """
+                _safe_migrate(cur, conn, "backfill user_locations", """
                 INSERT INTO user_locations (user_id, city, country, status, suggestion_id, updated_at)
                 SELECT user_id, personal_city, personal_country,
                        CASE WHEN personal_city_status = 'pending' THEN 'pending' ELSE 'approved' END,
@@ -736,33 +740,26 @@ class QuizEngine:
                 ON CONFLICT (user_id) DO NOTHING;
             """)
 
-            # --- Phase 2: split membership role from membership state ---
-            # THIS is the block that was dedented outside the `with conn.cursor() as cur:`
-            # scope in the prior pass — cur was already closed by the time these ran, so
-            # every one of these silently failed via _safe_migrate's own except clause.
-            # Re-indented to the correct depth (inside `with conn.cursor() as cur:`) so it
-            # actually executes on a live cursor now.
-            _safe_migrate(cur, conn, "org_memberships.state", "ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS state VARCHAR(10);")
-            _safe_migrate(cur, conn, "backfill state from org_role", """
+                # --- Phase 2: split membership role from membership state ---
+                _safe_migrate(cur, conn, "org_memberships.state", "ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS state VARCHAR(10);")
+                _safe_migrate(cur, conn, "backfill state from org_role", """
                 UPDATE org_memberships SET state = CASE
                     WHEN org_role IN ('pending', 'rejected', 'left') THEN org_role
                     ELSE 'active'
                 END WHERE state IS NULL;
             """)
-            _safe_migrate(cur, conn, "normalize org_role", """
+                _safe_migrate(cur, conn, "normalize org_role", """
                 UPDATE org_memberships SET org_role = 'member'
                 WHERE org_role IN ('pending', 'rejected', 'left');
             """)
-            _safe_migrate(cur, conn, "state default", "ALTER TABLE org_memberships ALTER COLUMN state SET DEFAULT 'pending';")
-            _safe_migrate(cur, conn, "idx_org_memberships_org_state", "CREATE INDEX IF NOT EXISTS idx_org_memberships_org_state ON org_memberships(org_id, state);")
-            _safe_migrate(cur, conn, "idx_org_memberships_user_state", "CREATE INDEX IF NOT EXISTS idx_org_memberships_user_state ON org_memberships(user_id, state);")
+                _safe_migrate(cur, conn, "state default", "ALTER TABLE org_memberships ALTER COLUMN state SET DEFAULT 'pending';")
+                _safe_migrate(cur, conn, "idx_org_memberships_org_state", "CREATE INDEX IF NOT EXISTS idx_org_memberships_org_state ON org_memberships(org_id, state);")
+                _safe_migrate(cur, conn, "idx_org_memberships_user_state", "CREATE INDEX IF NOT EXISTS idx_org_memberships_user_state ON org_memberships(user_id, state);")
 
-            # --- Ledger indexes — these tables are aggregated on every leaderboard render;
-            # at scale a sequential scan here is the next thing that falls over.
-            _safe_migrate(cur, conn, "idx_user_org_contrib_org", "CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
-            _safe_migrate(cur, conn, "idx_user_geo_contrib_type_value", "CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
+                _safe_migrate(cur, conn, "idx_user_org_contrib_org", "CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
+                _safe_migrate(cur, conn, "idx_user_geo_contrib_type_value", "CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
 
-            conn.commit()
+                conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
             print(f"{Style.GREEN}[DATABASE] Many-to-many organizations and roster schemas verified.{Style.RESET}")
