@@ -2339,11 +2339,12 @@ def db_check_team_scope_eligibility(user_id, org_id: int) -> dict:
                 return {"eligible": True, "reason": None, "scope": org['team_scope'] if org else 'open', "scope_value": None}
 
             cur.execute("""
-                SELECT COALESCE(o.country, u.personal_country) AS country,
-                       COALESCE(o.city, u.personal_city) AS city
+                SELECT COALESCE(o.country, l.country) AS country,
+                       COALESCE(o.city, l.city) AS city
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
                 WHERE u.user_id = %s
                 LIMIT 1;
             """, (str(user_id),))
@@ -2956,10 +2957,11 @@ def db_get_city_leaderboard():
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COALESCE(o.city, u.personal_city) AS city, SUM(u.total_marks) as total_score
+                SELECT COALESCE(o.city, l.city) AS city, SUM(u.total_marks) as total_score
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
                 GROUP BY city
                 ORDER BY total_score DESC
                 LIMIT 5;
@@ -2979,10 +2981,11 @@ def db_get_country_leaderboard():
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COALESCE(o.country, u.personal_country) AS country, SUM(u.total_marks) as total_score
+                SELECT COALESCE(o.country, l.country) AS country, SUM(u.total_marks) as total_score
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
                 GROUP BY country
                 ORDER BY total_score DESC
                 LIMIT 5;
@@ -3113,11 +3116,12 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
 
             # Cities
             cur.execute(f"""
-                SELECT COALESCE(o.city, u.personal_city) AS name, {agg}(u.total_marks)::int AS score
+                SELECT COALESCE(o.city, l.city) AS name, {agg}(u.total_marks)::int AS score
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.city, u.personal_city) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                WHERE COALESCE(o.city, l.city) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
                 GROUP BY name
                 ORDER BY score DESC
                 LIMIT %s;
@@ -3126,11 +3130,12 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
 
             # Countries
             cur.execute(f"""
-                SELECT COALESCE(o.country, u.personal_country) AS name, {agg}(u.total_marks)::int AS score
+                SELECT COALESCE(o.country, l.country) AS name, {agg}(u.total_marks)::int AS score
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                WHERE COALESCE(o.country, l.country) IS NOT NULL AND (%s::int IS NULL OR u.grade = %s)
                 GROUP BY name
                 ORDER BY score DESC
                 LIMIT %s;
@@ -3820,10 +3825,11 @@ def db_get_admin_dashboard_stats():
 
             try:
                 cur.execute("""
-                    SELECT COALESCE(o.country, u.personal_country, 'Unknown') AS country, COUNT(DISTINCT u.user_id) AS cnt
+                    SELECT COALESCE(o.country, l.country, 'Unknown') AS country, COUNT(DISTINCT u.user_id) AS cnt
                     FROM user_stats u
-                    LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id = o.org_id
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
                     GROUP BY country
                     ORDER BY cnt DESC
                     LIMIT 10;
@@ -3874,12 +3880,13 @@ def db_get_recent_users(limit: int = 15, offset: int = 0):
             cur.execute("""
                 SELECT u.user_id, u.username, u.first_name, u.nickname, u.grade, u.total_marks,
                        u.public_consent_granted,
-                       COALESCE(o.country, u.personal_country, 'Unknown') AS country,
-                       COALESCE(o.city, u.personal_city, 'Unknown') AS city,
+                       COALESCE(o.country, l.country, 'Unknown') AS country,
+                       COALESCE(o.city, l.city, 'Unknown') AS city,
                        u.last_active_at
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
                 ORDER BY u.last_active_at DESC NULLS LAST
                 LIMIT %s OFFSET %s;
             """, (limit, offset))
@@ -4697,11 +4704,12 @@ def db_get_active_countries():
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT DISTINCT COALESCE(o.country, u.personal_country) AS country
+                SELECT DISTINCT COALESCE(o.country, l.country) AS country
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                WHERE COALESCE(o.country, l.country) IS NOT NULL
                 ORDER BY country ASC
                 LIMIT 40;
             """)
@@ -4721,21 +4729,23 @@ def db_get_active_cities(country: str = None):
         with conn.cursor() as cur:
             if country:
                 cur.execute("""
-                    SELECT DISTINCT COALESCE(o.city, u.personal_city) AS city
+                    SELECT DISTINCT COALESCE(o.city, l.city) AS city
                     FROM user_stats u
-                    LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id = o.org_id
-                    WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    WHERE COALESCE(o.country, l.country) = %s AND COALESCE(o.city, l.city) IS NOT NULL
                     ORDER BY city ASC
                     LIMIT 40;
                 """, (country,))
             else:
                 cur.execute("""
-                    SELECT DISTINCT COALESCE(o.city, u.personal_city) AS city
+                    SELECT DISTINCT COALESCE(o.city, l.city) AS city
                     FROM user_stats u
-                    LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id = o.org_id
-                    WHERE COALESCE(o.city, u.personal_city) IS NOT NULL
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    WHERE COALESCE(o.city, l.city) IS NOT NULL
                     ORDER BY city ASC
                     LIMIT 40;
                 """)
@@ -4756,9 +4766,10 @@ def db_get_top_users_by_city(city: str, limit: int = 10):
             cur.execute("""
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.city, u.personal_city) = %s
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                WHERE COALESCE(o.city, l.city) = %s
                 ORDER BY u.total_marks DESC
                 LIMIT %s;
             """, (city, limit))
@@ -4779,9 +4790,10 @@ def db_get_top_users_by_country(country: str, limit: int = 10):
             cur.execute("""
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, u.total_marks
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.country, u.personal_country) = %s
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                WHERE COALESCE(o.country, l.country) = %s
                 ORDER BY u.total_marks DESC
                 LIMIT %s;
             """, (country, limit))
@@ -4840,10 +4852,10 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
 
             entity_clause, entity_params = "", []
             if scope == "country" and entity:
-                entity_clause = "AND COALESCE(o.country, u.personal_country) = %s"
+                entity_clause = "AND COALESCE(o.country, l.country) = %s"
                 entity_params = [entity]
             elif scope == "city" and entity:
-                entity_clause = "AND COALESCE(o.city, u.personal_city) = %s"
+                entity_clause = "AND COALESCE(o.city, l.city) = %s"
                 entity_params = [entity]
             elif scope == "school" and entity:
                 entity_clause = "AND o.org_id = %s"
@@ -4856,6 +4868,7 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 FROM user_stats u
                 {extra_join}
                 {join_for_scope if entity_clause else ''}
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
                 WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause}
                 ORDER BY score DESC LIMIT %s;
             """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
@@ -4867,6 +4880,7 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                     FROM user_stats u
                     {extra_join}
                     {join_clause}
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause}
                     GROUP BY name ORDER BY score DESC LIMIT %s;
                 """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
@@ -4878,9 +4892,9 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
             if scope in ("world", "country", "city", "school"):
                 result["teams"] = _group("o.org_name", org_req)
             if scope in ("world", "country"):
-                result["cities"] = _group("COALESCE(o.city, u.personal_city)", org_left)
+                result["cities"] = _group("COALESCE(o.city, l.city)", org_left)
             if scope == "world":
-                result["countries"] = _group("COALESCE(o.country, u.personal_country)", org_left)
+                result["countries"] = _group("COALESCE(o.country, l.country)", org_left)
 
             return result
     except Exception as e:
@@ -4904,9 +4918,9 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
 
             entity_clause, entity_params, join_sql = "", [], org_left
             if scope == "country" and entity:
-                entity_clause, entity_params = "AND COALESCE(o.country, u.personal_country) = %s", [entity]
+                entity_clause, entity_params = "AND COALESCE(o.country, l.country) = %s", [entity]
             elif scope == "city" and entity:
-                entity_clause, entity_params, join_sql = "AND COALESCE(o.city, u.personal_city) = %s", [entity], org_req
+                entity_clause, entity_params, join_sql = "AND COALESCE(o.city, l.city) = %s", [entity], org_req
             elif scope == "school" and entity:
                 entity_clause, entity_params, join_sql = "AND o.org_id = %s", [int(entity)], org_req
 
@@ -4915,10 +4929,11 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
                        COALESCE(SUM(u.total_marks), 0) AS total_marks,
                        COALESCE(AVG(u.total_marks), 0) AS avg_marks,
                        COUNT(DISTINCT o.org_id) AS school_count,
-                       COUNT(DISTINCT COALESCE(o.city, u.personal_city)) AS city_count,
-                       COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS country_count
+                       COUNT(DISTINCT COALESCE(o.city, l.city)) AS city_count,
+                       COUNT(DISTINCT COALESCE(o.country, l.country)) AS country_count
                 FROM user_stats u
                 {join_sql}
+                LEFT JOIN user_locations l ON l.user_id = u.user_id
                 WHERE (%s::int IS NULL OR u.grade = %s) {entity_clause};
             """, (grade_val, grade_val) + tuple(entity_params))
             summary = dict(cur.fetchone())
@@ -4974,18 +4989,20 @@ def db_get_entity_list(scope, parent_entity=None, limit=40):
         with conn.cursor() as cur:
             if scope == "country":
                 cur.execute("""
-                    SELECT DISTINCT COALESCE(o.country, u.personal_country) AS name
+                    SELECT DISTINCT COALESCE(o.country, l.country) AS name
                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id=o.org_id
-                    WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    WHERE COALESCE(o.country, l.country) IS NOT NULL
                     ORDER BY name ASC LIMIT %s;
                 """, (limit,))
             elif scope == "city":
                 cur.execute("""
-                    SELECT DISTINCT COALESCE(o.city, u.personal_city) AS name
+                    SELECT DISTINCT COALESCE(o.city, l.city) AS name
                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                     LEFT JOIN organizations o ON m.org_id=o.org_id
-                    WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    WHERE COALESCE(o.country, l.country) = %s AND COALESCE(o.city, l.city) IS NOT NULL
                     ORDER BY name ASC LIMIT %s;
                 """, (parent_entity, limit))
             elif scope == "school":
@@ -5620,23 +5637,24 @@ def db_get_user_rank_summary(user_id) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT personal_city, personal_country FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s;", (str(user_id),))
             p = cur.fetchone() or {}
-            city, country = p.get("personal_city"), p.get("personal_country")
+            city, country = p.get("city"), p.get("country")
 
             def _live_rank(where_clause, params):
                 cur.execute(f"""
                     WITH ranked AS (SELECT u.user_id, RANK() OVER (ORDER BY u.total_marks DESC) AS rnk
                                      FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
-                                     LEFT JOIN organizations o ON m.org_id=o.org_id {where_clause})
+                                     LEFT JOIN organizations o ON m.org_id=o.org_id
+                                     LEFT JOIN user_locations l ON l.user_id = u.user_id {where_clause})
                     SELECT rnk FROM ranked WHERE user_id = %s;
                 """, (*params, str(user_id)))
                 r = cur.fetchone()
                 return r['rnk'] if r else None
 
             world_rank = _live_rank("", ())
-            country_rank = _live_rank("WHERE COALESCE(o.country,u.personal_country) = %s", (country,)) if country else None
-            city_rank = _live_rank("WHERE COALESCE(o.city,u.personal_city) = %s", (city,)) if city else None
+            country_rank = _live_rank("WHERE COALESCE(o.country,l.country) = %s", (country,)) if country else None
+            city_rank = _live_rank("WHERE COALESCE(o.city,l.city) = %s", (city,)) if city else None
 
             def _org_rank(org_type):
                 cur.execute("""
