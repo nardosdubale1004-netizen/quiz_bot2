@@ -1471,6 +1471,7 @@ async def handle_fsm_message(update: Update, context):
                     "reg_school_is_new": True,
                     "reg_school_org_id": None,
                     "reg_new_org_tag": auto_tag,
+                    "reg_leave_school": False,
                 }
                 USER_STATES[user_id] = "IDLE"
                 from src.callbacks import _regloc_show_review
@@ -1525,6 +1526,7 @@ async def handle_fsm_message(update: Update, context):
                 USER_PAYLOADS[user_id]["reg_school_is_new"] = True
                 USER_PAYLOADS[user_id]["reg_school_org_id"] = None
                 USER_PAYLOADS[user_id]["reg_new_org_tag"] = clean_tag
+                USER_PAYLOADS[user_id]["reg_leave_school"] = False
                 USER_STATES[user_id] = "IDLE"
                 from src.callbacks import _regloc_show_review
                 await _regloc_show_review(context, update.message.chat_id, edit_mid, user_id)

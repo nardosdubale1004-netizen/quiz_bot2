@@ -348,7 +348,15 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
         names = ", ".join(f"<b>{html.escape(t['org_name'])}</b>" for t in affected)
         removed_teams_msg = f"\n\n🔒 <i>Removed from {names} — no longer matches your new location/school.</i>"
 
-    if session.get("reg_leave_school"):
+    # BUG FIX: reg_leave_school is set True the instant the user taps "Not a Student"
+    # anywhere in this wizard session — but nothing cleared it if they then went BACK
+    # and picked an actual school. This block used to fire unconditionally on that
+    # stale flag, silently un-joining the school the user had JUST joined a moment
+    # earlier in regloc_confirm — exactly "confirmed a school but profile shows none."
+    # Now it only runs the leave-logic when the user genuinely ends this session with
+    # no school selected at all.
+    genuinely_no_school_selected = not session.get("reg_school_org_id") and not session.get("reg_school_name")
+    if session.get("reg_leave_school") and genuinely_no_school_selected:
         await asyncio.to_thread(db_clear_user_grade, user_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         old_org_id = profile.get("org_id") if profile else None
@@ -989,6 +997,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         USER_PAYLOADS.setdefault(user_id, {})
         USER_PAYLOADS[user_id]["reg_school_org_id"] = int(d_id)
         USER_PAYLOADS[user_id]["reg_school_is_new"] = False
+        USER_PAYLOADS[user_id]["reg_leave_school"] = False
         from src.database import GLOBAL_ENGINE
         conn = GLOBAL_ENGINE.get_db_connection()
         try:
@@ -1027,6 +1036,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             "reg_country": session.get("reg_country"),
             "reg_city_is_new": session.get("reg_city_is_new", False),
             "reg_city_suggestion_id": session.get("reg_city_suggestion_id"),
+            "reg_leave_school": False,
         }
         back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="regloc_school_page|0")]])
         await edit_rich_message_safe(
