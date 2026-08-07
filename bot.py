@@ -828,14 +828,42 @@ async def _start_command_inner(update: Update, context):
 
     if args and args[0].startswith("join_"):
         join_token = args[0][5:].strip()
+        from src.database import GLOBAL_ENGINE as _GE
+        conn2 = _GE.get_db_connection()
+        try:
+            with conn2.cursor() as cur2:
+                cur2.execute("SELECT org_name, org_type, description FROM organizations WHERE join_token = %s AND deleted_at IS NULL;", (join_token,))
+                preview = cur2.fetchone()
+        finally:
+            _GE.release_connection(conn2)
 
-        # Snapshot BEFORE the join call — this is the only reliable way to know
-        # whether this person was a genuinely brand-new bot user (referral-eligible)
-        # or already had an account (no referral credit, since they weren't "brought in").
-        pre_existing_profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        is_new_to_bot = pre_existing_profile is None
+        if not preview:
+            await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This invite link is invalid or the team no longer exists.")
+            return
 
-        join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
+        # THE FIX: invite links used to join instantly with zero confirmation. Now shows
+        # a welcome card and requires an explicit tap — the actual join only happens in
+        # the confirm_team_invite callback below.
+        confirm_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ JOIN {preview['org_name'][:24]}", callback_data=f"confirm_team_invite|{join_token}")],
+            [InlineKeyboardButton("❌ NO THANKS", callback_data="close_portal|0")]
+        ])
+        desc_line = f"\n\n<i>{html.escape(preview['description'])}</i>" if preview.get('description') else ""
+        await send_rich_message_safe(
+            context.bot, chat_id=update.message.chat_id,
+            html_content=(
+                f"🤝 <b>You've been invited to join {html.escape(preview['org_name'])}!</b>{desc_line}\n\n"
+                f"Team up, answer together, and climb the boards side by side. Tap below to join."
+            ),
+            reply_markup=confirm_kb
+        )
+        return
+
+        if False and args and args[0].startswith("join_"):
+            join_token = args[0][5:].strip()
+            pre_existing_profile = await asyncio.to_thread(db_get_user_profile, user_id)
+            is_new_to_bot = pre_existing_profile is None
+            join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
         if not join_data:
             msg = "⚠️ This team invite link is invalid or the team no longer exists."
         elif join_data.get("already_member"):

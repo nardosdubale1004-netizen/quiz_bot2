@@ -1336,7 +1336,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 except Exception:
                     pass
 
-        await query.edit_message_text(msg, reply_markup=return_kb, parse_mode="HTML")
+        close_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")],
+                                          [InlineKeyboardButton("🔚 CLOSE", callback_data="close_portal|0")]])
+        await query.edit_message_text(msg, reply_markup=close_kb, parse_mode="HTML")
         return
 
     elif action == "dissolve_org_warn":
@@ -1764,6 +1766,55 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
+    elif action == "confirm_team_invite":
+        await query.answer()
+        join_token = d_id
+        user = query.from_user
+
+        from src.database import db_join_organization_by_token, db_get_user_profile as _get_prof, db_set_user_referrer, db_count_referrals
+        pre_existing_profile = await asyncio.to_thread(_get_prof, user_id)
+        is_new_to_bot = pre_existing_profile is None
+
+        join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
+        if not join_data:
+            msg = "⚠️ This team invite link is invalid or the team no longer exists."
+        elif join_data.get("already_member"):
+            msg = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b> — nothing to do here."
+        elif join_data.get("already_pending"):
+            msg = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."
+        elif join_data["role_assigned"] == "pending":
+            msg = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval."
+            await _notify_org_admins_pending_request(context, join_data["org_id"], join_data["org_name"], user)
+        else:
+            msg = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
+
+        creator_id = join_data.get("creator_id") if join_data else None
+        if is_new_to_bot and creator_id and str(creator_id) != str(user_id):
+            linked = await asyncio.to_thread(db_set_user_referrer, user_id, creator_id)
+            if linked:
+                try:
+                    ref_count = await asyncio.to_thread(db_count_referrals, creator_id)
+                    new_name = html.escape(user.first_name or user.username or "A student")
+                    should_notify = (ref_count <= 10) or (ref_count % 5 == 0)
+                    if should_notify:
+                        referral_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 GO TO PROFILE", callback_data="privacy_menu|0")]])
+                        await context.bot.send_message(
+                            chat_id=int(creator_id),
+                            text=f"🤝 <b>{new_name}</b> joined the bot through your team's invite link!\nYou'll earn bonus marks from their correct answers.\n\n📊 Total referrals so far: <b>{ref_count}</b>",
+                            parse_mode="HTML", reply_markup=referral_nav_kb
+                        )
+                except Exception:
+                    pass
+
+        # THE FIX (close button): every join/leave notification used to only offer "MY PROFILE" —
+        # nothing to dismiss it with. Now every terminal notification gets a CLOSE option too.
+        result_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👤 MY TEAM", callback_data=f"view_org|{join_data['org_id']}" if join_data and join_data.get("org_id") else "privacy_menu|0")],
+            [InlineKeyboardButton("🔚 CLOSE", callback_data="close_portal|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=msg, reply_markup=result_kb)
+        return
+
     elif action == "fsm_join_org":
         await query.answer()
         USER_STATES[user_id] = "AWAITING_ORG_JOIN"
@@ -1984,9 +2035,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         elif join_data["role_assigned"] == "pending":
             text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
             await _notify_org_admins_pending_request(context, org_id, join_data['org_name'], query.from_user)
-        else:
+       else:
             text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=return_kb)
+        close_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")],
+                                          [InlineKeyboardButton("🔚 CLOSE", callback_data="close_portal|0")]])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=close_kb)
         return
 
     elif action == "team_invite":
@@ -2046,6 +2099,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=kb
         )
         return
+
     elif action == "fb_cancel":
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)

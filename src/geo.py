@@ -75,7 +75,7 @@ def get_timezone_for_country(country: str) -> str:
     return COUNTRY_TZ_MAP.get((country or "").strip(), "UTC")
 
 
-def format_local_time(dt, tz_name: str = "UTC", fmt: str = "%b %d, %Y · %H:%M") -> str:
+def format_local_time(dt, tz_name: str = "UTC", fmt: str = "%b %d, %Y · %I:%M %p") -> str:
     """Renders a UTC-aware/naive datetime in the viewer's local timezone, DM-facing only.
     Channel-facing timestamps (tournament cards, etc.) intentionally keep showing UTC/EAT
     side-by-side and must NOT call this."""

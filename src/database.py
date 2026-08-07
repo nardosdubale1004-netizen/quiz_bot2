@@ -2499,10 +2499,27 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
                     org_role = EXCLUDED.org_role, state = EXCLUDED.state, joined_at = NOW(), deleted_at = NULL
                 WHERE org_memberships.state IN ('rejected', 'left');
             """, (str(user_id), row["org_id"], role, state))
+            # THE FIX: the INSERT..ON CONFLICT..WHERE above can silently no-op if a stale
+            # row already existed in some OTHER state (not rejected/left) — the query
+            # succeeds, conn.commit() runs, and the caller has always reported "You're
+            # in!" regardless. Now re-reads the row after writing and only reports success
+            # if it's genuinely active — this is exactly what "says joined, not in the
+            # team list" was.
+            cur.execute("SELECT state FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), row["org_id"]))
+            confirmed = cur.fetchone()
+            actual_state = confirmed['state'] if confirmed else None
+            if actual_state != state:
+                print(f"[JOIN-VERIFY-FAILED] token join user={user_id} org={row['org_id']} intended={state} actual={actual_state} — stale row blocked the write.", flush=True)
+                if actual_state:
+                    cur.execute("UPDATE org_memberships SET org_role = %s, state = %s, joined_at = NOW(), deleted_at = NULL WHERE user_id = %s AND org_id = %s;",
+                                (role, state, str(user_id), row["org_id"]))
+                else:
+                    cur.execute("INSERT INTO org_memberships (user_id, org_id, org_role, state) VALUES (%s, %s, %s, %s);",
+                                (str(user_id), row["org_id"], role, state))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
-            return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": role, "creator_id": row["creator_id"]}
+            return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": state, "creator_id": row["creator_id"]}
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Join by token failed: {e}", flush=True)
