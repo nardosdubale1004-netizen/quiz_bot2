@@ -2035,7 +2035,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         elif join_data["role_assigned"] == "pending":
             text = f"📥 <b>Request sent!</b> <b>{join_data['org_name']}</b> requires admin approval — you'll be added once confirmed."
             await _notify_org_admins_pending_request(context, org_id, join_data['org_name'], query.from_user)
-       else:
+        else:
             text = f"✅ <b>You're in!</b> You're now registered under <b>{join_data['org_name']}</b>."
         close_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")],
                                           [InlineKeyboardButton("🔚 CLOSE", callback_data="close_portal|0")]])
