@@ -302,6 +302,26 @@ class QuizEngine:
             if conn:
                 self.release_connection(conn)
 
+
+    def _safe_migrate(cur, conn, label: str, sql: str, params=None):
+        """Runs one migration statement in isolation. If it fails, logs it and returns False
+        WITHOUT raising — so one bad/unexpected statement can never abort every statement that
+        comes after it in _ensure_tournament_schema. This is what silently broke organizations.status
+        and org_memberships.state on prior boots: a single exception used to kill the entire
+        rest of the migration for that boot cycle."""
+        try:
+            cur.execute(sql, params)
+            return True
+        except Exception as e:
+            print(f"{Style.YELLOW}[MIGRATION-SKIP] {label}: {e}{Style.RESET}", flush=True)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False
+
+
+
     def _ensure_tournament_schema(self):
         if QuizEngine._tournament_schema_ensured:
             return
@@ -675,13 +695,11 @@ class QuizEngine:
                         PRIMARY KEY (user_id, fav_type, fav_value)
                     );
                 """)
-                cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
-                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
-                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS team_scope VARCHAR(10) DEFAULT 'open';")
-                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS scope_value VARCHAR(80);")
-                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description TEXT;")
-                cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_utility_mid BIGINT;")
-                cur.execute("""
+                _safe_migrate(cur, conn, "organizations.team_scope", "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS team_scope VARCHAR(10) DEFAULT 'open';")
+                _safe_migrate(cur, conn, "organizations.scope_value", "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS scope_value VARCHAR(80);")
+                _safe_migrate(cur, conn, "organizations.description", "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description TEXT;")
+                _safe_migrate(cur, conn, "user_stats.last_utility_mid", "ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_utility_mid BIGINT;")
+                _safe_migrate(cur, conn, "backfill org_type=Team", """
                 UPDATE organizations
                 SET org_type = 'Team'
                 WHERE org_type = 'School'
@@ -689,7 +707,7 @@ class QuizEngine:
             """)
 
             # --- Phase 1: single source-of-truth location table ---
-            cur.execute("""
+            _safe_migrate(cur, conn, "CREATE user_locations", """
                 CREATE TABLE IF NOT EXISTS user_locations (
                     user_id VARCHAR(20) PRIMARY KEY REFERENCES user_stats(user_id) ON DELETE CASCADE,
                     city VARCHAR(50),
@@ -699,12 +717,12 @@ class QuizEngine:
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
             """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_locations_country ON user_locations(country);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_locations_city ON user_locations(city);")
+            _safe_migrate(cur, conn, "idx_user_locations_country", "CREATE INDEX IF NOT EXISTS idx_user_locations_country ON user_locations(country);")
+            _safe_migrate(cur, conn, "idx_user_locations_city", "CREATE INDEX IF NOT EXISTS idx_user_locations_city ON user_locations(city);")
 
             # One-time backfill from the old scattered columns on user_stats — only runs while
             # those columns still exist; safe no-op once they're dropped in a later pass.
-            cur.execute("""
+            _safe_migrate(cur, conn, "backfill user_locations", """
                 INSERT INTO user_locations (user_id, city, country, status, suggestion_id, updated_at)
                 SELECT user_id, personal_city, personal_country,
                        CASE WHEN personal_city_status = 'pending' THEN 'pending' ELSE 'approved' END,
@@ -715,25 +733,27 @@ class QuizEngine:
             """)
 
             # --- Phase 2: split membership role from membership state ---
-            cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS state VARCHAR(10);")
-            cur.execute("""
+            # THE critical line that kept failing to run — now fault-isolated from
+            # everything before it, so it runs regardless of what else breaks upstream.
+            _safe_migrate(cur, conn, "org_memberships.state", "ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS state VARCHAR(10);")
+            _safe_migrate(cur, conn, "backfill state from org_role", """
                 UPDATE org_memberships SET state = CASE
                     WHEN org_role IN ('pending', 'rejected', 'left') THEN org_role
                     ELSE 'active'
                 END WHERE state IS NULL;
             """)
-            cur.execute("""
+            _safe_migrate(cur, conn, "normalize org_role", """
                 UPDATE org_memberships SET org_role = 'member'
                 WHERE org_role IN ('pending', 'rejected', 'left');
             """)
-            cur.execute("ALTER TABLE org_memberships ALTER COLUMN state SET DEFAULT 'pending';")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_memberships_org_state ON org_memberships(org_id, state);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_memberships_user_state ON org_memberships(user_id, state);")
+            _safe_migrate(cur, conn, "state default", "ALTER TABLE org_memberships ALTER COLUMN state SET DEFAULT 'pending';")
+            _safe_migrate(cur, conn, "idx_org_memberships_org_state", "CREATE INDEX IF NOT EXISTS idx_org_memberships_org_state ON org_memberships(org_id, state);")
+            _safe_migrate(cur, conn, "idx_org_memberships_user_state", "CREATE INDEX IF NOT EXISTS idx_org_memberships_user_state ON org_memberships(user_id, state);")
 
             # --- Ledger indexes — these tables are aggregated on every leaderboard render;
             # at scale a sequential scan here is the next thing that falls over.
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
+            _safe_migrate(cur, conn, "idx_user_org_contrib_org", "CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
+            _safe_migrate(cur, conn, "idx_user_geo_contrib_type_value", "CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
 
             conn.commit()
 
