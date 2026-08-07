@@ -586,6 +586,14 @@ class QuizEngine:
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS scope_value VARCHAR(80);")
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description TEXT;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_utility_mid BIGINT;")
+                cur.execute("""
+                    UPDATE organizations 
+                    SET org_type = 'Team' 
+                    WHERE org_type = 'School' 
+                      AND (team_scope IN ('country', 'city', 'school') OR (team_scope = 'open' AND description IS NOT NULL));
+                """)
+
+
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
