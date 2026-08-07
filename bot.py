@@ -881,9 +881,13 @@ async def _start_command_inner(update: Update, context):
         await leaderboard_command(update, context)
         return
 
-    # Check and render fallback grade profile if mapped
+    # Setup is considered complete once city+country are on file — grade is entirely
+    # optional (it only affects the challenge-bonus multiplier) and must never gate
+    # whether a user is treated as "registered." This was the actual root cause of
+    # "setup complete" immediately followed by "you haven't finished setup" — two
+    # different, disagreeing definitions of "done" in the same flow.
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    if profile and profile.get("grade"):
+    if profile and profile.get("personal_city") and profile.get("personal_country"):
         asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
         await profile_command(update, context)
         from telegram import BotCommandScopeChat
@@ -897,6 +901,7 @@ async def _start_command_inner(update: Update, context):
         return
 
     keyboard = [
+        [InlineKeyboardButton("📍 SET MY LOCATION", callback_data="regloc_start|0")],
         [InlineKeyboardButton("🎒 Grade 6", callback_data="set_grade|6"),
          InlineKeyboardButton("🎒 Grade 8", callback_data="set_grade|8")],
         [InlineKeyboardButton("🎒 Grade 10", callback_data="set_grade|10"),
@@ -913,8 +918,10 @@ async def _start_command_inner(update: Update, context):
         chat_id=update.message.chat_id,
         html_content=(
             "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
-            "This is your first-time setup — pick your grade level below to unlock your "
-            "personal profile, scoreboard, and study team options:\n\n"
+            "This is your first-time setup — tap <b>📍 SET MY LOCATION</b> below to unlock your "
+            "personal profile, scoreboard, and study team options.\n\n"
+            "🎒 <i>Grade is completely optional — pick one now, later, or never (perfect if you're "
+            "not a school student). It only affects the challenge-bonus multiplier.</i>\n\n"
             "💡 <i>Tip: Tap the Public Nickname button to set your scoreboard handle! Otherwise, the bot will use your Telegram username or first name.</i>"
         ),
         reply_markup=reply_markup
@@ -928,8 +935,8 @@ async def profile_command(update: Update, context):
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
 
-    if not profile or not profile.get("grade"):
-        await update.message.reply_text("🎒 Please type /start first to configure your basic grade profile details.")
+    if not profile or not profile.get("personal_city") or not profile.get("personal_country"):
+        await update.message.reply_text("📍 Please type /start first to set your city and country.")
         return
 
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
@@ -1070,23 +1077,6 @@ async def name_command(update: Update, context):
             f"This name will now be used on round podiums and weekly grade leaderboards! 🏆",
             nav_kb
         )
-
-# async def leaderboard_command(update: Update, context):
-    #     user = update.effective_user
-    #     user_id = user.id
-    #     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-    #     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
-
-    #     from src.rendering.html_views import build_leaderboard_text, build_leaderboard_keyboard
-    #     profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    #     if not profile or not profile.get("grade"):
-    #         await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Please register your grade first by typing /start.")
-    #         return
-
-    #     rows = await asyncio.to_thread(db_get_weekly_leaderboard, profile['grade'])
-    #     text = build_leaderboard_text("grade", rows, profile)
-    #     kb = build_leaderboard_keyboard("grade", profile['grade'])
-    #     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 
 async def leaderboard_command(update: Update, context):
     user = update.effective_user

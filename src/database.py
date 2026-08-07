@@ -733,8 +733,11 @@ class QuizEngine:
             """)
 
             # --- Phase 2: split membership role from membership state ---
-            # THE critical line that kept failing to run — now fault-isolated from
-            # everything before it, so it runs regardless of what else breaks upstream.
+            # THIS is the block that was dedented outside the `with conn.cursor() as cur:`
+            # scope in the prior pass — cur was already closed by the time these ran, so
+            # every one of these silently failed via _safe_migrate's own except clause.
+            # Re-indented to the correct depth (inside `with conn.cursor() as cur:`) so it
+            # actually executes on a live cursor now.
             _safe_migrate(cur, conn, "org_memberships.state", "ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS state VARCHAR(10);")
             _safe_migrate(cur, conn, "backfill state from org_role", """
                 UPDATE org_memberships SET state = CASE

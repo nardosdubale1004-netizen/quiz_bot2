@@ -514,21 +514,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     if action == "set_grade":
         grade = int(d_id)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-
-        if not profile or not profile.get("org_id"):
-            await query.answer()
-            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 REGISTER MY SCHOOL", callback_data="regloc_start|0")]])
-            await edit_rich_message_safe(
-                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content=(
-                    "🎒 <b>Grade requires a school on file first</b>\n\n"
-                    "Grade selection is only for registered students right now — if you're not "
-                    "currently a student, you simply don't need one.\n\n"
-                    "Register your school, then come back here."
-                ),
-                reply_markup=nav_kb
-            )
-            return
+        # Grade no longer requires a school on file — it's a fully optional attribute
+        # anyone can set (student or not), purely for the challenge-bonus multiplier.
         previous_grade = profile.get("grade") if profile else None
 
         if previous_grade and grade < previous_grade:
@@ -594,15 +581,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         USER_STATES[user_id] = "IDLE"
         USER_PAYLOADS.pop(user_id, None)
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        if not profile or not profile.get("grade"):
-            # Was missing entirely on this action — every other profile entry point
-            # (profile_popup, /profile) had this guard, this one didn't, which is why
-            # tapping 👤 PROFILE silently "did nothing" after a failed school setup:
-            # build_profile_card_text(None, ...) threw, caught by the outer wrapper.
-            setup_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎒 FINISH SETUP", callback_data="regloc_start|0")]])
+        if not profile or not profile.get("personal_city") or not profile.get("personal_country"):
+            # Grade is optional and must never gate this — only city+country define
+            # "setup complete." Using the same check as _start_command_inner/profile_command
+            # so these three entry points can never disagree with each other again.
+            setup_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 FINISH SETUP", callback_data="regloc_start|0")]])
             await edit_rich_message_safe(
                 context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content="🎒 You haven't finished setup yet — set your grade and location first.",
+                html_content="📍 You haven't finished setup yet — set your city and country first.",
                 reply_markup=setup_kb
             )
             return
@@ -620,14 +606,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "profile_popup":
         await query.answer()
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        if not profile or not profile.get("grade"):
-            # "regloc_start_new" matched no handler at all — every tap silently fell
-            # through to the bottom-of-function fallback, which crashed on a None
-            # profile ("Something went wrong"). "regloc_start" is the real handler.
-            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎒 SET UP MY PROFILE", callback_data="regloc_start|0")]])
+        if not profile or not profile.get("personal_city") or not profile.get("personal_country"):
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET UP MY PROFILE", callback_data="regloc_start|0")]])
             await _open_utility_view(
                 context, user_id, query.message.chat_id,
-                "🎒 You haven't finished setup yet. Type /start to register your grade first.",
+                "📍 You haven't finished setup yet. Type /start to set your city and country first.",
                 nav_kb
             )
             return
