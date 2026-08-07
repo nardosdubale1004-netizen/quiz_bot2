@@ -698,7 +698,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "confirm_change":
         display_id, new_opt = int(d_id), int(data[2])
-        from src.database import db_is_tournament_round_still_open, db_edit_tournament_answer
+        from src.database import db_is_tournament_round_still_open, db_edit_tournament_answer, db_user_location_complete
+        if not await asyncio.to_thread(db_user_location_complete, user_id):
+            await query.answer("📍 Set your city & country first.", show_alert=True)
+            gate_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET MY LOCATION NOW", callback_data="regloc_start|0")]])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="🚫 Set your city &amp; country first before changing an answer.", reply_markup=gate_kb)
+            return
         track, question_data = await asyncio.to_thread(db_get_track_and_question, display_id)
         if not track or not question_data:
             await query.answer("This round is no longer available.", show_alert=True)
@@ -1514,21 +1519,86 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "fsm_create_org":
         await query.answer()
-        USER_STATES[user_id] = "AWAITING_ORG_NAME"
-        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id}
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 OPEN TEAM (anyone can join)", callback_data="create_team_open|0")],
+            [InlineKeyboardButton("🔒 DEDICATED TEAM (restricted)", callback_data="create_team_dedicated_menu|0")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data="fsm_cancel|alliance_portal")]
+        ])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=(
+                "<h2>✨ CREATE A TEAM</h2>\n"
+                "<blockquote>"
+                "🌐 <b>Open</b> — any student, from any city, country, or school, can join.\n\n"
+                "🔒 <b>Dedicated</b> — restricted to students who share your own country, city, "
+                "or school. Only options that match YOUR profile are offered."
+                "</blockquote>"
+            ),
+            reply_markup=kb
+        )
+        return
 
-        fsm_cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")
-        ]])
-        await query.edit_message_text(
-            (
-                "✍️ <b>PROMPT: CREATE SCHOOL TEAM</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Please type the full formal name of your school or study academy team:\n"
-                "<i>(Example: Abyssinia Academy)</i>"
-            ) + FSM_INPUT_HINT,
-            reply_markup=fsm_cancel_kb,
-            parse_mode="HTML"
+    elif action == "create_team_open":
+        await query.answer()
+        USER_STATES[user_id] = "AWAITING_ORG_NAME"
+        USER_PAYLOADS[user_id] = {"edit_mid": query.message.message_id, "team_scope": "open"}
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL & RETURN", callback_data="fsm_cancel|alliance_portal")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="✍️ <b>NEW OPEN TEAM — Name</b>\n\nType the full formal name of your team:" + FSM_INPUT_HINT,
+            reply_markup=cancel_kb
+        )
+        return
+
+    elif action == "create_team_dedicated_menu":
+        await query.answer()
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        if not profile:
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content="⚠️ Complete /start first.", reply_markup=return_kb)
+            return
+
+        country = profile.get("personal_country")
+        city = profile.get("personal_city")
+        has_school = bool(profile.get("org_id"))
+
+        rows = []
+        if country:
+            rows.append([InlineKeyboardButton(f"🌍 Dedicated to {country}", callback_data="create_team_dedicated|country")])
+        if city:
+            rows.append([InlineKeyboardButton(f"🏙️ Dedicated to {city}", callback_data="create_team_dedicated|city")])
+        if has_school:
+            rows.append([InlineKeyboardButton("🏫 Dedicated to my school", callback_data="create_team_dedicated|school")])
+        if not rows:
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content="⚠️ You need a city, country, or school on file first — set one from 📍 LOCATIONS &amp; SCHOOL.",
+                reply_markup=return_kb
+            )
+            return
+        rows.append([InlineKeyboardButton("🔙 BACK", callback_data="fsm_create_org|0")])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content="<h2>🔒 DEDICATED TEAM</h2>\nYou can only dedicate a team to what's already on YOUR own profile:",
+            reply_markup=InlineKeyboardMarkup(rows)
+        )
+        return
+
+    elif action == "create_team_dedicated":
+        await query.answer()
+        scope = d_id
+        profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        scope_value = {"country": profile.get("personal_country"), "city": profile.get("personal_city"),
+                        "school": profile.get("org_name")}.get(scope)
+        USER_STATES[user_id] = "AWAITING_ORG_NAME"
+        USER_PAYLOADS[user_id] = {
+            "edit_mid": query.message.message_id, "team_scope": scope, "scope_value": scope_value,
+            "org_city": profile.get("personal_city"), "org_country": profile.get("personal_country"),
+        }
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="create_team_dedicated_menu|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"✍️ <b>NEW TEAM — dedicated to {html.escape(str(scope_value))}</b>\n\nType the full formal name of your team:" + FSM_INPUT_HINT,
+            reply_markup=cancel_kb
         )
         return
 

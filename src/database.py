@@ -582,6 +582,9 @@ class QuizEngine:
                 """)
                 cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS team_scope VARCHAR(10) DEFAULT 'open';")
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS scope_value VARCHAR(80);")
+                cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description TEXT;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_utility_mid BIGINT;")
                 conn.commit()
 
@@ -2037,11 +2040,16 @@ def db_join_organization(user_id, org_tag: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
             row = cur.fetchone()
             if not row:
                 return None
             org_id, org_name, is_public, creator_id, country = row['org_id'], row['org_name'], row['is_public'], row['creator_id'], row['country']
+
+            if row.get('team_scope') and row['team_scope'] != 'open':
+                elig = db_check_team_scope_eligibility(user_id, org_id)
+                if not elig["eligible"]:
+                    return {"scope_blocked": True, "reason": elig["reason"], "org_name": org_name}
 
             cur.execute("SELECT org_role, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
             existing = cur.fetchone()
@@ -2097,10 +2105,15 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
             row = cur.fetchone()
             if not row:
                 return None
+
+            if row.get('team_scope') and row['team_scope'] != 'open':
+                elig = db_check_team_scope_eligibility(user_id, int(org_id))
+                if not elig["eligible"]:
+                    return {"scope_blocked": True, "reason": elig["reason"], "org_name": row['org_name']}
 
             cur.execute("SELECT org_role, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
             existing = cur.fetchone()
@@ -2131,6 +2144,81 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
+def db_check_team_scope_eligibility(user_id, org_id: int) -> dict:
+    """Returns {'eligible': bool, 'reason': str|None, 'scope': str, 'scope_value': str|None}.
+    A dedicated team only accepts joiners whose OWN profile (personal or org-derived) matches
+    the scope it was created for. Open teams always pass."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT team_scope, scope_value, city, country FROM organizations WHERE org_id = %s;", (int(org_id),))
+            org = cur.fetchone()
+            if not org or org['team_scope'] == 'open':
+                return {"eligible": True, "reason": None, "scope": org['team_scope'] if org else 'open', "scope_value": None}
+
+            cur.execute("""
+                SELECT COALESCE(o.country, u.personal_country) AS country,
+                       COALESCE(o.city, u.personal_city) AS city
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                WHERE u.user_id = %s
+                LIMIT 1;
+            """, (str(user_id),))
+            joiner = cur.fetchone() or {}
+
+            scope = org['team_scope']
+            if scope == 'country':
+                ok = joiner.get('country') == org['scope_value']
+            elif scope == 'city':
+                ok = joiner.get('city') == org['scope_value']
+            elif scope == 'school':
+                # School-dedicated just means: this IS the school team — joining it directly
+                # is always allowed (that's the normal join path); scope restriction here
+                # only matters for the "create your own dedicated team" flow, not joining.
+                ok = True
+            else:
+                ok = True
+
+            reason = None if ok else f"This team is only open to students in {org['scope_value']}."
+            return {"eligible": ok, "reason": reason, "scope": scope, "scope_value": org['scope_value']}
+    except Exception as e:
+        print(f"[DB ERROR] db_check_team_scope_eligibility: {e}", flush=True)
+        return {"eligible": True, "reason": None, "scope": "open", "scope_value": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: str, team_scope: str,
+                                      scope_value: str, description: str, city: str, country: str) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO organizations (org_name, org_tag, creator_id, org_type, is_public, city, country,
+                                            join_token, team_scope, scope_value, description)
+                VALUES (%s, UPPER(%s), %s, 'School', TRUE, %s, %s, %s, %s, %s, %s)
+                RETURNING org_id;
+            """, (org_name, org_tag, str(creator_id), city, country, secrets.token_hex(16), team_scope, scope_value, description))
+            org_id = cur.fetchone()['org_id']
+            cur.execute("""
+                INSERT INTO org_memberships (user_id, org_id, org_role) VALUES (%s, %s, 'creator')
+                ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role;
+            """, (str(creator_id), org_id))
+            conn.commit()
+            return org_id
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_create_dedicated_organization: {e}", flush=True)
+        raise e
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+            
 
 def db_join_organization_by_token(user_id, join_token: str) -> dict:
     conn = None
@@ -2725,18 +2813,18 @@ def db_get_country_leaderboard():
 # --- HIERARCHICAL DRILL-DOWN: World -> Country -> City -> School -> Grade ---
 
 def db_get_countries_ranked(limit: int = 15, offset: int = 0):
+    """Ranked by the ledger (user_geo_contributions), not live personal_country — a student
+    who's since moved still leaves their historical marks counted here for the OLD country."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COALESCE(o.country, u.personal_country) AS country,
-                       SUM(u.total_marks) AS total_score, COUNT(DISTINCT u.user_id) AS student_count
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
-                GROUP BY country
+                SELECT geo_value AS country, SUM(marks)::int AS total_score,
+                       COUNT(DISTINCT user_id) AS student_count
+                FROM user_geo_contributions
+                WHERE geo_type = 'country'
+                GROUP BY geo_value
                 ORDER BY total_score DESC
                 LIMIT %s OFFSET %s;
             """, (limit, offset))
@@ -2895,35 +2983,35 @@ def db_count_countries_ranked() -> int:
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_country_detail(country: str):
-    """Returns this country's world rank/score plus every city within it, ranked."""
+    """Returns this country's world rank/score plus every city within it, ranked — all from
+    the frozen ledger, not live personal_country/personal_city."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 WITH ranked AS (
-                    SELECT COALESCE(o.country, u.personal_country) AS country,
-                           SUM(u.total_marks) AS total_score,
-                           RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS world_rank
-                    FROM user_stats u
-                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                    LEFT JOIN organizations o ON m.org_id = o.org_id
-                    WHERE COALESCE(o.country, u.personal_country) IS NOT NULL
-                    GROUP BY country
+                    SELECT geo_value AS country, SUM(marks)::int AS total_score,
+                           RANK() OVER (ORDER BY SUM(marks) DESC) AS world_rank
+                    FROM user_geo_contributions WHERE geo_type = 'country'
+                    GROUP BY geo_value
                 )
                 SELECT * FROM ranked WHERE country = %s;
             """, (country,))
             summary = cur.fetchone()
 
+            # Cities within this country: join each student's city-ledger row to whichever
+            # country-ledger row they also have, scoped to this country. Two students who
+            # both contributed to "Addis Ababa" while in different countries (moved) stay
+            # correctly separated because the join is per-user, not just by name.
             cur.execute("""
-                SELECT COALESCE(o.city, u.personal_city) AS city,
-                       SUM(u.total_marks) AS total_score, COUNT(DISTINCT u.user_id) AS student_count
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.country, u.personal_country) = %s
-                  AND COALESCE(o.city, u.personal_city) IS NOT NULL
-                GROUP BY city
+                SELECT gc.geo_value AS city, SUM(gc.marks)::int AS total_score,
+                       COUNT(DISTINCT gc.user_id) AS student_count
+                FROM user_geo_contributions gc
+                JOIN user_geo_contributions gco
+                  ON gco.user_id = gc.user_id AND gco.geo_type = 'country' AND gco.geo_value = %s
+                WHERE gc.geo_type = 'city'
+                GROUP BY gc.geo_value
                 ORDER BY total_score DESC
                 LIMIT 15;
             """, (country,))
@@ -2937,39 +3025,34 @@ def db_get_country_detail(country: str):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_city_detail(city: str, country: str = None):
-    """Returns this city's world + country rank/score plus every school within it, ranked."""
+    """Returns this city's world + country rank/score plus every school within it, ranked —
+    city/country totals from the geo ledger, school totals from the org ledger."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 WITH ranked AS (
-                    SELECT COALESCE(o.city, u.personal_city) AS city,
-                           COALESCE(o.country, u.personal_country) AS country,
-                           SUM(u.total_marks) AS total_score,
-                           RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS world_rank
-                    FROM user_stats u
-                    LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                    LEFT JOIN organizations o ON m.org_id = o.org_id
-                    WHERE COALESCE(o.city, u.personal_city) IS NOT NULL
-                    GROUP BY city, country
+                    SELECT geo_value AS city, SUM(marks)::int AS total_score,
+                           RANK() OVER (ORDER BY SUM(marks) DESC) AS world_rank
+                    FROM user_geo_contributions WHERE geo_type = 'city'
+                    GROUP BY geo_value
                 )
-                SELECT * FROM ranked WHERE city = %s AND (%s::text IS NULL OR country = %s);
-            """, (city, country, country))
+                SELECT * FROM ranked WHERE city = %s;
+            """, (city,))
             summary = cur.fetchone()
 
             country_rank = None
             if country:
                 cur.execute("""
                     WITH ranked AS (
-                        SELECT COALESCE(o.city, u.personal_city) AS city,
-                               SUM(u.total_marks) AS total_score,
-                               RANK() OVER (ORDER BY SUM(u.total_marks) DESC) AS country_rank
-                        FROM user_stats u
-                        LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                        LEFT JOIN organizations o ON m.org_id = o.org_id
-                        WHERE COALESCE(o.country, u.personal_country) = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
-                        GROUP BY city
+                        SELECT gc.geo_value AS city, SUM(gc.marks)::int AS total_score,
+                               RANK() OVER (ORDER BY SUM(gc.marks) DESC) AS country_rank
+                        FROM user_geo_contributions gc
+                        JOIN user_geo_contributions gco
+                          ON gco.user_id = gc.user_id AND gco.geo_type = 'country' AND gco.geo_value = %s
+                        WHERE gc.geo_type = 'city'
+                        GROUP BY gc.geo_value
                     )
                     SELECT country_rank FROM ranked WHERE city = %s;
                 """, (country, city))
@@ -2977,10 +3060,10 @@ def db_get_city_detail(city: str, country: str = None):
                 country_rank = r['country_rank'] if r else None
 
             cur.execute("""
-                SELECT o.org_id, o.org_name, o.org_tag, SUM(u.total_marks) AS total_score, COUNT(DISTINCT u.user_id) AS student_count
+                SELECT o.org_id, o.org_name, o.org_tag, SUM(c.marks)::int AS total_score,
+                       COUNT(DISTINCT c.user_id) AS student_count
                 FROM organizations o
-                JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
-                JOIN user_stats u ON m.user_id = u.user_id
+                JOIN user_org_contributions c ON c.org_id = o.org_id
                 WHERE o.city = %s AND o.deleted_at IS NULL
                 GROUP BY o.org_id, o.org_name, o.org_tag
                 ORDER BY total_score DESC
@@ -2998,17 +3081,17 @@ def db_get_city_detail(city: str, country: str = None):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_schools_ranked(city: str = None, country: str = None, limit: int = 15, offset: int = 0):
-    """Alphabetical school listing, optionally scoped to a city or country."""
+    """Alphabetical school listing, optionally scoped to a city or country. Score is the
+    frozen org-contribution ledger total, not live member sums."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT o.org_id, o.org_name, o.org_tag, o.city, o.country,
-                       COALESCE(SUM(u.total_marks), 0) AS total_score
+                       COALESCE(SUM(c.marks), 0)::int AS total_score
                 FROM organizations o
-                LEFT JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
-                LEFT JOIN user_stats u ON m.user_id = u.user_id
+                LEFT JOIN user_org_contributions c ON c.org_id = o.org_id
                 WHERE o.deleted_at IS NULL
                   AND (%s::text IS NULL OR o.city = %s)
                   AND (%s::text IS NULL OR o.country = %s)
@@ -3102,7 +3185,7 @@ def db_get_org_contribution_total(org_id: int) -> int:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_get_grade_world_ranked(limit: int = 10, offset: int = 0):
     """All registered grades, ranked by combined student marks — the entry list for the
     grade drill-down, mirroring db_get_countries_ranked."""

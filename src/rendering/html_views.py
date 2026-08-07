@@ -712,10 +712,18 @@ def build_organization_card_text(org: dict, roster: list, sort_field: str = "sco
             )
         branch_block = f"\n<h3>🏢 Branches</h3>\n<table>{''.join(b_rows)}</table>"
 
+    scope = org.get("team_scope")
+    scope_value = org.get("scope_value")
+    scope_line = ""
+    if scope and scope != "open":
+        scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value or ''))}</b>\n"
+    desc_line = f"<i>{html.escape(org['description'])}</i>\n" if org.get("description") else ""
+
     return (
         f"<h2>🏫 {name}</h2>\n"
         f"<code>#{tag}</code> · {org_type} · {privacy}\n"
         f"📍 {city}, {country}\n"
+        f"{scope_line}{desc_line}"
         f"<hr/>\n"
         f"<b>{len(roster)}</b> members · <b>{total_score}</b> total marks · <b>{avg_score}</b> average\n"
         f"<hr/>\n"

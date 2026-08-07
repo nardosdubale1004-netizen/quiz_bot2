@@ -963,6 +963,14 @@ async def school_command(update: Update, context):
     tag = context.args[0].strip()
     join_data = await asyncio.to_thread(db_join_organization, user_id, tag)
 
+    if join_data and join_data.get("scope_blocked"):
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
+            f"🔒 <b>{html.escape(join_data['org_name'])}</b> is a dedicated team.\n\n{join_data['reason']}",
+            nav_kb
+        )
+        return
+
     if not join_data:
         await _open_utility_view(
             context, user_id, update.message.chat_id,
@@ -1467,7 +1475,7 @@ async def handle_fsm_message(update: Update, context):
                 return
 
             similar = await asyncio.to_thread(db_find_similar_organizations, clean_org_name)
-            if similar:
+            if similar and not session.get("team_scope"):
                 USER_PAYLOADS[user_id] = {**USER_PAYLOADS.get(user_id, {}), "org_name": clean_org_name, "edit_mid": edit_mid}
                 USER_STATES[user_id] = "IDLE"
 
@@ -1504,7 +1512,9 @@ async def handle_fsm_message(update: Update, context):
 
             prefilled_city = USER_PAYLOADS[user_id].get("org_city")
             prefilled_country = USER_PAYLOADS[user_id].get("org_country")
-            if prefilled_city and prefilled_country:
+            is_dedicated_creation = bool(USER_PAYLOADS[user_id].get("team_scope"))
+
+            if prefilled_city and prefilled_country and not is_dedicated_creation:
                 org_name = USER_PAYLOADS[user_id]["org_name"]
                 # Nothing is written to the DB yet — stage it and let the user confirm
                 # on the review screen (matches every other pending-approval path).
@@ -1515,6 +1525,16 @@ async def handle_fsm_message(update: Update, context):
                 USER_STATES[user_id] = "IDLE"
                 from src.callbacks import _regloc_show_review
                 await _regloc_show_review(context, update.message.chat_id, edit_mid, user_id)
+                return
+
+            if prefilled_city and prefilled_country and is_dedicated_creation:
+                USER_STATES[user_id] = "AWAITING_ORG_DESCRIPTION"
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    "✍️ <b>ONE LAST THING — Team Description</b>\n\n"
+                    "Write a short, amazing description so other students know what your team is about:" + FSM_INPUT_HINT,
+                    cancel_kb
+                )
                 return
 
             USER_STATES[user_id] = "AWAITING_ORG_CITY"
@@ -1554,20 +1574,51 @@ async def handle_fsm_message(update: Update, context):
                 await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Invalid country name.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
                 return
 
+            USER_PAYLOADS[user_id]["org_country"] = clean_country
+            USER_STATES[user_id] = "AWAITING_ORG_DESCRIPTION"
+            await _fsm_advance(
+                context, update.message.chat_id, edit_mid,
+                "✍️ <b>ONE LAST THING — Team Description</b>\n\n"
+                "Write a short, amazing description so other students know what your team is about:" + FSM_INPUT_HINT,
+                cancel_kb
+            )
+
+        elif state == "AWAITING_ORG_DESCRIPTION":
+            clean_desc = text_input[:300].strip()
+            if not clean_desc:
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Description can't be empty.\n\n<i>Try again, or /cancel.</i>", cancel_kb)
+                return
+
             org_name = USER_PAYLOADS[user_id]["org_name"]
             org_tag = USER_PAYLOADS[user_id]["org_tag"]
             org_city = USER_PAYLOADS[user_id]["org_city"]
+            org_country = USER_PAYLOADS[user_id]["org_country"]
+            team_scope = USER_PAYLOADS[user_id].get("team_scope", "open")
+            scope_value = USER_PAYLOADS[user_id].get("scope_value")
 
             try:
-                await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "School", True, org_city, clean_country)
+                if team_scope != "open":
+                    await asyncio.to_thread(db_create_dedicated_organization, org_name, org_tag, user_id, team_scope, scope_value, clean_desc, org_city, org_country)
+                else:
+                    from src.database import GLOBAL_ENGINE as _GE
+                    new_org_id = await asyncio.to_thread(db_create_organization, org_name, org_tag, user_id, "School", True, org_city, org_country)
+                    conn2 = _GE.get_db_connection()
+                    try:
+                        with conn2.cursor() as cur2:
+                            cur2.execute("UPDATE organizations SET description = %s WHERE org_id = %s;", (clean_desc, new_org_id))
+                            conn2.commit()
+                    finally:
+                        _GE.release_connection(conn2)
+
                 USER_STATES[user_id] = "IDLE"
                 USER_PAYLOADS.pop(user_id, None)
+                scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value))}</b>" if team_scope != "open" else "🌐 Open to everyone"
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
-                    f"✅ <b>Alliance Registered Successfully!</b>\n\n"
-                    f"🏫 Institution: <b>{org_name}</b>\n"
-                    f"🔑 Short Domain Tag: <code>#{org_tag}</code>\n"
-                    f"📍 Location: <b>{org_city}, {clean_country}</b>\n\n"
+                    f"✅ <b>Team Registered!</b>\n\n"
+                    f"🏫 <b>{org_name}</b> <code>#{org_tag}</code>\n"
+                    f"{scope_line}\n"
+                    f"📍 {org_city}, {org_country}\n\n"
                     f"Share your team's invite link (from the team page) so students can join directly.",
                     profile_nav_kb
                 )
