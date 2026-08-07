@@ -587,14 +587,60 @@ class QuizEngine:
                 cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description TEXT;")
                 cur.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_utility_mid BIGINT;")
                 cur.execute("""
-                    UPDATE organizations 
-                    SET org_type = 'Team' 
-                    WHERE org_type = 'School' 
-                      AND (team_scope IN ('country', 'city', 'school') OR (team_scope = 'open' AND description IS NOT NULL));
-                """)
+                UPDATE organizations
+                SET org_type = 'Team'
+                WHERE org_type = 'School'
+                  AND (team_scope IN ('country', 'city', 'school') OR (team_scope = 'open' AND description IS NOT NULL));
+            """)
 
+            # --- Phase 1: single source-of-truth location table ---
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_locations (
+                    user_id VARCHAR(20) PRIMARY KEY REFERENCES user_stats(user_id) ON DELETE CASCADE,
+                    city VARCHAR(50),
+                    country VARCHAR(50),
+                    status VARCHAR(10) DEFAULT 'approved' CHECK (status IN ('approved', 'pending')),
+                    suggestion_id INT,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_locations_country ON user_locations(country);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_locations_city ON user_locations(city);")
 
-                conn.commit()
+            # One-time backfill from the old scattered columns on user_stats — only runs while
+            # those columns still exist; safe no-op once they're dropped in a later pass.
+            cur.execute("""
+                INSERT INTO user_locations (user_id, city, country, status, suggestion_id, updated_at)
+                SELECT user_id, personal_city, personal_country,
+                       CASE WHEN personal_city_status = 'pending' THEN 'pending' ELSE 'approved' END,
+                       pending_city_suggestion_id, NOW()
+                FROM user_stats
+                WHERE personal_city IS NOT NULL OR personal_country IS NOT NULL
+                ON CONFLICT (user_id) DO NOTHING;
+            """)
+
+            # --- Phase 2: split membership role from membership state ---
+            cur.execute("ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS state VARCHAR(10);")
+            cur.execute("""
+                UPDATE org_memberships SET state = CASE
+                    WHEN org_role IN ('pending', 'rejected', 'left') THEN org_role
+                    ELSE 'active'
+                END WHERE state IS NULL;
+            """)
+            cur.execute("""
+                UPDATE org_memberships SET org_role = 'member'
+                WHERE org_role IN ('pending', 'rejected', 'left');
+            """)
+            cur.execute("ALTER TABLE org_memberships ALTER COLUMN state SET DEFAULT 'pending';")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_memberships_org_state ON org_memberships(org_id, state);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_memberships_user_state ON org_memberships(user_id, state);")
+
+            # --- Ledger indexes — these tables are aggregated on every leaderboard render;
+            # at scale a sequential scan here is the next thing that falls over.
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
+
+            conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
             print(f"{Style.GREEN}[DATABASE] Many-to-many organizations and roster schemas verified.{Style.RESET}")
@@ -1596,16 +1642,18 @@ def db_get_user_profile(user_id):
         with conn.cursor() as cur:
             cur.execute("""
                         SELECT u.*,
-                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.org_role)
+                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.role)
                                 FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
                                 WHERE m.user_id = u.user_id AND o.org_type = 'School' AND o.deleted_at IS NULL
-                                  AND m.org_role NOT IN ('pending','rejected','left')
+                                  AND m.state = 'active'
                                 ORDER BY m.joined_at DESC LIMIT 1) AS school_info,
-                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.org_role)
+                               (SELECT jsonb_build_object('org_id', o.org_id, 'org_name', o.org_name, 'org_tag', o.org_tag, 'org_role', m.role)
                                 FROM organizations o JOIN org_memberships m ON o.org_id = m.org_id
                                 WHERE m.user_id = u.user_id AND o.org_type = 'Team' AND o.deleted_at IS NULL
-                                  AND m.org_role NOT IN ('pending','rejected','left')
-                                ORDER BY m.joined_at DESC LIMIT 1) AS team_info
+                                  AND m.state = 'active'
+                                ORDER BY m.joined_at DESC LIMIT 1) AS team_info,
+                               (SELECT jsonb_build_object('city', l.city, 'country', l.country, 'status', l.status)
+                                FROM user_locations l WHERE l.user_id = u.user_id) AS location_info
                         FROM user_stats u
                         WHERE u.user_id = %s;
                     """, (str(user_id),))
@@ -1615,6 +1663,7 @@ def db_get_user_profile(user_id):
             result = dict(row)
             school_info = result.pop("school_info", None) or {}
             team_info = result.pop("team_info", None) or {}
+            location_info = result.pop("location_info", None) or {}
             result["org_id"] = school_info.get("org_id")
             result["org_name"] = school_info.get("org_name")
             result["org_tag"] = school_info.get("org_tag")
@@ -1623,6 +1672,9 @@ def db_get_user_profile(user_id):
             result["team_name"] = team_info.get("org_name")
             result["team_tag"] = team_info.get("org_tag")
             result["team_role"] = team_info.get("org_role")
+            result["personal_city"] = location_info.get("city")
+            result["personal_country"] = location_info.get("country")
+            result["personal_city_status"] = location_info.get("status")
             user_profile_cache.set(cache_key, result)
             return result
     except Exception as e:
@@ -3311,33 +3363,9 @@ def db_get_grade_detail(grade: int):
 
             
 def db_update_user_location(user_id, city: str, country: str):
-    """Sets the student's personal city/country AND auto-derives their timezone from the
-    country (used for city/country leaderboards while unlinked from a team, and to render
-    every DM-facing timestamp in their own local time)."""
-    from src.geo import get_timezone_for_country
-    tz_name = get_timezone_for_country(country)
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO user_stats (user_id, personal_city, personal_country, timezone, total, correct, total_marks)
-                VALUES (%s, %s, %s, %s, 0, 0, 0)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    personal_city = EXCLUDED.personal_city,
-                    personal_country = EXCLUDED.personal_country,
-                    timezone = EXCLUDED.timezone;
-            """, (str(user_id), city, country, tz_name))
-            user_profile_cache.invalidate(f"profile:{user_id}")
-            conn.commit()
-            return True
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] Failed to update user location: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
+    """Sets a known/approved city+country. Thin wrapper — db_set_user_location is now the
+    single writer for every location mutation everywhere in the app."""
+    return db_set_user_location(user_id, city=city, country=country, status="approved", suggestion_id=None)
 
 def db_get_cities_for_country(country: str):
     conn = None
@@ -4182,19 +4210,27 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
 
             affected_users = []
             if sug['kind'] == 'city':
+                # Single writer, single call — structurally impossible now to update
+                # only 2 of the 4 related fields and leave the record inconsistent,
+                # which is exactly what caused the original bug.
+                submitter = sug['submitted_by']
                 if approve:
-                    cur.execute("""
-                        UPDATE user_stats SET personal_city_status = 'approved'
-                        WHERE pending_city_suggestion_id = %s;
-                    """, (int(suggestion_id),))
+                    cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s AND suggestion_id = %s;",
+                                (submitter, int(suggestion_id)))
+                    loc = cur.fetchone()
+                    if loc:
+                        cur.execute("""
+                            UPDATE user_locations SET status = 'approved', updated_at = NOW()
+                            WHERE user_id = %s AND suggestion_id = %s;
+                        """, (submitter, int(suggestion_id)))
                 else:
                     cur.execute("""
-                        UPDATE user_stats
-                        SET personal_city = NULL, personal_country = NULL,
-                            personal_city_status = NULL, pending_city_suggestion_id = NULL
-                        WHERE pending_city_suggestion_id = %s;
-                    """, (int(suggestion_id),))
-                affected_users = [sug['submitted_by']]
+                        UPDATE user_locations SET city = NULL, country = NULL, status = NULL,
+                            suggestion_id = NULL, updated_at = NOW()
+                        WHERE user_id = %s AND suggestion_id = %s;
+                    """, (submitter, int(suggestion_id)))
+                user_profile_cache.invalidate(f"profile:{submitter}")
+                affected_users = [submitter]
             elif sug['kind'] == 'school' and sug.get('org_id'):
                 if approve:
                     cur.execute("UPDATE organizations SET status = 'approved' WHERE org_id = %s;", (sug['org_id'],))
@@ -4218,19 +4254,18 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
 
 
 def db_user_location_complete(user_id) -> bool:
-    """Gate check: a student must have BOTH a city and a country on file — approved OR still
-    pending review, either counts — before submitting a new answer. A rejected city is cleared
-    entirely by db_resolve_location_suggestion above, which is exactly what re-triggers this
-    gate. Fails OPEN on a DB error — a hiccup here should never lock out every student at once."""
+    """Gate check against the single source of truth: a student must have BOTH a city and
+    a country on file — approved OR still pending review, either counts. Fails OPEN on a
+    DB error — a hiccup here should never lock out every student at once."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT personal_city, personal_country FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s;", (str(user_id),))
             row = cur.fetchone()
             if not row:
                 return False
-            return bool(row.get("personal_city")) and bool(row.get("personal_country"))
+            return bool(row.get("city")) and bool(row.get("country"))
     except Exception as e:
         print(f"[DB ERROR] db_user_location_complete: {e}", flush=True)
         return True
@@ -4275,29 +4310,8 @@ def db_get_location_suggestion_thread(suggestion_id: int):
 
 
 def db_set_user_pending_city(user_id, city: str, country: str, suggestion_id: int) -> bool:
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO user_stats (user_id, personal_city, personal_country, personal_city_status, pending_city_suggestion_id, total, correct, total_marks)
-                VALUES (%s, %s, %s, 'pending', %s, 0, 0, 0)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    personal_city = EXCLUDED.personal_city,
-                    personal_country = EXCLUDED.personal_country,
-                    personal_city_status = 'pending',
-                    pending_city_suggestion_id = EXCLUDED.pending_city_suggestion_id;
-            """, (str(user_id), city, country, suggestion_id))
-            user_profile_cache.invalidate(f"profile:{user_id}")
-            conn.commit()
-            return True
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] Failed to set pending city: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
+    """Thin wrapper — db_set_user_location is now the single writer."""
+    return db_set_user_location(user_id, city=city, country=country, status="pending", suggestion_id=suggestion_id)
 
 
 def db_get_all_admin_ids_cached():
@@ -5602,6 +5616,61 @@ def db_get_user_rank_summary(user_id) -> dict:
     except Exception as e:
         print(f"[DB ERROR] db_get_user_rank_summary: {e}", flush=True)
         return {"team_rank": None, "school_rank": None, "city_rank": None, "country_rank": None, "world_rank": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_user_location(user_id) -> dict:
+    """The ONLY function that should ever read a user's location. Returns
+    {'city':..., 'country':..., 'status':..., 'suggestion_id':...} or all-None if unset."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT city, country, status, suggestion_id FROM user_locations WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            return dict(row) if row else {"city": None, "country": None, "status": None, "suggestion_id": None}
+    except Exception as e:
+        print(f"[DB ERROR] db_get_user_location: {e}", flush=True)
+        return {"city": None, "country": None, "status": None, "suggestion_id": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_user_location(user_id, city: str = None, country: str = None, status: str = "approved", suggestion_id: int = None) -> bool:
+    """The ONLY function that should ever WRITE a user's location. Every caller — approve, reject,
+    change city, leave city, admin override — goes through this single upsert instead of hand-rolled
+    UPDATE statements touching a subset of fields. Passing city=None AND country=None clears the
+    location entirely (used on reject). Also keeps timezone in sync when country is set."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            if city is None and country is None:
+                cur.execute("""
+                    UPDATE user_locations SET city = NULL, country = NULL, status = NULL,
+                        suggestion_id = NULL, updated_at = NOW()
+                    WHERE user_id = %s;
+                """, (str(user_id),))
+            else:
+                cur.execute("""
+                    INSERT INTO user_locations (user_id, city, country, status, suggestion_id, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        city = EXCLUDED.city, country = EXCLUDED.country, status = EXCLUDED.status,
+                        suggestion_id = EXCLUDED.suggestion_id, updated_at = NOW();
+                """, (str(user_id), city, country, status, suggestion_id))
+                if country:
+                    cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;",
+                                (get_timezone_for_country(country), str(user_id)))
+            conn.commit()
+            user_profile_cache.invalidate(f"profile:{user_id}")
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_set_user_location: {e}", flush=True)
+        return False
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
