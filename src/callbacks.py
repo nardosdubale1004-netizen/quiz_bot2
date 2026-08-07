@@ -542,6 +542,47 @@ async def _open_utility_view(context, user_id, chat_id, html_content, reply_mark
     return await open_utility_view(context.bot, None, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
 
 
+async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str):
+    from src.database import (
+        db_get_team_membership_homogeneity, db_get_team_scope_ranks, db_get_org_member_matrix,
+        db_count_org_members, db_count_org_left_members, db_get_org_admin_ids,
+    )
+    from src.rendering.html_views import build_team_details_text, build_team_rank_table_text, build_team_details_keyboard
+
+    conn = engine_ref = None
+    from src.database import GLOBAL_ENGINE
+    conn = GLOBAL_ENGINE.get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM organizations WHERE org_id = %s;", (org_id,))
+            org = cur.fetchone()
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s AND state = 'active';", (str(user_id), org_id))
+            membership = cur.fetchone()
+    finally:
+        GLOBAL_ENGINE.release_connection(conn)
+
+    if not org:
+        await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content="⚠️ Team not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 OPEN MY DASHBOARD", callback_data="privacy_menu|0")]]))
+        return
+
+    user_role = membership.get("org_role") if membership else "member"
+    is_admin_here = user_role in ("creator", "admin")
+    is_creator = (user_role == "creator")
+
+    geo = await asyncio.to_thread(db_get_team_membership_homogeneity, org_id)
+    scope_ranks = await asyncio.to_thread(db_get_team_scope_ranks, org_id)
+    member_count = await asyncio.to_thread(db_count_org_members, org_id, None)
+    left_count = await asyncio.to_thread(db_count_org_left_members, org_id) if is_admin_here else 0
+    grade_count = await asyncio.to_thread(db_count_org_members, org_id, grade_filter)
+    matrix = await asyncio.to_thread(db_get_org_member_matrix, org_id, grade_filter, sort_field, sort_dir, 15, 0)
+
+    info_text = build_team_details_text(org, geo, scope_ranks, member_count, left_count, is_admin_here)
+    table_text = build_team_rank_table_text(matrix, grade_filter, grade_count)
+    kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator)
+
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=f"{info_text}\n\n{table_text}", reply_markup=kb)
+
+    
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
     data = query.data.split("|")
@@ -1213,64 +1254,20 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "view_org":
         await query.answer()
-        parts = d_id.split(":")
-        org_id = int(parts[0])
-        sort_field = parts[1] if len(parts) > 1 else "score"
-        sort_dir = parts[2] if len(parts) > 2 else "desc"
+        org_id = int(d_id)
+        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc")
+        return
 
-        conn = engine.get_db_connection()
-        org_details = None
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM organizations WHERE org_id = %s;", (org_id,))
-                org_details = cur.fetchone()
-        finally:
-            engine.release_connection(conn)
+    elif action == "team_grade_filter":
+        await query.answer()
+        org_id, gf, sort_field, sort_dir = int(d_id), data[2], data[3], data[4]
+        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, gf, sort_field, sort_dir)
+        return
 
-        if not org_details:
-            await query.edit_message_text("⚠️ Organization not found.", reply_markup=return_kb)
-            return
-
-        roster = await asyncio.to_thread(db_get_organization_roster, org_id)
-        from src.database import db_get_org_rank_summary, db_get_org_grade_breakdown
-        rank_summary = await asyncio.to_thread(db_get_org_rank_summary, org_id)
-        grade_rows = await asyncio.to_thread(db_get_org_grade_breakdown, org_id)
-        text = build_organization_card_text(org_details, roster, sort_field, sort_dir)
-        from src.rendering.html_views import build_organization_grade_breakdown_text
-        grade_text = build_organization_grade_breakdown_text(grade_rows)
-        if grade_text:
-            text += f"\n{grade_text}"
-        rank_bits = []
-        if rank_summary.get("city_rank"):
-            rank_bits.append(f"🌆 City #{rank_summary['city_rank']}")
-        if rank_summary.get("country_rank"):
-            rank_bits.append(f"🌍 Country #{rank_summary['country_rank']}")
-        if rank_summary.get("world_rank"):
-            rank_bits.append(f"🏆 World #{rank_summary['world_rank']}")
-        if rank_bits:
-            text = text.replace("<hr/>\n<b>", f"{' · '.join(rank_bits)}\n<hr/>\n<b>", 1)
-
-        user_membership = next((m for m in roster if int(m['user_id']) == int(user_id)), None)
-        user_role = user_membership.get("org_role") if user_membership else "member"
-        is_admin_here = user_role in ("creator", "admin")
-
-        def _sort_btn(field, label):
-            nxt = "asc" if (sort_field == field and sort_dir == "desc") else "desc"
-            arrow = ("↑" if nxt == "asc" else "↓") if sort_field == field else ""
-            return InlineKeyboardButton(f"{label} {arrow}".strip(), callback_data=f"view_org|{org_id}:{field}:{nxt}")
-
-        buttons = [[_sort_btn("score", "🏆"), _sort_btn("name", "🔤"), _sort_btn("date", "📅")]]
-        if is_admin_here:
-            buttons.append([InlineKeyboardButton("📋 MEMBERS & REQUESTS", callback_data=f"org_history|{org_id}")])
-        buttons.append([InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_warn|{org_id}")])
-        if user_role == "creator":
-            buttons.append([InlineKeyboardButton("💥 DISSOLVE TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
-        buttons.append([InlineKeyboardButton("🔗 INVITE LINK", callback_data=f"team_invite|{org_id}")])
-        buttons.append([
-            InlineKeyboardButton("🔙 TEAMS", callback_data="alliance_portal|0"),
-            InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")
-        ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
+    elif action == "team_sort":
+        await query.answer()
+        org_id, gf, sort_field, sort_dir = int(d_id), data[2], data[3], data[4]
+        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, gf, sort_field, sort_dir)
         return
 
     elif action == "leave_org_warn":
@@ -2101,8 +2098,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
         bot_username = CONFIG.get("bot_username") or (await context.bot.get_me()).username
         invite_link = f"https://t.me/{bot_username}?start=join_{row['join_token']}"
-        invite_text = f"🔗 <b>INVITE LINK FOR {row['org_name']}</b>\n\nShare this link — anyone who opens it joins (or requests to join) your team automatically:\n\n<code>{invite_link}</code>"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]])
+        # THE FIX: this used to render as plain <code> text — copyable, but not
+        # something you could tap to actually open. Now a real hyperlink that opens
+        # the join flow directly, with the raw link still shown below for sharing/copy.
+        invite_text = (
+            f"🔗 <b>INVITE LINK FOR {html.escape(row['org_name'])}</b>\n\n"
+            f"Tap below to preview the join screen yourself, or share the link so anyone who opens it "
+            f"joins (or requests to join) your team automatically:\n\n"
+            f"<a href='{invite_link}'>{invite_link}</a>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔗 OPEN INVITE LINK", url=invite_link)],
+            [InlineKeyboardButton("🔙 BACK TO TEAM", callback_data=f"view_org|{org_id}")]
+        ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=invite_text, reply_markup=kb)
         return
 

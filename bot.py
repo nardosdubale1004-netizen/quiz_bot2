@@ -1970,8 +1970,14 @@ async def handle_fsm_message(update: Update, context):
             USER_STATES[user_id] = "IDLE"
             USER_PAYLOADS.pop(user_id, None)
 
+            # THE FIX: db_get_user_timezone is already imported at the top of bot.py.
+            # Re-importing it locally HERE made Python treat it as local for the ENTIRE
+            # handle_fsm_message function (every elif branch shares one scope) — so
+            # AWAITING_USER_LOCATION_REPLY, which runs on a different path and never hits
+            # this line, crashed with UnboundLocalError referencing the same bare name.
+            # This is the third time this exact class of bug has appeared from a different
+            # branch doing a redundant local import — removing it here for good.
             from src.rendering.html_views import build_feedback_thread_text
-            from src.database import db_get_user_timezone
             fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
             thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
             viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)

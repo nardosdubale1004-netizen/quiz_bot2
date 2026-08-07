@@ -6005,3 +6005,131 @@ def db_count_user_feedback_and_requests(user_id) -> int:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_team_membership_homogeneity(org_id: int) -> dict:
+    """Extends db_get_team_geo_ownership with grade uniformity and the resolved school name,
+    for the 'Grade | School | City | Country' header line — each part only shows if EVERY
+    active member currently shares it."""
+    base = db_get_team_geo_ownership(org_id)
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT u.grade FROM org_memberships m
+                JOIN user_stats u ON u.user_id = m.user_id
+                WHERE m.org_id = %s AND m.state = 'active';
+            """, (int(org_id),))
+            grades = [r['grade'] for r in cur.fetchall()]
+            base["grade"] = grades[0] if len(grades) == 1 and grades[0] is not None else None
+            base["grade_uniform"] = len(grades) == 1 and grades[0] is not None
+
+            base["school_name"] = None
+            if base.get("school_id"):
+                cur.execute("SELECT org_name FROM organizations WHERE org_id = %s;", (int(base["school_id"]),))
+                row = cur.fetchone()
+                base["school_name"] = row["org_name"] if row else None
+        return base
+    except Exception as e:
+        print(f"[DB ERROR] db_get_team_membership_homogeneity: {e}", flush=True)
+        return {"school_id": None, "branch_id": None, "city": None, "country": None, "grade": None, "grade_uniform": False, "school_name": None}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_team_scope_ranks(org_id: int) -> dict:
+    """This team's rank among other teams sharing the same homogenous school/city/country
+    (reuses db_get_smart_team_leaderboard, which already implements that homogeneity logic
+    correctly) — plus a plain world rank among ALL teams. A column stays None when the team's
+    members don't all currently share that attribute."""
+    def _find_rank(rows):
+        for i, r in enumerate(rows):
+            if int(r['org_id']) == int(org_id):
+                return i + 1
+        return None
+
+    geo = db_get_team_membership_homogeneity(org_id)
+    result = {"school": None, "city": None, "country": None, "world": None}
+    result["world"] = _find_rank(db_get_smart_team_leaderboard("world", None, 500))
+    if geo.get("school_id"):
+        result["school"] = _find_rank(db_get_smart_team_leaderboard("school", str(geo["school_id"]), 500))
+    if geo.get("city"):
+        result["city"] = _find_rank(db_get_smart_team_leaderboard("city", geo["city"], 500))
+    if geo.get("country"):
+        result["country"] = _find_rank(db_get_smart_team_leaderboard("country", geo["country"], 500))
+    return result
+
+
+def db_get_org_member_matrix(org_id: int, grade=None, sort_field: str = "score", sort_dir: str = "desc", limit: int = 15, offset: int = 0):
+    """Team-wide ranked roster. score = this member's CONTRIBUTION to this team (ledger, not
+    lifetime total). avg_marks = the member's own overall per-question average (same figure
+    shown on their profile card). grade=None/'all' means every grade combined."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            grade_val = None if grade in (None, "all") else int(grade)
+            sort_expr = {
+                "score": "score",
+                "alphabet": "COALESCE(u.nickname, u.username, u.first_name, u.user_id)",
+                "date": "m.joined_at",
+            }.get(sort_field, "score")
+            direction = "ASC" if sort_dir == "asc" else "DESC"
+            cur.execute(f"""
+                SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted,
+                       COALESCE(c.marks, 0)::int AS score, m.joined_at, u.grade,
+                       CASE WHEN u.total > 0 THEN ROUND(u.total_marks::numeric / u.total, 1) ELSE 0 END AS avg_marks
+                FROM org_memberships m
+                JOIN user_stats u ON u.user_id = m.user_id
+                LEFT JOIN user_org_contributions c ON c.user_id = m.user_id AND c.org_id = m.org_id
+                WHERE m.org_id = %s AND m.state = 'active'
+                  AND (%s::int IS NULL OR u.grade = %s)
+                ORDER BY {sort_expr} {direction} NULLS LAST
+                LIMIT %s OFFSET %s;
+            """, (int(org_id), grade_val, grade_val, limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_org_member_matrix: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_count_org_members(org_id: int, grade=None) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            grade_val = None if grade in (None, "all") else int(grade)
+            cur.execute("""
+                SELECT COUNT(*) AS cnt FROM org_memberships m
+                JOIN user_stats u ON u.user_id = m.user_id
+                WHERE m.org_id = %s AND m.state = 'active' AND (%s::int IS NULL OR u.grade = %s);
+            """, (int(org_id), grade_val, grade_val))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] db_count_org_members: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_count_org_left_members(org_id: int) -> int:
+    """Admin-only figure — how many members have left this team over its lifetime."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM org_memberships WHERE org_id = %s AND state = 'left';", (int(org_id),))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] db_count_org_left_members: {e}", flush=True)
+        return 0
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

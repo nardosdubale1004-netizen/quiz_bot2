@@ -1966,3 +1966,91 @@ def build_user_feedback_requests_list_text(items: list, total_count: int) -> str
         lines.append(f"{icon} <b>#{item['id']}</b>  {status_icon}\n<i>{snippet}</i>")
     lines.append("<hr/>\n<i>Tap a card below to view full details.</i>")
     return "\n\n".join(lines)
+
+def build_team_details_text(org: dict, geo: dict, scope_ranks: dict, member_count: int, left_count: int, is_admin: bool) -> str:
+    name = html.escape(org.get("org_name", "TEAM"))
+    tag = org.get("org_tag", "")
+    org_type = html.escape(str(org.get("org_type", "Team")))
+    privacy = "🔒 Private — instant join by code" if not org.get("is_public", True) else "🌐 Public — needs admin approval"
+    city = html.escape(str(org.get("city") or "—"))
+    country = html.escape(str(org.get("country") or "—"))
+    scope = org.get("team_scope")
+    scope_value = org.get("scope_value")
+
+    lines = [f"<h2>#{name.upper()}</h2>", f"<code>#{tag}</code> · {org_type} · {privacy}", f"📍 {city}, {country}"]
+    if scope and scope != "open":
+        lines.append(f"🔒 Dedicated to: <b>{html.escape(str(scope_value or ''))}</b>")
+    if org.get("description"):
+        lines.append(f"<i>{html.escape(org['description'])}</i>")
+
+    homog = []
+    if geo.get("grade_uniform"):
+        homog.append(f"🎒 Grade {geo['grade']}")
+    if geo.get("school_name"):
+        homog.append(f"🏫 {html.escape(geo['school_name'])}")
+    if geo.get("city"):
+        homog.append(f"🏙️ {html.escape(geo['city'])}")
+    if geo.get("country"):
+        homog.append(f"🌍 {html.escape(geo['country'])}")
+    if homog:
+        lines.append(" · ".join(homog))
+
+    lines.append("<hr/>")
+    left_line = f" · 🚪 <b>{left_count}</b> left" if is_admin else ""
+    lines.append(f"👥 <b>{member_count}</b> active member(s){left_line}")
+
+    def _r(v): return f"#{v}" if v else "—"
+    lines.append(
+        "<table>"
+        "<tr><td><b>School</b></td><td><b>City</b></td><td><b>Country</b></td><td><b>World</b></td></tr>"
+        f"<tr><td>{_r(scope_ranks.get('school'))}</td><td>{_r(scope_ranks.get('city'))}</td>"
+        f"<td>{_r(scope_ranks.get('country'))}</td><td>{_r(scope_ranks.get('world'))}</td></tr>"
+        "</table>"
+    )
+    return "\n".join(lines)
+
+
+def build_team_rank_table_text(matrix_rows: list, grade_filter, total_for_grade: int) -> str:
+    label = "Total" if grade_filter in (None, "all") else f"Grade {grade_filter}"
+    if not matrix_rows:
+        return f"<h3>🏆 Team Rank — {label}</h3>\n<i>No members at this grade for this team.</i>"
+    lines = [f"<h3>🏆 Team Rank — {label} ({total_for_grade} students)</h3>"]
+    table = ["<tr><td><b>#</b></td><td><b>Student</b></td><td><b>Score</b></td><td><b>Joined</b></td><td><b>Avg</b></td></tr>"]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, r in enumerate(matrix_rows):
+        rank = medals[i] if i < 3 else str(i + 1)
+        nm = html.escape(format_public_name(r))
+        joined = r['joined_at'].strftime('%b %d, %Y') if r.get('joined_at') else "—"
+        table.append(f"<tr><td>{rank}</td><td>{nm}</td><td>{r.get('score', 0)}</td><td>{joined}</td><td>{r.get('avg_marks', 0)}</td></tr>")
+    lines.append("<table>" + "".join(table) + "</table>")
+    return "\n".join(lines)
+
+
+def build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin: bool, is_creator: bool) -> InlineKeyboardMarkup:
+    gf = grade_filter if grade_filter not in (None,) else "all"
+
+    def _grade_btn(g, label):
+        active = str(gf) == str(g)
+        return InlineKeyboardButton(("• " if active else "") + label, callback_data=f"team_grade_filter|{org_id}|{g}|{sort_field}|{sort_dir}")
+
+    def _sort_btn(field, label):
+        nxt = "asc" if (sort_field == field and sort_dir == "desc") else "desc"
+        arrow = ("↑" if nxt == "asc" else "↓") if sort_field == field else ""
+        return InlineKeyboardButton(f"{label} {arrow}".strip(), callback_data=f"team_sort|{org_id}|{gf}|{field}|{nxt}")
+
+    rows = [
+        [_grade_btn("all", "Total"), _grade_btn("12", "12"), _grade_btn("10", "10")],
+        [_grade_btn("8", "8"), _grade_btn("6", "6")],
+        [_sort_btn("score", "🏆 Score"), _sort_btn("alphabet", "🔤 A-Z"), _sort_btn("date", "📅 Joined")],
+    ]
+    if is_admin:
+        rows.append([InlineKeyboardButton("📋 MEMBERS & REQUESTS", callback_data=f"org_history|{org_id}")])
+    rows.append([InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_warn|{org_id}")])
+    if is_creator:
+        rows.append([InlineKeyboardButton("💥 DISSOLVE TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
+    rows.append([InlineKeyboardButton("🔗 INVITE LINK", callback_data=f"team_invite|{org_id}")])
+    rows.append([
+        InlineKeyboardButton("🔙 TEAMS", callback_data="alliance_portal|0"),
+        InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")
+    ])
+    return InlineKeyboardMarkup(rows)
