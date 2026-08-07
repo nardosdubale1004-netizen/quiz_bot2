@@ -1660,6 +1660,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 ])
                 rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
                 rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
+            elif ls['status'] == 'rejected':
+                # THE FIX: a rejected item had no way back — this is the missing button.
+                rows.append([InlineKeyboardButton("✅ APPROVE INSTEAD", callback_data=f"loc_review|{ls_id}|1")])
+                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+            elif ls['status'] == 'approved':
+                # THE FIX: symmetric — an approved item can now be walked back too.
+                rows.append([InlineKeyboardButton("🚫 REJECT INSTEAD", callback_data=f"loc_review|{ls_id}|0")])
+                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
             else:
                 rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
             if ls['kind'] == 'school' and ls.get('org_id'):
@@ -1682,22 +1690,27 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "loc_user_item":
         ls_id = int(d_id)
         return_offset = data[2] if len(data) > 2 else "0"
-        from src.database import db_get_location_suggestion, db_get_location_suggestion_thread
-        ls = await asyncio.to_thread(db_get_location_suggestion, ls_id)
-        if not ls or str(ls.get("submitted_by")) != str(user_id):
-            await query.answer("Not found.", show_alert=True)
-            return
-        await query.answer()
-        thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
-        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
-        from src.rendering.html_views import build_location_suggestion_item_text
-        text = build_location_suggestion_item_text(ls, thread, viewer_tz)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 REPLY", callback_data=f"loc_user_reply|{ls_id}")],
-            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
-            [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
-        ])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+        try:
+            from src.database import db_get_location_suggestion, db_get_location_suggestion_thread
+            ls = await asyncio.to_thread(db_get_location_suggestion, ls_id)
+            if not ls or str(ls.get("submitted_by")) != str(user_id):
+                await query.answer("Not found.", show_alert=True)
+                return
+            thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            from src.rendering.html_views import build_location_suggestion_item_text
+            text = build_location_suggestion_item_text(ls, thread, viewer_tz)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 REPLY", callback_data=f"loc_user_reply|{ls_id}")],
+                [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
+                [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
+            ])
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
+            await query.answer()
+        except Exception as loc_item_err:
+            traceback.print_exc()
+            print(f"[LOC-USER-ITEM-ERROR] ls_id={ls_id}: {loc_item_err}", flush=True)
+            await query.answer(f"Error: {type(loc_item_err).__name__}: {str(loc_item_err)[:150]}", show_alert=True)
         return
 
     elif action == "fsm_create_org":
@@ -2323,36 +2336,42 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "my_feedback":
-        await query.answer()
         offset = int(d_id)
-        from src.database import db_get_user_feedback_and_requests, db_count_user_feedback_and_requests
-        from src.rendering.html_views import build_user_feedback_requests_list_text
-        items = await asyncio.to_thread(db_get_user_feedback_and_requests, user_id, 5, offset)
-        total = await asyncio.to_thread(db_count_user_feedback_and_requests, user_id)
-        text = build_user_feedback_requests_list_text(items, total)
+        try:
+            from src.database import db_get_user_feedback_and_requests, db_count_user_feedback_and_requests
+            from src.rendering.html_views import build_user_feedback_requests_list_text
+            items = await asyncio.to_thread(db_get_user_feedback_and_requests, user_id, 5, offset)
+            total = await asyncio.to_thread(db_count_user_feedback_and_requests, user_id)
+            text = build_user_feedback_requests_list_text(items, total)
 
-        # THE FIX: routes each row to the right detail screen depending on what it actually is —
-        # feedback items still go to fb_view; city/school requests now go to the new loc_user_item
-        # (previously there was no way to open a location/school request from this list at all).
-        item_rows = []
-        for item in items:
-            label = str(item['label'])[:24]
-            if item['kind'] == 'feedback':
-                item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"fb_view|{item['id']}|{offset}")])
-            else:
-                item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"loc_user_item|{item['id']}|{offset}")])
+            item_rows = []
+            for item in items:
+                label = str(item['label'])[:24]
+                if item['kind'] == 'feedback':
+                    item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"fb_view|{item['id']}|{offset}")])
+                else:
+                    item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"loc_user_item|{item['id']}|{offset}")])
 
-        nav_row = []
-        if offset > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_feedback|{max(0, offset-5)}"))
-        if offset + 5 < total:
-            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_feedback|{offset+5}"))
-        if nav_row:
-            item_rows.append(nav_row)
-        item_rows.append([InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")])
-        item_rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
+            nav_row = []
+            if offset > 0:
+                nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_feedback|{max(0, offset-5)}"))
+            if offset + 5 < total:
+                nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"my_feedback|{offset+5}"))
+            if nav_row:
+                item_rows.append(nav_row)
+            item_rows.append([InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")])
+            item_rows.append([InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")])
 
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+            # THE FIX: same double-answer-on-exception bug as fb_item/loc_admin_item/fb_kanban —
+            # query.answer() was called BEFORE the DB work, so a failure there had its error
+            # alert silently swallowed by Telegram rejecting the second answer() call. Answered
+            # exactly once now, only after the screen actually renders.
+            await query.answer()
+        except Exception as my_fb_err:
+            traceback.print_exc()
+            print(f"[MY-FEEDBACK-ERROR] user={user_id} offset={offset}: {my_fb_err}", flush=True)
+            await query.answer(f"Error: {type(my_fb_err).__name__}: {str(my_fb_err)[:150]}", show_alert=True)
         return
 
     elif action == "fb_menu":
@@ -2419,22 +2438,27 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "fb_view":
         fb_id = int(d_id)
         return_offset = data[2] if len(data) > 2 else "0"
-        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
-        if not fb or str(fb.get("user_id")) != str(user_id):
-            await query.answer("Not found.", show_alert=True)
-            return
-        await query.answer()
-        thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
-        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
-            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
-            [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
-        ])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb
-        )
+        try:
+            fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+            if not fb or str(fb.get("user_id")) != str(user_id):
+                await query.answer("Not found.", show_alert=True)
+                return
+            thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
+                [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
+                [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
+            ])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb
+            )
+            await query.answer()
+        except Exception as fb_view_err:
+            traceback.print_exc()
+            print(f"[FB-VIEW-ERROR] fb_id={fb_id}: {fb_view_err}", flush=True)
+            await query.answer(f"Error: {type(fb_view_err).__name__}: {str(fb_view_err)[:150]}", show_alert=True)
         return
 
     elif action == "fb_user_reply":

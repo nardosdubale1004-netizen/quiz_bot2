@@ -3644,14 +3644,43 @@ def db_search_schools(query: str = None, city: str = None, country: str = None, 
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
 def db_get_user_timezone(user_id) -> str:
+    """THE FIX: previously trusted the cached user_stats.timezone column exclusively — but that
+    column is only ever WRITTEN at the moment a location/school/team action runs. Any user whose
+    approved city/country predates that write-path (or whose write silently failed at any point
+    in this app's history) is stuck showing UTC forever even though their real country is sitting
+    right there in user_locations/organizations. Now derives live from country whenever the
+    stored value is missing or still the untouched 'UTC' default, and self-heals the column so
+    future reads are back to a single fast lookup."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT timezone FROM user_stats WHERE user_id = %s;", (str(user_id),))
             row = cur.fetchone()
-            return row['timezone'] if row and row.get('timezone') else "UTC"
+            stored_tz = row['timezone'] if row and row.get('timezone') else None
+            if stored_tz and stored_tz != "UTC":
+                return stored_tz
+
+            cur.execute("""
+                SELECT COALESCE(o.country, l.country) AS country
+                FROM user_stats u
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
+                LEFT JOIN organizations o ON m.org_id = o.org_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
+                WHERE u.user_id = %s
+                LIMIT 1;
+            """, (str(user_id),))
+            geo = cur.fetchone()
+            if geo and geo.get('country'):
+                derived = get_timezone_for_country(geo['country'])
+                if derived != "UTC":
+                    cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (derived, str(user_id)))
+                    conn.commit()
+                return derived
+
+            return stored_tz or "UTC"
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch user timezone: {e}", flush=True)
         return "UTC"
@@ -4437,11 +4466,15 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool, 
             sug = cur.fetchone()
             if not sug:
                 return None
-            if sug['status'] != 'pending':
-                # Already resolved — most likely via cascade from its linked partner a moment ago.
-                return {"suggestion": dict(sug), "affected_users": [], "already_resolved": True}
 
             new_status = "approved" if approve else "rejected"
+            # THE FIX: this used to refuse to act at all once status left 'pending' — a rejected
+            # city/school could never be brought back, and an approved one could never be walked
+            # back. Now only genuinely a no-op when re-applying the SAME decision already in
+            # effect (a stray double-tap) — that's the only case that should do nothing.
+            if sug['status'] == new_status:
+                return {"suggestion": dict(sug), "affected_users": [], "already_resolved": True}
+
             cur.execute("""
                 UPDATE location_suggestions SET status = %s, admin_id = %s, resolved_at = NOW()
                 WHERE id = %s;
@@ -4451,14 +4484,16 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool, 
             if sug['kind'] == 'city':
                 submitter = sug['submitted_by']
                 if approve:
-                    cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s AND suggestion_id = %s;",
-                                (submitter, int(suggestion_id)))
-                    loc = cur.fetchone()
-                    if loc:
-                        cur.execute("""
-                            UPDATE user_locations SET status = 'approved', updated_at = NOW()
-                            WHERE user_id = %s AND suggestion_id = %s;
-                        """, (submitter, int(suggestion_id)))
+                    # THE FIX: re-approving after a rejection can't rely on WHERE suggestion_id=X
+                    # matching — rejection already NULLed suggestion_id out of user_locations.
+                    # Restore directly from the suggestion's own stored name/country instead.
+                    cur.execute("""
+                        INSERT INTO user_locations (user_id, city, country, status, suggestion_id, updated_at)
+                        VALUES (%s, %s, %s, 'approved', %s, NOW())
+                        ON CONFLICT (user_id) DO UPDATE SET
+                            city = EXCLUDED.city, country = EXCLUDED.country, status = 'approved',
+                            suggestion_id = EXCLUDED.suggestion_id, updated_at = NOW();
+                    """, (submitter, sug['name'], sug.get('country'), int(suggestion_id)))
                 else:
                     cur.execute("""
                         UPDATE user_locations SET city = NULL, country = NULL, status = NULL,
@@ -4469,7 +4504,11 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool, 
                 affected_users = [submitter]
             elif sug['kind'] == 'school' and sug.get('org_id'):
                 if approve:
-                    cur.execute("UPDATE organizations SET status = 'approved' WHERE org_id = %s;", (sug['org_id'],))
+                    cur.execute("UPDATE organizations SET status = 'approved', deleted_at = NULL WHERE org_id = %s;", (sug['org_id'],))
+                    cur.execute("""
+                        UPDATE org_memberships SET org_role = 'creator', state = 'active', deleted_at = NULL
+                        WHERE user_id = %s AND org_id = %s;
+                    """, (sug['submitted_by'], sug['org_id']))
                 else:
                     cur.execute("UPDATE organizations SET status = 'rejected', deleted_at = NOW() WHERE org_id = %s;", (sug['org_id'],))
                     cur.execute("""
@@ -5914,6 +5953,55 @@ def db_link_location_suggestions(sid_a: int, sid_b: int) -> bool:
         if conn: conn.rollback()
         print(f"[DB ERROR] db_link_location_suggestions: {e}", flush=True)
         return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_feedback_and_requests(user_id, limit: int = 5, offset: int = 0):
+    """Unified 'My Feedback & Requests' feed — merges the user's own feedback submissions
+    AND their city/school location requests into one time-ordered list. THE FIX: this screen's
+    button has always said 'MY FEEDBACK & REQUESTS', but the underlying query only ever read
+    the `feedback` table — every location/school request (and any admin reply sitting on it)
+    was structurally invisible here, which is exactly what 'no Requests, no channel admin'
+    was describing."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                (SELECT id, 'feedback' AS kind, message AS label, status, created_at
+                 FROM feedback WHERE user_id = %s)
+                UNION ALL
+                (SELECT id, kind, name AS label, status, created_at
+                 FROM location_suggestions WHERE submitted_by = %s)
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s;
+            """, (str(user_id), str(user_id), limit, offset))
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB ERROR] db_get_user_feedback_and_requests: {e}", flush=True)
+        return []
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_count_user_feedback_and_requests(user_id) -> int:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM feedback WHERE user_id = %s) +
+                    (SELECT COUNT(*) FROM location_suggestions WHERE submitted_by = %s) AS cnt;
+            """, (str(user_id), str(user_id)))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception as e:
+        print(f"[DB ERROR] db_count_user_feedback_and_requests: {e}", flush=True)
+        return 0
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
