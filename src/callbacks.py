@@ -372,13 +372,16 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
     city_is_new = session.get("reg_city_is_new", False)
     existing_sid = session.get("reg_city_suggestion_id")
 
+    location_write_ok = True  # only set False if a real write attempt fails below
     if city or country:
         if city_is_new and not existing_sid:
             # This IS the single point where a new city gets created and admins get notified —
             # only ever reached from the final regloc_confirm tap, after the user has reviewed
             # the whole setup (city + school together) on the review screen.
             sid = await asyncio.to_thread(db_create_location_suggestion, "city", city, country, user_id)
-            await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
+            location_write_ok = await asyncio.to_thread(db_set_user_pending_city, user_id, city, country, sid)
+            if not location_write_ok:
+                print(f"[REGLOC-FINISH-ERROR] db_set_user_pending_city FAILED for user={user_id} city={city!r} country={country!r} sid={sid}", flush=True)
             admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
             req_name = html.escape((await context.bot.get_chat(user_id)).first_name or "A student")
             review_kb = InlineKeyboardMarkup([[
@@ -396,10 +399,29 @@ async def _regloc_finish(context, chat_id, message_id, user_id, school_msg: str 
                 except Exception:
                     pass
         elif not city_is_new:
-            await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
+            location_write_ok = await asyncio.to_thread(db_update_user_location, user_id, city or "Not set", country or "Not set")
+            if not location_write_ok:
+                print(f"[REGLOC-FINISH-ERROR] db_update_user_location FAILED for user={user_id} city={city!r} country={country!r}", flush=True)
         # else: city_is_new and existing_sid — already created & admins already notified at accept-pending. No-op.
 
     profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
+
+    if not location_write_ok:
+        # Never claim success on a failed write again — this was the exact bug: a hardcoded
+        # "✅ saved" regardless of what the database actually did.
+        retry_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 TRY AGAIN", callback_data="regloc_start|0")]])
+        await edit_rich_message_safe(
+            context.bot, chat_id=chat_id, message_id=message_id,
+            html_content=(
+                "⚠️ <b>Could not save your location.</b>\n\n"
+                "Your school/team changes above (if any) went through, but saving your city/country hit a "
+                "database error. Check the bot logs for <code>[REGLOC-FINISH-ERROR]</code> — that line "
+                "will show the exact cause. Please tap below to try again."
+            ),
+            reply_markup=retry_kb
+        )
+        return
+
     status_line = "⏳ pending admin review" if city_is_new else "✅ saved"
     await edit_rich_message_safe(
         context.bot, chat_id=chat_id, message_id=message_id,
