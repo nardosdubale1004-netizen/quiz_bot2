@@ -4031,9 +4031,16 @@ def db_get_pending_location_suggestions(kind: str = None, limit: int = 20):
 
 
 def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) -> dict:
-    """Approves or rejects a city/school suggestion. For cities: bumps every user who was
-    waiting on THIS exact suggestion to 'approved'/'rejected'. For schools: flips the linked
-    organization's status too, so it becomes joinable/visible."""
+    """Approves or rejects a city/school suggestion.
+
+    Reject (city): the city is REMOVED from the profile entirely (city/country/status/pending-id
+    all cleared) so db_user_location_complete() re-triggers and blocks new answers until they
+    register again — never left half-set with a rejected value silently lingering.
+
+    Reject (school): the requesting student is removed from that org and the org itself is
+    soft-deleted — it only ever existed for this one pending review and was never a real,
+    approved team — so the student is back to "not a student" and free to try again.
+    """
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -4049,18 +4056,31 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
                 WHERE id = %s;
             """, (new_status, str(admin_id), int(suggestion_id)))
 
+            affected_users = []
             if sug['kind'] == 'city':
-                cur.execute("""
-                    UPDATE user_stats SET personal_city_status = %s
-                    WHERE pending_city_suggestion_id = %s;
-                """, (new_status, int(suggestion_id)))
-                cur.execute("SELECT user_id FROM user_stats WHERE pending_city_suggestion_id = %s;", (int(suggestion_id),))
-                affected_users = [r['user_id'] for r in cur.fetchall()]
+                if approve:
+                    cur.execute("""
+                        UPDATE user_stats SET personal_city_status = 'approved'
+                        WHERE pending_city_suggestion_id = %s;
+                    """, (int(suggestion_id),))
+                else:
+                    cur.execute("""
+                        UPDATE user_stats
+                        SET personal_city = NULL, personal_country = NULL,
+                            personal_city_status = NULL, pending_city_suggestion_id = NULL
+                        WHERE pending_city_suggestion_id = %s;
+                    """, (int(suggestion_id),))
+                affected_users = [sug['submitted_by']]
             elif sug['kind'] == 'school' and sug.get('org_id'):
-                cur.execute("UPDATE organizations SET status = %s WHERE org_id = %s;", (new_status, sug['org_id']))
-                affected_users = []
-            else:
-                affected_users = []
+                if approve:
+                    cur.execute("UPDATE organizations SET status = 'approved' WHERE org_id = %s;", (sug['org_id'],))
+                else:
+                    cur.execute("UPDATE organizations SET status = 'rejected', deleted_at = NOW() WHERE org_id = %s;", (sug['org_id'],))
+                    cur.execute("""
+                        UPDATE org_memberships SET org_role = 'left', deleted_at = NOW()
+                        WHERE user_id = %s AND org_id = %s;
+                    """, (sug['submitted_by'], sug['org_id']))
+                affected_users = [sug['submitted_by']]
 
             conn.commit()
             return {"suggestion": dict(sug), "affected_users": affected_users}
@@ -4068,6 +4088,28 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool) 
         if conn: conn.rollback()
         print(f"[DB ERROR] Failed to resolve location suggestion: {e}", flush=True)
         return None
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_user_location_complete(user_id) -> bool:
+    """Gate check: a student must have BOTH a city and a country on file — approved OR still
+    pending review, either counts — before submitting a new answer. A rejected city is cleared
+    entirely by db_resolve_location_suggestion above, which is exactly what re-triggers this
+    gate. Fails OPEN on a DB error — a hiccup here should never lock out every student at once."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT personal_city, personal_country FROM user_stats WHERE user_id = %s;", (str(user_id),))
+            row = cur.fetchone()
+            if not row:
+                return False
+            return bool(row.get("personal_city")) and bool(row.get("personal_country"))
+    except Exception as e:
+        print(f"[DB ERROR] db_user_location_complete: {e}", flush=True)
+        return True
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)

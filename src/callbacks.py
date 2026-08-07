@@ -493,10 +493,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await asyncio.to_thread(db_set_user_grade, query.from_user.id, grade)
         await query.answer(f"Grade {grade} registered!")
         if not previous_grade:
-            msg = f"✅ <b>Grade {grade} Registered!</b>\n\nSet your country, city & school now? Optional, editable later."
+            msg = (
+                f"✅ <b>Grade {grade} Registered!</b>\n\n"
+                f"One more step: set your country &amp; city. This is <b>required</b> before you can "
+                f"answer questions — even a pending submission unlocks it, so it only takes a minute."
+            )
             confirm_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🌍 SET LOCATION", callback_data="regloc_start|0")],
-                [InlineKeyboardButton("⏭ SKIP", callback_data="privacy_menu|0")]
+                [InlineKeyboardButton("🌍 SET LOCATION NOW", callback_data="regloc_start|0")],
+                [InlineKeyboardButton("⏭ LATER (needed before answering)", callback_data="privacy_menu|0")]
             ])
         else:
             msg = f"✅ <b>Grade Updated:</b> {previous_grade} → <b>{grade}</b>"
@@ -1370,13 +1374,31 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=old_text, reply_markup=back_kb)
             except Exception:
                 pass
+            is_city = (sug['kind'] == 'city')
             for uid in result.get("affected_users", []):
                 try:
-                    nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
                     if approve:
-                        msg = f"✅ <b>Your city was approved!</b>\n📍 {html.escape(sug['name'])}, {html.escape(sug.get('country') or '')} now shows on your profile and leaderboards."
+                        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
+                        if is_city:
+                            msg = f"✅ <b>Your city was approved!</b>\n📍 {html.escape(sug['name'])}, {html.escape(sug.get('country') or '')} now shows on your profile and leaderboards."
+                        else:
+                            msg = f"✅ <b>Your school was approved!</b>\n🏫 {html.escape(sug['name'])} is now visible and joinable by other students."
                     else:
-                        msg = f"🚫 Your suggested city <b>{html.escape(sug['name'])}</b> wasn't approved. Please update your location with a different spelling from /profile → 📍 LOCATION."
+                        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 REGISTER AGAIN", callback_data="regloc_start|0")]])
+                        if is_city:
+                            msg = (
+                                f"🚫 <b>Your suggested city wasn't approved.</b>\n"
+                                f"📍 <b>{html.escape(sug['name'])}</b> has been removed from your profile — "
+                                f"your city &amp; country are now unset.\n\n"
+                                f"⚠️ <b>You need a city and country on file to keep answering questions.</b> "
+                                f"Tap below to register again with the correct spelling."
+                            )
+                        else:
+                            msg = (
+                                f"🚫 <b>Your suggested school wasn't approved.</b>\n"
+                                f"🏫 <b>{html.escape(sug['name'])}</b> has been removed — you're no longer linked to it.\n\n"
+                                f"You can register a different school anytime, or continue as \"Not a student.\""
+                            )
                     await context.bot.send_message(chat_id=int(uid), text=msg, parse_mode="HTML", reply_markup=nav_kb)
                 except Exception:
                     pass
@@ -1461,9 +1483,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
         await query.answer()
         thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
 
         from src.rendering.html_views import build_location_suggestion_item_text
-        text = build_location_suggestion_item_text(ls, thread)
+        text = build_location_suggestion_item_text(ls, thread, viewer_tz)
 
         rows = []
         if ls['status'] == 'pending':
@@ -2759,6 +2782,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                     await query.answer("✅ Already submitted — sit tight, results are on the way!", show_alert=False)
                     return
 
+                from src.database import db_user_location_complete
+                if not await asyncio.to_thread(db_user_location_complete, user_id):
+                    await query.answer("📍 Set your city & country first — check your DM.", show_alert=True)
+                    gate_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET MY LOCATION NOW", callback_data="regloc_start|0")]])
+                    await send_rich_message_safe(
+                        context.bot, chat_id=user_id,
+                        html_content="🚫 <b>Set your city &amp; country first</b>\n\nBefore you can answer questions, we need your city and country on file — even if it's still pending admin review, that's enough to unlock answering.",
+                        reply_markup=gate_kb
+                    )
+                    return
+
                 user_selection = int(data[2])
                 is_correct = (user_selection == question_data['correct_option'])
                 
@@ -2785,6 +2819,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             if track_status != "active" and track_status != "closed":
                 print(f" {Style.YELLOW}└─ [WARNING] Blocked submission: Quiz status is '{track_status}'.{Style.RESET}")
                 await query.answer("This quiz session has ended. Submissions are closed!", show_alert=True)
+                return
+
+            from src.database import db_user_location_complete
+            if not await asyncio.to_thread(db_user_location_complete, user_id):
+                await query.answer("📍 Set your city & country first — check your DM.", show_alert=True)
+                gate_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET MY LOCATION NOW", callback_data="regloc_start|0")]])
+                await send_rich_message_safe(
+                    context.bot, chat_id=user_id,
+                    html_content="🚫 <b>Set your city &amp; country first</b>\n\nBefore you can answer questions, we need your city and country on file — even if it's still pending admin review, that's enough to unlock answering.",
+                    reply_markup=gate_kb
+                )
                 return
 
             user_selection = int(data[2])

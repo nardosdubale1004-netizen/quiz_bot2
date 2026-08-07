@@ -77,7 +77,28 @@ import httpx
 from telegram import Poll
 from src.typography import lite_math
 _UTILITY_LOCKS: dict = {}
+new_str:
 engine = QuizEngine()
+
+async def _enforce_location_gate(context, user_id, chat_id) -> bool:
+    """Mandatory gate: a student must have a city AND country on file (approved OR still
+    pending admin review both count) before they can submit a NEW answer. Viewing previous
+    answers, /profile, etc. is never blocked — only fresh submissions are gated here."""
+    from src.database import db_user_location_complete
+    if await asyncio.to_thread(db_user_location_complete, user_id):
+        return True
+    gate_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET MY LOCATION NOW", callback_data="regloc_start|0")]])
+    await send_rich_message_safe(
+        context.bot, chat_id=chat_id,
+        html_content=(
+            "🚫 <b>Set your city &amp; country first</b>\n\n"
+            "Before you can answer questions, we need your city and country on file — "
+            "even if it's still pending admin review, that's enough to unlock answering.\n\n"
+            "Tap below to finish this in under a minute."
+        ),
+        reply_markup=gate_kb
+    )
+    return False
 
 # Consolidated commands to simplify the user interface
 BOT_COMMANDS = [
@@ -415,6 +436,10 @@ async def _start_command_inner(update: Update, context):
                     return
 
                 print(f"[TRACE-STEP 4] No history found. Calculating score logic...", flush=True)
+
+                if not await _enforce_location_gate(context, user_id, update.message.chat_id):
+                    return
+
                 is_correct = (user_selection == question_data['correct_option'])
 
                 print(f"[TRACE-STEP 5] Calling process_user_score in database module...", flush=True)
@@ -619,6 +644,10 @@ async def _start_command_inner(update: Update, context):
                 return
 
             print(f"[TRACE-STEP 4] Standard active path. Calculating first-time response...", flush=True)
+
+            if not await _enforce_location_gate(context, user_id, update.message.chat_id):
+                return
+
             is_correct = (user_selection == question_data['correct_option'])
             try:
                 perf_card = await db_call_guarded(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)

@@ -621,6 +621,13 @@ def build_location_status_text(profile: dict) -> str:
     org_name = profile.get("org_name")
     org_tag = profile.get("org_tag")
 
+    warning = ""
+    if not city or not country:
+        warning = (
+            "<blockquote>⚠️ <b>Required:</b> a city and country on file (pending review is fine) "
+            "unlocks answering questions.</blockquote>\n"
+        )
+
     country_line = f"🌍 <b>Country:</b> {html.escape(country)}" if country else "🌍 <b>Country:</b> <i>Not set</i>"
 
     if city:
@@ -637,7 +644,7 @@ def build_location_status_text(profile: dict) -> str:
 
     return (
         "<h2>📍 LOCATIONS &amp; SCHOOL</h2>\n<hr/>\n"
-        f"{country_line}\n{city_line}\n{school_line}\n<hr/>\n"
+        f"{warning}{country_line}\n{city_line}\n{school_line}\n<hr/>\n"
         "<i>Tap below to set or change any of these.</i>"
     )
 
@@ -1248,7 +1255,8 @@ def build_location_suggestions_browse_list_text(items: list, kind: str, status: 
     return "\n\n".join(lines)
 
 
-def build_location_suggestion_item_text(ls: dict, thread: list = None) -> str:
+def build_location_suggestion_item_text(ls: dict, thread: list = None, viewer_tz: str = "UTC") -> str:
+    from src.geo import format_local_time
     icon = "🏙 City" if ls['kind'] == "city" else "🏫 School"
     status_labels = {"pending": "📥 Pending", "approved": "✅ Approved", "rejected": "🚫 Rejected"}
     who = format_public_name(ls)
@@ -1258,8 +1266,10 @@ def build_location_suggestion_item_text(ls: dict, thread: list = None) -> str:
         bubbles = []
         for m in thread:
             role_label = "🛠️ Admin" if m['sender_role'] == "admin" else "🧑 Student"
-            bubbles.append(f"<b>{role_label}:</b> {html.escape(m['message'])}")
-        thread_block = "\n\n<blockquote>" + "\n\n".join(bubbles) + "</blockquote>"
+            ts = format_local_time(m.get('created_at'), viewer_tz) if m.get('created_at') else ""
+            ts_line = f" <i>({ts})</i>" if ts else ""
+            bubbles.append(f"<b>{role_label}:</b>{ts_line}\n{html.escape(m['message'])}")
+        thread_block = "\n\n<blockquote expandable>" + "\n\n".join(bubbles) + "</blockquote>"
     return (
         f"<b>#{ls['id']} • {icon}</b>\n"
         f"📌 Status: <b>{status_labels.get(ls['status'], ls['status'])}</b>{repeat}\n"
