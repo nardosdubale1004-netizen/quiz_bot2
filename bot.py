@@ -77,7 +77,6 @@ import httpx
 from telegram import Poll
 from src.typography import lite_math
 _UTILITY_LOCKS: dict = {}
-new_str:
 engine = QuizEngine()
 
 async def _enforce_location_gate(context, user_id, chat_id) -> bool:
