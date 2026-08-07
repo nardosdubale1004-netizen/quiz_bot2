@@ -1655,6 +1655,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
         else:
             rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+        # THE FIX: for a school-kind suggestion, there was previously no button that
+        # actually opened that school's real org card (roster, member count, invite
+        # link, dissolve) — this screen was a dead end for "communicate and see the
+        # overall details." view_org already exists and works fine for a pending
+        # school (the creator's membership is active from the moment they created it,
+        # regardless of the school's own approval status) — it just was never linked here.
+        if ls['kind'] == 'school' and ls.get('org_id'):
+            rows.append([InlineKeyboardButton("🏫 VIEW SCHOOL DETAILS", callback_data=f"view_org|{ls['org_id']}")])
         rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -1772,8 +1780,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "menu_leaderboard":
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        if not profile or not profile.get("grade"):
-            await query.answer("Please set your grade first via /start.", show_alert=True)
+        if not profile or not profile.get("personal_city") or not profile.get("personal_country"):
+            await query.answer("📍 Please set your city and country first via /start.", show_alert=True)
             return
         await query.answer()
 
