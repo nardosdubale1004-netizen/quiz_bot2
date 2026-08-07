@@ -325,6 +325,99 @@ class QuizEngine:
         try:
             conn = self.get_db_connection()
             with conn.cursor() as cur:
+                # --- Step 0: bootstrap the core tables from nothing. Everything below this
+                # (ALTERs, other CREATE TABLEs) assumed these already existed — on a genuinely
+                # empty database (fresh Neon project, or after DROP SCHEMA), that assumption
+                # was false, which silently aborted this entire migration via the outer
+                # try/except and left user_stats/questions/sent_tracks all missing.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS questions (
+                        id VARCHAR(50) PRIMARY KEY,
+                        subject VARCHAR(50),
+                        topic VARCHAR(100),
+                        difficulty VARCHAR(20) DEFAULT 'medium',
+                        tags TEXT[],
+                        question TEXT NOT NULL,
+                        latex TEXT,
+                        options TEXT[],
+                        correct_option INT NOT NULL,
+                        poll_explanation JSONB DEFAULT '{}'::jsonb,
+                        options_analysis JSONB DEFAULT '[]'::jsonb,
+                        scheduled_for TIMESTAMPTZ,
+                        force_image BOOLEAN DEFAULT FALSE,
+                        native_question TEXT,
+                        native_options TEXT[],
+                        is_sent BOOLEAN DEFAULT FALSE
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_stats (
+                        user_id VARCHAR(20) PRIMARY KEY,
+                        grade INT,
+                        total INT DEFAULT 0,
+                        correct INT DEFAULT 0,
+                        total_marks INT DEFAULT 0,
+                        current_streak INT DEFAULT 0,
+                        last_active_at TIMESTAMPTZ,
+                        is_admin BOOLEAN DEFAULT FALSE
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS sent_tracks (
+                        message_id VARCHAR(30) PRIMARY KEY,
+                        q_id VARCHAR(50) REFERENCES questions(id) ON DELETE CASCADE,
+                        status VARCHAR(20) DEFAULT 'active',
+                        display_id INT,
+                        type VARCHAR(20),
+                        msg_type VARCHAR(20),
+                        followup_mid BIGINT,
+                        round_deadline TIMESTAMPTZ,
+                        round_number INT,
+                        total_rounds INT,
+                        sent_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_sent_tracks_display_id ON sent_tracks(display_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_sent_tracks_status ON sent_tracks(status);")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_responses (
+                        id SERIAL PRIMARY KEY,
+                        user_id VARCHAR(20) NOT NULL,
+                        message_id VARCHAR(30) NOT NULL,
+                        q_id VARCHAR(50),
+                        is_correct BOOLEAN,
+                        marks_awarded INT DEFAULT 0,
+                        selected_option INT,
+                        private_message_id BIGINT,
+                        show_derivation BOOLEAN DEFAULT FALSE,
+                        show_perf BOOLEAN DEFAULT FALSE,
+                        answered_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (user_id, message_id)
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_responses_message ON user_responses(message_id);")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS tournament_queue (
+                        id INT PRIMARY KEY DEFAULT 1,
+                        remaining_ids JSONB DEFAULT '[]'::jsonb,
+                        last_seq INT DEFAULT 100,
+                        round_seconds INT DEFAULT 60,
+                        total_count INT DEFAULT 0,
+                        scheduled_start TIMESTAMPTZ,
+                        announcement_mid BIGINT,
+                        cooldown_seconds INT DEFAULT 15,
+                        tournament_meta JSONB DEFAULT '{}'::jsonb,
+                        is_paused BOOLEAN DEFAULT FALSE
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS compiled_assets_cache (
+                        cache_key TEXT PRIMARY KEY,
+                        file_id TEXT
+                    );
+                """)
+                conn.commit()
+
                 cur.execute("SELECT 1 FROM sent_tracks LIMIT 1;")
                 cur.execute("SELECT 1 FROM tournament_queue LIMIT 1;")
 
