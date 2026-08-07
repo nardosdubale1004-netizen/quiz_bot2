@@ -2241,11 +2241,12 @@ def db_join_organization(user_id, org_tag: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value, org_type FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
             row = cur.fetchone()
             if not row:
                 return None
             org_id, org_name, is_public, creator_id, country = row['org_id'], row['org_name'], row['is_public'], row['creator_id'], row['country']
+            is_school = (row.get('org_type') == 'School')
 
             if row.get('team_scope') and row['team_scope'] != 'open':
                 elig = db_check_team_scope_eligibility(user_id, org_id)
@@ -2257,13 +2258,20 @@ def db_join_organization(user_id, org_tag: str) -> dict:
             if existing and existing['state'] == 'active':
                 return {"org_id": org_id, "org_name": org_name, "role_assigned": existing['org_role'], "creator_id": creator_id, "already_member": True}
             if existing and existing['state'] == 'pending':
+                if is_school:
+                    cur.execute("UPDATE org_memberships SET state = 'active' WHERE user_id = %s AND org_id = %s;", (str(user_id), org_id))
+                    conn.commit()
+                    user_profile_cache.invalidate(f"profile:{user_id}")
+                    return {"org_id": org_id, "org_name": org_name, "role_assigned": existing['org_role'] or "member", "creator_id": creator_id}
                 return {
                     "org_id": org_id, "org_name": org_name, "role_assigned": "pending", "creator_id": creator_id,
                     "already_pending": True, "request_count": existing['request_count'], "last_requested_at": existing['last_requested_at']
                 }
 
             role = "member"
-            state = "pending" if is_public else "active"
+            # THE FIX: schools always join active/instant — the is_public approval-gate
+            # only ever applies to Teams.
+            state = "active" if is_school else ("pending" if is_public else "active")
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state, request_count, last_requested_at)
                 VALUES (%s, %s, %s, %s, 1, NOW())
@@ -2309,7 +2317,7 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value, org_type FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
             row = cur.fetchone()
             if not row:
                 return None
@@ -2321,16 +2329,32 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
 
             cur.execute("SELECT org_role, state, request_count, last_requested_at FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
             existing = cur.fetchone()
+            is_school = (row.get('org_type') == 'School')
+
             if existing and existing['state'] == 'active':
                 return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": existing['org_role'], "creator_id": row['creator_id'], "already_member": True}
+
             if existing and existing['state'] == 'pending':
+                if is_school:
+                    # Self-heal: this is exactly the bug's leftover data — a school row that
+                    # was incorrectly gated 'pending' like a team. Schools never require
+                    # per-user approval to join, only NEW schools need admin review (that's a
+                    # separate location_suggestions flow). Upgrade it to active right now.
+                    cur.execute("UPDATE org_memberships SET state = 'active' WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+                    conn.commit()
+                    user_profile_cache.invalidate(f"profile:{user_id}")
+                    print(f"[DEBUG-SCHOOL-JOIN] Self-healed stale pending school membership: user={user_id} org={org_id}", flush=True)
+                    return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": existing['org_role'] or "member", "creator_id": row['creator_id']}
                 return {
                     "org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": "pending", "creator_id": row['creator_id'],
                     "already_pending": True, "request_count": existing['request_count'], "last_requested_at": existing['last_requested_at']
                 }
 
             role = "member"
-            state = "pending" if row['is_public'] else "active"
+            # THE FIX: schools always join active/instant — the is_public approval-gate
+            # only ever applies to Teams. This one line was the entire root cause.
+            state = "active" if is_school else ("pending" if row['is_public'] else "active")
+            print(f"[DEBUG-SCHOOL-JOIN] user={user_id} org={org_id} org_type={row.get('org_type')} is_public={row['is_public']} -> state={state}", flush=True)
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state)
                 VALUES (%s, %s, %s, %s)
@@ -2341,7 +2365,7 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
-            return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": role, "creator_id": row['creator_id']}
+            return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": state, "creator_id": row['creator_id']}
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Join by id failed: {e}", flush=True)
@@ -2433,20 +2457,26 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country FROM organizations WHERE join_token = %s;", (join_token,))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, org_type FROM organizations WHERE join_token = %s;", (join_token,))
             row = cur.fetchone()
             if not row:
                 return None
+            is_school = (row.get('org_type') == 'School')
 
             cur.execute("SELECT org_role, state FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), row['org_id']))
             existing = cur.fetchone()
             if existing and existing['state'] == 'active':
                 return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": existing['org_role'], "creator_id": row["creator_id"], "already_member": True}
             if existing and existing['state'] == 'pending':
+                if is_school:
+                    cur.execute("UPDATE org_memberships SET state = 'active' WHERE user_id = %s AND org_id = %s;", (str(user_id), row['org_id']))
+                    conn.commit()
+                    user_profile_cache.invalidate(f"profile:{user_id}")
+                    return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": existing['org_role'] or "member", "creator_id": row["creator_id"]}
                 return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": "pending", "creator_id": row["creator_id"], "already_pending": True}
 
             role = "member"
-            state = "pending" if row["is_public"] else "active"
+            state = "active" if is_school else ("pending" if row["is_public"] else "active")
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, state)
                 VALUES (%s, %s, %s, %s)

@@ -1109,6 +1109,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 await asyncio.to_thread(db_leave_organization, user_id, old_org_id)
 
             join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, school_org_id)
+            print(f"[DEBUG-REGLOC-CONFIRM] school join result for user={user_id}: {join_data}", flush=True)
+            if not join_data:
+                school_msg = "⚠️ Could not join school."
+            elif join_data.get("scope_blocked"):
+                school_msg = f"🔒 {html.escape(join_data['org_name'])} is restricted — {join_data.get('reason','')}"
+            elif join_data.get("role_assigned") == "pending":
+                school_msg = f"📥 Request sent to <b>{html.escape(join_data['org_name'])}</b> — awaiting admin approval."
+            else:
+                school_msg = f"✅ Joined <b>{html.escape(join_data['org_name'])}</b>!"
             school_msg = f"✅ Joined <b>{join_data['org_name']}</b>!" if join_data else "⚠️ Could not join school."
         elif school_name and session.get("reg_school_is_new"):
             from src.database import db_create_location_suggestion, db_get_all_admin_ids
