@@ -2084,12 +2084,17 @@ def db_join_organization(user_id, org_tag: str) -> dict:
                 }
 
             role = "pending" if is_public else "member"
+            # BUG FIX: db_leave_organization sets org_role='left' — the old WHERE clause
+            # here only matched 'rejected', so re-joining anything you'd previously LEFT
+            # silently did nothing (conflict hit, UPDATE skipped, row stayed 'left'
+            # forever). That's the root cause of "switched school but it shows no school."
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role, request_count, last_requested_at)
                 VALUES (%s, %s, %s, 1, NOW())
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW(), request_count = 1, last_requested_at = NOW()
-                WHERE org_memberships.org_role = 'rejected';
+                    org_role = EXCLUDED.org_role, joined_at = NOW(), request_count = 1,
+                    last_requested_at = NOW(), deleted_at = NULL
+                WHERE org_memberships.org_role IN ('rejected', 'left');
             """, (str(user_id), org_id, role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
             conn.commit()
@@ -2149,12 +2154,15 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
                 }
 
             role = "pending" if row['is_public'] else "member"
+            # Same fix as db_join_organization — must also match 'left', not just
+            # 'rejected', or re-joining a school/team you'd previously switched away
+            # from silently fails and you end up with NO active school.
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW()
-                WHERE org_memberships.org_role = 'rejected';
+                    org_role = EXCLUDED.org_role, joined_at = NOW(), deleted_at = NULL
+                WHERE org_memberships.org_role IN ('rejected', 'left');
             """, (str(user_id), int(org_id), role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
@@ -2263,12 +2271,13 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
                 return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": "pending", "creator_id": row["creator_id"], "already_pending": True}
 
             role = "pending" if row["is_public"] else "member"
+            # Same fix as the other two join functions — must also match 'left'.
             cur.execute("""
                 INSERT INTO org_memberships (user_id, org_id, org_role)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (user_id, org_id) DO UPDATE SET
-                    org_role = EXCLUDED.org_role, joined_at = NOW()
-                WHERE org_memberships.org_role = 'rejected';
+                    org_role = EXCLUDED.org_role, joined_at = NOW(), deleted_at = NULL
+                WHERE org_memberships.org_role IN ('rejected', 'left');
             """, (str(user_id), row["org_id"], role))
             cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
