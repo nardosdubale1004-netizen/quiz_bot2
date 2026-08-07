@@ -1825,7 +1825,13 @@ async def handle_fsm_message(update: Update, context):
             )
 
         elif state == "AWAITING_ADMIN_LOCATION_REPLY":
-            from src.database import db_add_location_suggestion_message, db_get_location_suggestion, db_get_location_suggestion_thread, db_get_user_timezone
+            # THE FIX: db_get_user_timezone is already imported at the top of this file.
+            # Re-importing it locally HERE (even though this branch doesn't run for
+            # AWAITING_USER_LOCATION_REPLY) makes Python treat it as a local name for the
+            # WHOLE handle_fsm_message function — every elif branch shares one scope. That's
+            # exactly why the other state below crashed with UnboundLocalError: it referenced
+            # the same bare name before this branch's import line ever executed on its path.
+            from src.database import db_add_location_suggestion_message, db_get_location_suggestion, db_get_location_suggestion_thread
             from src.rendering.html_views import build_location_suggestion_item_text
             sid = session.get("suggestion_id")
             target_user_id = session.get("target_user_id")

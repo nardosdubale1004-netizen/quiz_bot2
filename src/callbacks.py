@@ -2596,7 +2596,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 return
             from src.rendering.html_views import build_org_history_text
             log_rows = await asyncio.to_thread(db_get_org_membership_log, org_id)
-            text = build_org_history_text(org_details, log_rows, "UTC")
+            # THE FIX: was a literal "UTC" string — a second, independent spot still
+            # ignoring the viewer's own timezone. db_get_user_timezone is already
+            # imported at the top of this file, no local import needed here.
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            text = build_org_history_text(org_details, log_rows, viewer_tz)
             pending_rows = [r for r in log_rows if r.get('state') == 'pending']
             kb_rows = []
             for r in pending_rows[:8]:
