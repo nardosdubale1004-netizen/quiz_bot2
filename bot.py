@@ -1085,8 +1085,17 @@ async def leaderboard_command(update: Update, context):
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
     profile = await asyncio.to_thread(db_get_user_profile, user_id)
-    if not profile or not profile.get("grade"):
-        await _open_utility_view(context, user_id, update.message.chat_id, "⚠️ Please register your grade first by typing /start.")
+    if not profile or not profile.get("personal_city") or not profile.get("personal_country"):
+        # Grade was never the real requirement — city+country is, same as every other
+        # entry point (profile_command, privacy_menu, profile_popup). This was the last
+        # stale grade-gate left in the app, and it's what the tournament "FULL RESULTS IN
+        # DM" deep link was hitting since it routes straight into this function.
+        nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET MY LOCATION", callback_data="regloc_start|0")]])
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
+            "📍 Please set your city and country first by typing /start.",
+            nav_kb
+        )
         return
 
     from src.database import db_get_rank_matrix, db_get_scope_summary
@@ -1262,6 +1271,11 @@ async def admin_dashboard_command(update: Update, context):
         [InlineKeyboardButton("👥 VIEW USER DIRECTORY", callback_data="admin_users|0"),
          InlineKeyboardButton("💬 VIEW FEEDBACK", callback_data="fb_browse|all|open:0")],
         [InlineKeyboardButton("📍 LOCATION & SCHOOL REQUESTS", callback_data="loc_admin_browse|all|pending:0")],
+        # Was missing here — callbacks.py's admin_dashboard action already had this button,
+        # but the /admin_dashboard COMMAND built a separate copy of the keyboard that never
+        # got it added. This is the entire reason "Kanban doesn't work" — the button to
+        # reach it just wasn't present when you opened the dashboard via the command.
+        [InlineKeyboardButton("🗂️ FEEDBACK KANBAN", callback_data="fb_kanban|0")],
         [InlineKeyboardButton("📚 ALL QUESTIONS", callback_data="admin_questions|all:all:0")],
         [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
     ])
@@ -2062,9 +2076,24 @@ async def handle_fsm_message(update: Update, context):
             await _fsm_advance(context, update.message.chat_id, edit_mid, f"🔍 <b>Matches for \"{html.escape(typed)}\":</b>", InlineKeyboardMarkup(rows))
             return
 
-    except Exception:
+    except Exception as fsm_err:
+        # THE FIX: every FSM state (feedback reply, location-suggestion reply, nickname,
+        # school creation, etc.) previously shared one generic message with zero detail —
+        # "Connection Error: Failed to commit your input" told you nothing about WHICH
+        # state failed or WHY, only the server log had that (and only if someone was
+        # watching it live). Now the message itself names the state and the real error,
+        # so the next failure is immediately actionable from the chat alone.
         traceback.print_exc()
-        await _fsm_advance(context, update.message.chat_id, edit_mid, "⚠️ Connection Error: Failed to commit your input.", profile_nav_kb)
+        print(f"[FSM-ERROR] state={state} user={user_id} session_keys={list(session.keys())}: {fsm_err}", flush=True)
+        error_detail = (
+            f"\n\n🛠️ <code>{type(fsm_err).__name__}: {html.escape(str(fsm_err))[:150]}</code>\n"
+            f"<i>Step: {html.escape(str(state))}</i>"
+        )
+        await _fsm_advance(
+            context, update.message.chat_id, edit_mid,
+            f"⚠️ Something went wrong saving that — please try again.{error_detail}",
+            profile_nav_kb
+        )
 
 async def run_cloud_server(app, port):
     PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
@@ -2128,9 +2157,10 @@ async def myanswers_command(update: Update, context):
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
     asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
 
-    from src.database import db_get_user_subjects_summary
+    from src.database import db_get_user_subjects_summary, db_is_admin
     from src.rendering.html_views import build_my_answers_subject_menu_text, build_my_answers_subject_keyboard
-    summary = await asyncio.to_thread(db_get_user_subjects_summary, user_id)
+    viewer_is_admin = await asyncio.to_thread(db_is_admin, user_id)
+    summary = await asyncio.to_thread(db_get_user_subjects_summary, user_id, viewer_is_admin)
     text = build_my_answers_subject_menu_text(summary)
     kb = build_my_answers_subject_keyboard(summary)
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)

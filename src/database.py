@@ -2678,21 +2678,37 @@ def db_get_user_org_role(user_id, org_id: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_get_user_subjects_summary(user_id):
-    """Subject picker for /myanswers: total questions vs. how many this user answered."""
+def db_get_user_subjects_summary(user_id, is_admin: bool = False):
+    """Subject picker for /myanswers: total questions vs. how many this user answered.
+    Non-admins only count questions that have actually been posted at least once —
+    matches the same filter as db_get_user_question_matrix, so the subject menu's
+    counts never advertise unpublished questions a student can't actually open."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT q.subject,
-                       COUNT(DISTINCT q.id) AS total_count,
-                       COUNT(DISTINCT ur.q_id) AS answered_count
-                FROM questions q
-                LEFT JOIN user_responses ur ON ur.q_id = q.id AND ur.user_id = %s
-                GROUP BY q.subject
-                ORDER BY q.subject ASC;
-            """, (str(user_id),))
+            if is_admin:
+                cur.execute("""
+                    SELECT q.subject,
+                           COUNT(DISTINCT q.id) AS total_count,
+                           COUNT(DISTINCT ur.q_id) AS answered_count
+                    FROM questions q
+                    LEFT JOIN user_responses ur ON ur.q_id = q.id AND ur.user_id = %s
+                    GROUP BY q.subject
+                    ORDER BY q.subject ASC;
+                """, (str(user_id),))
+            else:
+                cur.execute("""
+                    SELECT q.subject,
+                           COUNT(DISTINCT q.id) FILTER (WHERE st.message_id IS NOT NULL) AS total_count,
+                           COUNT(DISTINCT ur.q_id) AS answered_count
+                    FROM questions q
+                    LEFT JOIN sent_tracks st ON st.q_id = q.id
+                    LEFT JOIN user_responses ur ON ur.q_id = q.id AND ur.user_id = %s
+                    GROUP BY q.subject
+                    HAVING COUNT(DISTINCT q.id) FILTER (WHERE st.message_id IS NOT NULL) > 0
+                    ORDER BY q.subject ASC;
+                """, (str(user_id),))
             return cur.fetchall()
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch user subjects summary: {e}", flush=True)
@@ -2702,13 +2718,18 @@ def db_get_user_subjects_summary(user_id):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", limit: int = 8, offset: int = 0, sort_field: str = "topic", sort_dir: str = "asc"):
+def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", limit: int = 8, offset: int = 0, sort_field: str = "topic", sort_dir: str = "asc", is_admin: bool = False):
     """Every question (optionally scoped to a subject) tagged with whether THIS user
     answered it, plus the date they first answered (if any). filter_mode: 'all' | 'answered' | 'unanswered'.
     sort_field: 'topic' | 'date' | 'tags' | 'difficulty'. sort_dir: 'asc' | 'desc'.
     Questions this user personally hid (user_hidden_questions) never appear here — this
     is a purely personal, non-destructive hide; the record and every other user's view
-    are untouched."""
+    are untouched.
+    is_admin=False (default) EXCLUDES questions that have never been posted to the
+    channel — an unpublished question is a drafting/scheduling detail, not something a
+    regular student should ever see in /myanswers. Pass is_admin=True to include them
+    (the admin overview screen has its own separate query, but this flag exists in case
+    an admin ever browses their own /myanswers too)."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -2716,6 +2737,11 @@ def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str =
             sort_columns = {"topic": "topic", "date": "answered_at", "tags": "tags_text", "difficulty": "difficulty"}
             sort_col = sort_columns.get(sort_field, "topic")
             direction = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+            # THE FIX: was a LEFT JOIN with no filter — any question never sent to the
+            # channel (message_id IS NULL) still surfaced here tagged "📅 Not posted",
+            # visible to every regular student. Non-admins now only see questions with
+            # a real send history.
+            unposted_clause = "" if is_admin else "AND st.message_id IS NOT NULL"
 
             cur.execute(f"""
                 WITH latest AS (
@@ -2729,6 +2755,7 @@ def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str =
                     LEFT JOIN sent_tracks st ON st.q_id = q.id
                     LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
                     WHERE (%s::text IS NULL OR lower(q.subject) = lower(%s))
+                      {unposted_clause}
                       AND NOT EXISTS (
                           SELECT 1 FROM user_hidden_questions h
                           WHERE h.user_id = %s AND h.q_id = q.id
@@ -2753,18 +2780,20 @@ def db_get_user_question_matrix(user_id, subject: str = None, filter_mode: str =
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_count_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all") -> int:
+def db_count_user_question_matrix(user_id, subject: str = None, filter_mode: str = "all", is_admin: bool = False) -> int:
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("""
+            unposted_clause = "" if is_admin else "AND st.message_id IS NOT NULL"
+            cur.execute(f"""
                 WITH latest AS (
                     SELECT DISTINCT ON (q.id) q.id AS q_id, q.subject, ur.is_correct
                     FROM questions q
                     LEFT JOIN sent_tracks st ON st.q_id = q.id
                     LEFT JOIN user_responses ur ON ur.message_id = st.message_id AND ur.user_id = %s
                     WHERE (%s::text IS NULL OR lower(q.subject) = lower(%s))
+                      {unposted_clause}
                       AND NOT EXISTS (
                           SELECT 1 FROM user_hidden_questions h
                           WHERE h.user_id = %s AND h.q_id = q.id
@@ -3960,7 +3989,7 @@ def db_get_recent_users(limit: int = 15, offset: int = 0):
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
                 LEFT JOIN user_locations l ON l.user_id = u.user_id
-                ORDER BY u.last_active_at DESC NULLS LAST
+                ORDER BY u.last_active_at DESC NULLS LAST, u.user_id ASC
                 LIMIT %s OFFSET %s;
             """, (limit, offset))
             return cur.fetchall()

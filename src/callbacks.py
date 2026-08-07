@@ -2484,10 +2484,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         sort_field = {"t": "topic", "d": "date", "g": "tags", "l": "difficulty"}.get(sort_code, "topic")
         sort_dir = {"a": "asc", "d": "desc"}.get(dir_code, "asc")
 
-        from src.database import db_get_user_question_matrix, db_count_user_question_matrix
+        from src.database import db_get_user_question_matrix, db_count_user_question_matrix, db_is_admin
         from src.rendering.html_views import build_my_answers_list_text, build_my_answers_keyboard
-        rows = await asyncio.to_thread(db_get_user_question_matrix, user_id, subject, filter_mode, 8, offset, sort_field, sort_dir)
-        total = await asyncio.to_thread(db_count_user_question_matrix, user_id, subject, filter_mode)
+        viewer_is_admin = await asyncio.to_thread(db_is_admin, user_id)
+        rows = await asyncio.to_thread(db_get_user_question_matrix, user_id, subject, filter_mode, 8, offset, sort_field, sort_dir, viewer_is_admin)
+        total = await asyncio.to_thread(db_count_user_question_matrix, user_id, subject, filter_mode, viewer_is_admin)
         text = build_my_answers_list_text(rows, subject, filter_mode, offset, total, sort_field, sort_dir)
         kb = build_my_answers_keyboard(rows, subject, filter_mode, offset, total, sort_field, sort_dir)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
