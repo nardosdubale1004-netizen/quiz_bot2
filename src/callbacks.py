@@ -487,8 +487,8 @@ async def _notify_org_admins_pending_request(context, org_id, org_name, requeste
         GLOBAL_ENGINE.release_connection(conn)
 
     from src.geo import format_local_time
-    from src.database import db_get_user_snapshot
-    last_req_str = format_local_time(last_requested_at) if last_requested_at else "just now"
+    from src.geo import format_local_time
+    from src.database import db_get_user_snapshot, db_get_user_timezone
     req_name = html.escape(requester.first_name or requester.username or "A student")
 
     snap = await asyncio.to_thread(db_get_user_snapshot, requester.id)
@@ -506,10 +506,14 @@ async def _notify_org_admins_pending_request(context, org_id, org_name, requeste
         InlineKeyboardButton("⏳ KEEP PENDING", callback_data=f"process_req|{org_id}|{requester.id}|-1")
     ]])
 
-    repeat_note = f"\n📈 Requested <b>{request_count}×</b>, last on {last_req_str}." if request_count > 1 else ""
-
     for admin_id in admin_ids:
         try:
+            # THE FIX: last_req_str used to be computed ONCE, before this loop, using the
+            # default UTC timezone — every admin, regardless of their own city, saw "last on
+            # ... UTC". Now fetched per-admin inside the loop.
+            admin_tz = await asyncio.to_thread(db_get_user_timezone, admin_id)
+            last_req_str = format_local_time(last_requested_at, admin_tz) if last_requested_at else "just now"
+            repeat_note = f"\n📈 Requested <b>{request_count}×</b>, last on {last_req_str}." if request_count > 1 else ""
             await context.bot.send_message(
                 chat_id=int(admin_id),
                 text=f"📥 <b>NEW JOIN REQUEST</b>\n\n<b>{req_name}</b> wants to join <b>{html.escape(org_name)}</b>.{repeat_note}{snapshot_line}",
@@ -1328,10 +1332,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 if str(admin_id) == str(user_id):
                     continue
                 try:
+                    # THE FIX: this is a SEPARATE message from the leaver's own
+                    # confirmation (which already had a Close button) — this one,
+                    # sent to the OTHER admins, was built with no reply_markup at
+                    # all. Exactly the message in your screenshot.
+                    leave_notify_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔚 CLOSE", callback_data="close_portal|0")]])
                     await context.bot.send_message(
                         chat_id=int(admin_id),
                         text=f"🚪 <b>{leaver_name}</b> has left your team.",
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        reply_markup=leave_notify_kb
                     )
                 except Exception:
                     pass
@@ -1667,6 +1677,27 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             traceback.print_exc()
             print(f"[LOC-ITEM-ERROR] ls_id={ls_id}: {item_err}", flush=True)
             await query.answer(f"Error: {type(item_err).__name__}: {str(item_err)[:150]}", show_alert=True)
+        return
+
+    elif action == "loc_user_item":
+        ls_id = int(d_id)
+        return_offset = data[2] if len(data) > 2 else "0"
+        from src.database import db_get_location_suggestion, db_get_location_suggestion_thread
+        ls = await asyncio.to_thread(db_get_location_suggestion, ls_id)
+        if not ls or str(ls.get("submitted_by")) != str(user_id):
+            await query.answer("Not found.", show_alert=True)
+            return
+        await query.answer()
+        thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        from src.rendering.html_views import build_location_suggestion_item_text
+        text = build_location_suggestion_item_text(ls, thread, viewer_tz)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💬 REPLY", callback_data=f"loc_user_reply|{ls_id}")],
+            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
+            [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
     elif action == "fsm_create_org":
@@ -2294,14 +2325,23 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "my_feedback":
         await query.answer()
         offset = int(d_id)
-        items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, offset)
-        total = await asyncio.to_thread(db_count_user_feedback, user_id)
-        text = build_user_feedback_list_text(items, total)
+        from src.database import db_get_user_feedback_and_requests, db_count_user_feedback_and_requests
+        from src.rendering.html_views import build_user_feedback_requests_list_text
+        items = await asyncio.to_thread(db_get_user_feedback_and_requests, user_id, 5, offset)
+        total = await asyncio.to_thread(db_count_user_feedback_and_requests, user_id)
+        text = build_user_feedback_requests_list_text(items, total)
 
-        item_rows = [
-            [InlineKeyboardButton(f"#{fb['id']} · {fb['message'][:24]}", callback_data=f"fb_view|{fb['id']}|{offset}")]
-            for fb in items
-        ]
+        # THE FIX: routes each row to the right detail screen depending on what it actually is —
+        # feedback items still go to fb_view; city/school requests now go to the new loc_user_item
+        # (previously there was no way to open a location/school request from this list at all).
+        item_rows = []
+        for item in items:
+            label = str(item['label'])[:24]
+            if item['kind'] == 'feedback':
+                item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"fb_view|{item['id']}|{offset}")])
+            else:
+                item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"loc_user_item|{item['id']}|{offset}")])
+
         nav_row = []
         if offset > 0:
             nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"my_feedback|{max(0, offset-5)}"))

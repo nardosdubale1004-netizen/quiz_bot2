@@ -4000,11 +4000,13 @@ def db_get_admin_dashboard_stats():
 
 
 def db_get_recent_users(limit: int = 15, offset: int = 0):
-    """Admin directory listing. Sorted by user_id (never changes) instead of last_active_at —
-    sorting a paginated OFFSET query by a column that updates on every answered question meant
-    the page window shifted under you as other students answered in real time between page
-    loads, which is exactly what caused the same user to reappear on a later page.
-    last_active_at is still shown as a column, it's just no longer the sort key."""
+    """Admin directory listing, one row per user — GUARANTEED, unlike the previous version.
+    THE FIX: the old query LEFT JOINed org_memberships directly, and a student on MULTIPLE
+    active teams/school produces multiple membership rows for the same user_id — the JOIN
+    multiplied their row once per membership, which is exactly why the same student kept
+    reappearing repeatedly on this page. Now uses scalar subqueries for city/country instead
+    of a join, so user_stats contributes exactly one row per user no matter how many teams
+    they're on."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -4012,12 +4014,18 @@ def db_get_recent_users(limit: int = 15, offset: int = 0):
             cur.execute("""
                 SELECT u.user_id, u.username, u.first_name, u.nickname, u.grade, u.total_marks,
                        u.public_consent_granted,
-                       COALESCE(o.country, l.country, 'Unknown') AS country,
-                       COALESCE(o.city, l.city, 'Unknown') AS city,
+                       COALESCE(
+                           (SELECT o.country FROM org_memberships m JOIN organizations o ON o.org_id = m.org_id
+                            WHERE m.user_id = u.user_id AND m.state = 'active' ORDER BY m.joined_at DESC LIMIT 1),
+                           l.country, 'Unknown'
+                       ) AS country,
+                       COALESCE(
+                           (SELECT o.city FROM org_memberships m JOIN organizations o ON o.org_id = m.org_id
+                            WHERE m.user_id = u.user_id AND m.state = 'active' ORDER BY m.joined_at DESC LIMIT 1),
+                           l.city, 'Unknown'
+                       ) AS city,
                        u.last_active_at
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                LEFT JOIN organizations o ON m.org_id = o.org_id
                 LEFT JOIN user_locations l ON l.user_id = u.user_id
                 ORDER BY u.user_id ASC
                 LIMIT %s OFFSET %s;

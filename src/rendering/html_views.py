@@ -1946,3 +1946,23 @@ def build_entity_picker_keyboard(scope, parent_entity, items, offset, back_scope
         rows.append(nav)
     rows.append([InlineKeyboardButton("🔙 BACK", callback_data=f"wr|{back_scope}|_|all|all|all|total|none|0")])
     return InlineKeyboardMarkup(rows)
+
+
+def build_user_feedback_requests_list_text(items: list, total_count: int) -> str:
+    if not items:
+        return (
+            "<b>📋 MY FEEDBACK &amp; REQUESTS</b>\n<hr/>\n"
+            "<i>Nothing submitted yet. Feedback and location/school requests you submit both show up here.</i>"
+        )
+    kind_icons = {"feedback": "💬", "city": "📍", "school": "🏫"}
+    status_icons = {"open": "🆕", "in_progress": "🔧", "planned": "🗓️", "resolved": "✅", "wontfix": "🚫",
+                     "pending": "📥", "approved": "✅", "rejected": "🚫"}
+    lines = [f"<b>📋 MY FEEDBACK &amp; REQUESTS</b>  <i>({total_count} total)</i>", "<hr/>"]
+    for item in items:
+        icon = kind_icons.get(item['kind'], "💬")
+        status_icon = status_icons.get(item['status'], "•")
+        label = str(item['label'])
+        snippet = html.escape(label[:60] + ("…" if len(label) > 60 else ""))
+        lines.append(f"{icon} <b>#{item['id']}</b>  {status_icon}\n<i>{snippet}</i>")
+    lines.append("<hr/>\n<i>Tap a card below to view full details.</i>")
+    return "\n\n".join(lines)

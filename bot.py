@@ -1191,14 +1191,19 @@ async def myfeedback_command(update: Update, context):
     user_id = user.id
     await asyncio.to_thread(db_update_user_telegram_info, user_id, user.username, user.first_name)
 
-    items = await asyncio.to_thread(db_get_user_feedback_list, user_id, 5, 0)
-    total = await asyncio.to_thread(db_count_user_feedback, user_id)
-    text = build_user_feedback_list_text(items, total)
+    from src.database import db_get_user_feedback_and_requests, db_count_user_feedback_and_requests
+    from src.rendering.html_views import build_user_feedback_requests_list_text
+    items = await asyncio.to_thread(db_get_user_feedback_and_requests, user_id, 5, 0)
+    total = await asyncio.to_thread(db_count_user_feedback_and_requests, user_id)
+    text = build_user_feedback_requests_list_text(items, total)
 
-    item_rows = [
-        [InlineKeyboardButton(f"#{fb['id']} · {fb['message'][:24]}", callback_data=f"fb_view|{fb['id']}|0")]
-        for fb in items
-    ]
+    item_rows = []
+    for item in items:
+        label = str(item['label'])[:24]
+        if item['kind'] == 'feedback':
+            item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"fb_view|{item['id']}|0")])
+        else:
+            item_rows.append([InlineKeyboardButton(f"#{item['id']} · {label}", callback_data=f"loc_user_item|{item['id']}|0")])
     if total > 5:
         item_rows.append([InlineKeyboardButton("NEXT ➡️", callback_data="my_feedback|5")])
     item_rows.append([InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")])
@@ -1871,7 +1876,8 @@ async def handle_fsm_message(update: Update, context):
             # going without re-navigating from their profile every time.
             ls = await asyncio.to_thread(db_get_location_suggestion, sid)
             thread = await asyncio.to_thread(db_get_location_suggestion_thread, sid)
-            thread_text = build_location_suggestion_item_text(ls, thread, "UTC") if ls else "✅ Sent."
+            viewer_tz_reply = await asyncio.to_thread(db_get_user_timezone, user_id)
+            thread_text = build_location_suggestion_item_text(ls, thread, viewer_tz_reply) if ls else "✅ Sent."
             USER_PAYLOADS[user_id] = {"suggestion_id": sid, "edit_mid": edit_mid}
             reply_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💬 REPLY AGAIN", callback_data=f"loc_user_reply|{sid}")],
@@ -1967,7 +1973,10 @@ async def handle_fsm_message(update: Update, context):
                 [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
                 [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]
             ])
-            await _fsm_advance(context, update.message.chat_id, edit_mid, build_feedback_thread_text(fb, thread), kb)
+            # THE FIX: viewer_tz was fetched a few lines above but never actually
+            # passed into this call — build_feedback_thread_text silently fell back
+            # to its "UTC" default every time.
+            await _fsm_advance(context, update.message.chat_id, edit_mid, build_feedback_thread_text(fb, thread, viewer_tz), kb)
 
             try:
                 from src.database import db_get_all_admin_ids
