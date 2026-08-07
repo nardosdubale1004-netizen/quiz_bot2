@@ -236,6 +236,29 @@ BEGIN
 END; $$ LANGUAGE plpgsql;
 """
 
+def _safe_migrate(cur, conn, label: str, sql: str, params=None):
+    """Runs one migration statement in isolation. If it fails, logs it and returns False
+    WITHOUT raising — so one bad/unexpected statement can never abort every statement that
+    comes after it in _ensure_tournament_schema. THIS is the actual bug that's been blocking
+    user_locations (and everything after it) from ever being created: it used to be defined
+    INSIDE the QuizEngine class body with `cur` as its first arg instead of `self` — a bare
+    call to `_safe_migrate(...)` from inside another method can never resolve a name that only
+    exists as a class attribute, so every call raised NameError: name '_safe_migrate' is not
+    defined, which aborted the entire rest of the migration on every single boot. Moved to
+    module level (a real standalone function, not a method) so the existing bare call sites
+    inside _ensure_tournament_schema now actually resolve it correctly."""
+    try:
+        cur.execute(sql, params)
+        return True
+    except Exception as e:
+        print(f"{Style.YELLOW}[MIGRATION-SKIP] {label}: {e}{Style.RESET}", flush=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
 class QuizEngine:
     _pool = None
     _warned_detected = False
@@ -301,25 +324,6 @@ class QuizEngine:
         finally:
             if conn:
                 self.release_connection(conn)
-
-
-    def _safe_migrate(cur, conn, label: str, sql: str, params=None):
-        """Runs one migration statement in isolation. If it fails, logs it and returns False
-        WITHOUT raising — so one bad/unexpected statement can never abort every statement that
-        comes after it in _ensure_tournament_schema. This is what silently broke organizations.status
-        and org_memberships.state on prior boots: a single exception used to kill the entire
-        rest of the migration for that boot cycle."""
-        try:
-            cur.execute(sql, params)
-            return True
-        except Exception as e:
-            print(f"{Style.YELLOW}[MIGRATION-SKIP] {label}: {e}{Style.RESET}", flush=True)
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            return False
-
 
 
     def _ensure_tournament_schema(self):
