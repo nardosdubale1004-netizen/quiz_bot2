@@ -151,8 +151,6 @@ BEGIN
             END IF;
 
             IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
-
-            IF p_is_correct AND v_marks > 0 AND v_referrer_t1 IS NOT NULL THEN
                 v_t1_bonus := GREATEST(1, FLOOR(v_marks * 0.05)::int);
                 UPDATE user_stats SET total_marks = COALESCE(total_marks, 0) + v_t1_bonus WHERE user_id = v_referrer_t1;
                 SELECT referred_by INTO v_referrer_t2 FROM user_stats WHERE user_id = v_referrer_t1;

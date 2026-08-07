@@ -1007,7 +1007,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         school_name = session.get("reg_school_name")
         school_msg = ""
 
+        # If the user picked a DIFFERENT existing school than the one they're
+        # currently on, leave the old one first — otherwise they end up with two
+        # active memberships and the profile's LIMIT-1 org lookup shows whichever
+        # one it happens to grab, which is exactly the "school didn't change" bug.
         if school_org_id:
+            profile_before = await asyncio.to_thread(db_get_user_profile, user_id)
+            old_org_id = profile_before.get("org_id") if profile_before else None
+            if old_org_id and int(old_org_id) != int(school_org_id):
+                await asyncio.to_thread(db_leave_organization, user_id, old_org_id)
+
             join_data = await asyncio.to_thread(db_join_organization_by_id, user_id, school_org_id)
             school_msg = f"✅ Joined <b>{join_data['org_name']}</b>!" if join_data else "⚠️ Could not join school."
         elif school_name and session.get("reg_school_is_new"):
