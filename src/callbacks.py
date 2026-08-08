@@ -1715,6 +1715,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("🚫 Rejected", callback_data=f"loc_admin_browse|{kind}|rejected:0"),
         ])
         item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"loc_admin_browse|{kind}|closed:0")])
+        item_rows.append([
+            InlineKeyboardButton("🏠 DASHBOARD", callback_data="admin_dashboard|0"),
+            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")
+        ])
         item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
@@ -2390,7 +2394,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         text = build_feedback_browse_list_text(items, category, status, offset, total)
 
         if not items:
-            buttons = [[InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")]]
+            # THE FIX: this dead-end had a DASHBOARD button but no way to your own profile.
+            buttons = [
+                [InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")],
+                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+            ]
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
             return
 
@@ -2414,6 +2422,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("📋 All", callback_data=f"fb_browse|{category}|all:0"),
         ])
         item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"fb_browse|{category}|closed:0")])
+        # THE FIX: this is the exact gap reported — the queue could be filtered and drilled into,
+        # but had no way back to the dashboard or the admin's own profile at all.
+        item_rows.append([
+            InlineKeyboardButton("🏠 DASHBOARD", callback_data="admin_dashboard|0"),
+            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")
+        ])
+
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
+        return
 
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
@@ -2697,7 +2714,15 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-        text = build_profile_card_text(profile, None, subject_marks)
+        text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
+        # THE FIX: build_profile_main_keyboard is already imported at the top of this
+        # file. Re-importing it locally HERE shadowed it for the ENTIRE
+        # _handle_callback_inner function — every elif branch shares one scope. This
+        # is why fsm_cancel's default "back to profile" path (used by nearly every
+        # "❌ CANCEL" button across every multi-step flow: nickname entry, city entry,
+        # team creation, etc.) crashed with UnboundLocalError the instant it ran —
+        # even though privacy_menu itself never crashed, since it imports and uses the
+        # name in the same breath. Same recurring bug class from earlier in this thread.
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
         if m:
