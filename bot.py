@@ -943,28 +943,28 @@ async def _start_command_inner(update: Update, context):
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-        asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-        # THE FIX: this text was DESCRIBED in an earlier pass as the new welcome message but
-        # was never actually written into this file — the old generic text was still live.
-        await send_rich_message_safe(
-            context.bot,
-            chat_id=update.message.chat_id,
-            html_content=(
-                "👋 <b>Welcome — you just found something good.</b>\n\n"
-                "Bite-sized challenges land in the channel day and night — math, science, "
-                "language, logic, a bit of everything. Tap an answer, get scored instantly, "
-                "see the full breakdown.\n\n"
-                "<blockquote>"
-                "🔥 Build a streak, climb the ranks\n"
-                "⚔️ Jump into live tournaments\n"
-                "🏫 Team up and compete together\n"
-                "🕵️ Your identity stays private unless you choose otherwise"
-                "</blockquote>\n\n"
-                "One thing first — tap <b>📍 SET MY LOCATION</b> below so we can unlock your "
-                "scoreboard. Takes 20 seconds. 🎒 Grade is optional, anytime."
-            ),
-            reply_markup=reply_markup
-        )
+    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+    # THE FIX: this text was DESCRIBED in an earlier pass as the new welcome message but
+    # was never actually written into this file — the old generic text was still live.
+    await send_rich_message_safe(
+        context.bot,
+        chat_id=update.message.chat_id,
+        html_content=(
+            "👋 <b>Welcome — you just found something good.</b>\n\n"
+            "Bite-sized challenges land in the channel day and night — math, science, "
+            "language, logic, a bit of everything. Tap an answer, get scored instantly, "
+            "see the full breakdown.\n\n"
+            "<blockquote>"
+            "🔥 Build a streak, climb the ranks\n"
+            "⚔️ Jump into live tournaments\n"
+            "🏫 Team up and compete together\n"
+            "🕵️ Your identity stays private unless you choose otherwise"
+            "</blockquote>\n\n"
+            "One thing first — tap <b>📍 SET MY LOCATION</b> below so we can unlock your "
+            "scoreboard. Takes 20 seconds. 🎒 Grade is optional, anytime."
+        ),
+        reply_markup=reply_markup
+    )
 
 async def profile_command(update: Update, context):
     """Bypasses start and opens student dynamic Privacy & Consent dashboard."""
