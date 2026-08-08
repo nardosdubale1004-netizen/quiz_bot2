@@ -1889,7 +1889,7 @@ def db_get_user_snapshot(user_id) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_get_user_subject_marks(user_id):
     conn = None
     try:
@@ -3473,12 +3473,15 @@ def db_get_city_detail(city: str, country: str = None):
                 r = cur.fetchone()
                 country_rank = r['country_rank'] if r else None
 
+            # THE FIX: no org_type filter — a student-created Team headquartered in this city
+            # was showing up mixed into the "🏫 Schools" list, the same class of bug already
+            # fixed in db_get_rank_matrix's _group() but never carried over here.
             cur.execute("""
                 SELECT o.org_id, o.org_name, o.org_tag, SUM(c.marks)::int AS total_score,
                        COUNT(DISTINCT c.user_id) AS student_count
                 FROM organizations o
                 JOIN user_org_contributions c ON c.org_id = o.org_id
-                WHERE o.city = %s AND o.deleted_at IS NULL
+                WHERE o.city = %s AND o.deleted_at IS NULL AND o.org_type = 'School'
                 GROUP BY o.org_id, o.org_name, o.org_tag
                 ORDER BY total_score DESC
                 LIMIT 15;
@@ -3496,7 +3499,10 @@ def db_get_city_detail(city: str, country: str = None):
 
 def db_get_schools_ranked(city: str = None, country: str = None, limit: int = 15, offset: int = 0):
     """Alphabetical school listing, optionally scoped to a city or country. Score is the
-    frozen org-contribution ledger total, not live member sums."""
+    frozen org-contribution ledger total, not live member sums.
+    THE FIX: was missing the org_type='School' filter that its sibling db_search_schools
+    already had — Teams registered in the same city/country were showing up mixed into
+    "ALL SCHOOLS HERE" on the world-drill-down browse screen."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -3506,7 +3512,7 @@ def db_get_schools_ranked(city: str = None, country: str = None, limit: int = 15
                        COALESCE(SUM(c.marks), 0)::int AS total_score
                 FROM organizations o
                 LEFT JOIN user_org_contributions c ON c.org_id = o.org_id
-                WHERE o.deleted_at IS NULL
+                WHERE o.deleted_at IS NULL AND o.org_type = 'School'
                   AND (%s::text IS NULL OR o.city = %s)
                   AND (%s::text IS NULL OR o.country = %s)
                 GROUP BY o.org_id, o.org_name, o.org_tag, o.city, o.country
@@ -3521,14 +3527,17 @@ def db_get_schools_ranked(city: str = None, country: str = None, limit: int = 15
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
 def db_count_schools_ranked(city: str = None, country: str = None) -> int:
+    """THE FIX: matches db_get_schools_ranked's org_type='School' filter — must agree with
+    it or NEXT/PREV pagination on the school-browse screen breaks."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT COUNT(*) AS cnt FROM organizations o
-                WHERE o.deleted_at IS NULL
+                WHERE o.deleted_at IS NULL AND o.org_type = 'School'
                   AND (%s::text IS NULL OR o.city = %s)
                   AND (%s::text IS NULL OR o.country = %s);
             """, (city, city, country, country))
@@ -5425,29 +5434,6 @@ def db_is_tournament_round_still_open(message_id) -> bool:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-def db_get_user_snapshot(user_id) -> dict:
-    """Compact stats block for admin-facing approval cards. THE FIX: was reading
-    personal_city/personal_country straight off user_stats — frozen at unmigrated
-    defaults since db_set_user_location became the single writer. Now reads user_locations."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT us.grade, us.total_marks, us.total, us.correct, us.current_streak,
-                       l.city AS personal_city, l.country AS personal_country
-                FROM user_stats us
-                LEFT JOIN user_locations l ON l.user_id = us.user_id
-                WHERE us.user_id = %s;
-            """, (str(user_id),))
-            row = cur.fetchone()
-            return dict(row) if row else {}
-    except Exception as e:
-        print(f"[DB ERROR] Failed to fetch user snapshot: {e}", flush=True)
-        return {}
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
 
 def db_set_show_real_identity(user_id, show: bool) -> bool:
     conn = None
