@@ -5352,7 +5352,6 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
 
 
 def db_get_entity_list(scope, parent_entity=None, limit=40):
-    """Entity picker source (📍 PICK COUNTRY/CITY/SCHOOL buttons)."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -5361,8 +5360,8 @@ def db_get_entity_list(scope, parent_entity=None, limit=40):
                 cur.execute("""
                     SELECT DISTINCT COALESCE(o.country, l.country) AS name
                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
-                    LEFT JOIN organizations o ON m.org_id=o.org_id
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    LEFT JOIN organizations o ON m.org_id=o.org_id AND (o.status IS NULL OR o.status = 'approved')
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE COALESCE(o.country, l.country) IS NOT NULL
                     ORDER BY name ASC LIMIT %s;
                 """, (limit,))
@@ -5370,15 +5369,17 @@ def db_get_entity_list(scope, parent_entity=None, limit=40):
                 cur.execute("""
                     SELECT DISTINCT COALESCE(o.city, l.city) AS name
                     FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
-                    LEFT JOIN organizations o ON m.org_id=o.org_id
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    LEFT JOIN organizations o ON m.org_id=o.org_id AND (o.status IS NULL OR o.status = 'approved')
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE COALESCE(o.country, l.country) = %s AND COALESCE(o.city, l.city) IS NOT NULL
                     ORDER BY name ASC LIMIT %s;
                 """, (parent_entity, limit))
             elif scope == "school":
                 cur.execute("""
                     SELECT org_id AS id, org_name AS name FROM organizations
-                    WHERE city = %s AND deleted_at IS NULL ORDER BY org_name ASC LIMIT %s;
+                    WHERE city = %s AND deleted_at IS NULL AND org_type = 'School'
+                      AND (status IS NULL OR status = 'approved')
+                    ORDER BY org_name ASC LIMIT %s;
                 """, (parent_entity, limit))
             else:
                 return []

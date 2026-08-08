@@ -1069,6 +1069,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "regloc_city_type":
+        # THE FIX: regloc_school_create already checks the "requests" permission before
+        # letting a user type a new school — this sibling entry point for typing a new
+        # CITY never did. AWAITING_REGLOC_CITY_TEXT (the state that actually creates a
+        # location_suggestions row via _regloc_finish) can only be reached through here,
+        # so this was a complete bypass of the admin's "restrict requests" toggle for
+        # every new-city submission.
+        from src.database import db_check_user_permission
+        if not await asyncio.to_thread(db_check_user_permission, user_id, "requests"):
+            await query.answer("🚫 You've been restricted from submitting requests.", show_alert=True)
+            return
         await query.answer()
         USER_STATES[user_id] = "AWAITING_REGLOC_CITY_TEXT"
         session = USER_PAYLOADS.get(user_id, {})
@@ -3154,7 +3164,25 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer()
         purpose, value = d_id, data[2]
         from src.database import db_get_rank_matrix, db_get_scope_summary
-        scope = {"nav_country": "country", "nav_city": "city", "nav_school": "school"}.get(purpose, "world")
+        # THE FIX: this only ever recognized nav_country/nav_city/nav_school — the SAME favorite
+        # shortcut buttons are also shown during the fav_country/fav_city/fav_school "add a
+        # favorite" flow (both purposes render through _build_wrsel_country_index_kb). Tapping an
+        # existing favorite there silently defaulted to scope="world" and showed the World
+        # leaderboard instead of anything related to what was tapped.
+        scope = {
+            "nav_country": "country", "nav_city": "city", "nav_school": "school",
+            "fav_country": "country", "fav_city": "city", "fav_school": "school",
+        }.get(purpose, "world")
+
+        if purpose.startswith("fav_"):
+            nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"wr_fav_list|{scope}|0")]])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=f"⭐ <b>{html.escape(value)}</b> is already in your favorites.",
+                reply_markup=nav_kb
+            )
+            return
+
         matrix = await asyncio.to_thread(db_get_rank_matrix, scope, value, "all", "all", "all", "total", 10)
         summary = await asyncio.to_thread(db_get_scope_summary, scope, value, "all")
         text = build_leaderboard_text(scope, value, "all", "all", "all", "total", matrix, summary)
