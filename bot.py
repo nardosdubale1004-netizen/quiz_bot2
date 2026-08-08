@@ -1695,19 +1695,19 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         _GE.release_connection(conn2)
 
                 USER_STATES[user_id] = "IDLE"
-                    USER_PAYLOADS.pop(user_id, None)
-                    visibility_line = "🌐 Open — anyone can join instantly" if is_public_choice else "🔒 Approval required to join"
-                    scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value))}</b>\n{visibility_line}" if team_scope != "open" else visibility_line
-                    location_line = f"📍 {org_city}, {org_country}\n" if org_city and org_country else "🌍 Open to everyone — no location restriction\n"
-                    await _fsm_advance(
-                        context, update.message.chat_id, edit_mid,
-                        f"✅ <b>Team Registered!</b>\n\n"
-                        f"✨ <b>{org_name}</b> <code>#{org_tag}</code>\n"
-                        f"{scope_line}\n"
-                        f"{location_line}\n"
-                        f"Share your team's invite link (from the team page) so students can join directly.",
-                        profile_nav_kb
-                    )
+                USER_PAYLOADS.pop(user_id, None)
+                visibility_line = "🌐 Open — anyone can join instantly" if is_public_choice else "🔒 Approval required to join"
+                scope_line = f"🔒 Dedicated to: <b>{html.escape(str(scope_value))}</b>\n{visibility_line}" if team_scope != "open" else visibility_line
+                location_line = f"📍 {org_city}, {org_country}\n" if org_city and org_country else "🌍 Open to everyone — no location restriction\n"
+                await _fsm_advance(
+                    context, update.message.chat_id, edit_mid,
+                    f"✅ <b>Team Registered!</b>\n\n"
+                    f"✨ <b>{org_name}</b> <code>#{org_tag}</code>\n"
+                    f"{scope_line}\n"
+                    f"{location_line}\n"
+                    f"Share your team's invite link (from the team page) so students can join directly.",
+                    profile_nav_kb
+                )
             except Exception as e:
                 traceback.print_exc()
                 print(f"[TEAM-CREATE-ERROR] team_scope={team_scope}, org_tag={org_tag}: {e}", flush=True)
