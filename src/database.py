@@ -2334,7 +2334,11 @@ def db_join_organization(user_id, org_tag: str) -> dict:
                     last_requested_at = NOW(), deleted_at = NULL
                 WHERE org_memberships.state IN ('rejected', 'left');
             """, (str(user_id), org_id, role, state))
-            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
+            # THE FIX: same class of bug already fixed in db_create_organization — an OPEN
+            # team is deliberately created with city=None/country=None (no restriction), so
+            # this was unconditionally resetting the joiner's real timezone to UTC every time.
+            if country:
+                cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
             return {"org_id": org_id, "org_name": org_name, "role_assigned": state, "creator_id": creator_id}
@@ -2419,7 +2423,8 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
                     org_role = EXCLUDED.org_role, state = EXCLUDED.state, joined_at = NOW(), deleted_at = NULL
                 WHERE org_memberships.state IN ('rejected', 'left');
             """, (str(user_id), int(org_id), role, state))
-            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
+            if row['country']:
+                cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
             return {"org_id": row['org_id'], "org_name": row['org_name'], "role_assigned": state, "creator_id": row['creator_id']}
@@ -2576,7 +2581,8 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
                 else:
                     cur.execute("INSERT INTO org_memberships (user_id, org_id, org_role, state) VALUES (%s, %s, %s, %s);",
                                 (str(user_id), row["org_id"], role, state))
-            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
+            if row['country']:
+                cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(row['country']), str(user_id)))
             conn.commit()
             user_profile_cache.invalidate(f"profile:{user_id}")
             return {"org_id": row["org_id"], "org_name": row["org_name"], "role_assigned": state, "creator_id": row["creator_id"]}
@@ -2746,15 +2752,16 @@ def db_get_org_membership_log(org_id: int, limit: int = 40):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_user_org_role(user_id, org_id: int):
-    """Role check scoped to ONE specific org — the old code read role from the user's
-    generic profile (which grabs an arbitrary org via LIMIT 1 if they're in multiple
-    teams), so admins of team B could get denied access when it returned their role
-    from team A instead. This queries the exact membership row."""
+    """Role check scoped to ONE specific org AND to an ACTIVE membership.
+    THE FIX: db_leave_organization sets state='left' but never clears org_role — so a
+    former admin/creator who left a team was still reading back as 'admin'/'creator'
+    forever, which meant process_req (approve/reject join requests) and org_history
+    (view membership panel) stayed usable by someone no longer even on the team."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), int(org_id)))
+            cur.execute("SELECT org_role FROM org_memberships WHERE user_id = %s AND org_id = %s AND state = 'active';", (str(user_id), int(org_id)))
             row = cur.fetchone()
             return row['org_role'] if row else None
     except Exception as e:
@@ -5142,7 +5149,14 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 entity_clause = "AND o.org_id = %s"
                 entity_params = [int(entity)]
 
-            join_for_scope = org_req if scope in ("city", "school") else org_left
+            # THE FIX: "school" genuinely requires an org (no org, no row) — an INNER
+            # JOIN there is correct. "city" must NOT require one: a solo student with
+            # only a personal city set (l.city, no team) was being silently excluded
+            # from that city's leaderboard entirely, since the INNER JOIN drops the row
+            # before the COALESCE(o.city, l.city) fallback in WHERE ever gets a chance
+            # to match it. World-level city/country breakdowns already used org_left
+            # correctly — only drilling into ONE specific city had this bug.
+            join_for_scope = org_req if scope == "school" else org_left
 
             cur.execute(f"""
                 SELECT u.user_id, u.nickname, u.username, u.first_name, u.public_consent_granted, {score_col} AS score
@@ -5155,33 +5169,29 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
             """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
             students = [{"name": format_public_name(dict(r)), "score": r["score"]} for r in cur.fetchall()]
 
-            def _group(label_col, join_clause, require_positive=False):
-                # THE FIX: this HAVING clause never existed — every team/school with a
-                # SUM of exactly 0 marks (a brand-new one, or one whose members' marks
-                # net to zero) was still listed on the board. require_positive=True is
-                # only applied to teams/schools (per your "must have 1 mark" rule) —
-                # cities/countries stay unfiltered since a city legitimately can be 0
-                # and still be a meaningful "no one's scored here yet" entry.
+            def _group(label_col, join_clause, require_positive=False, org_type_filter=None):
                 having = f"HAVING {agg}({score_col}) > 0" if require_positive else ""
+                # THE FIX: this was the one remaining spot where School vs Team was never
+                # distinguished — "schools" and "teams" ran the EXACT same query with no
+                # org_type filter, so both columns on every leaderboard showed the same
+                # mixed list of schools and student-created teams.
+                type_clause = f"AND o.org_type = '{org_type_filter}'" if org_type_filter else ""
                 cur.execute(f"""
                     SELECT {label_col} AS name, {agg}({score_col})::int AS score
                     FROM user_stats u
                     {extra_join}
                     {join_clause}
                     LEFT JOIN user_locations l ON l.user_id = u.user_id
-                    WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause}
+                    WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause} {type_clause}
                     GROUP BY name {having} ORDER BY score DESC LIMIT %s;
                 """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
                 return [dict(r) for r in cur.fetchall()]
 
             result = {"students": students}
             if scope in ("world", "country", "city"):
-                result["schools"] = _group("o.org_name", org_req, require_positive=True)
+                result["schools"] = _group("o.org_name", org_req, require_positive=True, org_type_filter="School")
             if scope in ("world", "country", "city", "school"):
-                result["teams"] = _group("o.org_name", org_req, require_positive=True)
-            # THE FIX: cities/countries were the only groups still exempt from the
-            # require_positive filter — a city/country with SUM(marks) = 0 (e.g. every
-            # student there is still pending review, or has 0 marks) was still listed.
+                result["teams"] = _group("o.org_name", org_req, require_positive=True, org_type_filter="Team")
             if scope in ("world", "country"):
                 result["cities"] = _group("COALESCE(o.city, l.city)", org_left, require_positive=True)
             if scope == "world":
@@ -5211,7 +5221,10 @@ def db_get_scope_summary(scope="world", entity=None, grade=None):
             if scope == "country" and entity:
                 entity_clause, entity_params = "AND COALESCE(o.country, l.country) = %s", [entity]
             elif scope == "city" and entity:
-                entity_clause, entity_params, join_sql = "AND COALESCE(o.city, l.city) = %s", [entity], org_req
+                # THE FIX: same bug as db_get_rank_matrix — city must stay a LEFT JOIN
+                # so solo students (personal city only, no team) are still counted in
+                # the population/total-marks header for that city instead of vanishing.
+                entity_clause, entity_params = "AND COALESCE(o.city, l.city) = %s", [entity]
             elif scope == "school" and entity:
                 entity_clause, entity_params, join_sql = "AND o.org_id = %s", [int(entity)], org_req
 
@@ -5474,38 +5487,44 @@ def db_get_org_grade_breakdown(org_id: int):
                 return []
             city, country = org.get('city'), org.get('country')
 
+            # THE FIX: was summing u.total_marks (a student's LIFETIME score across every
+            # school/team they've ever joined) instead of their frozen contribution to THIS
+            # school specifically. That double-counted students who'd switched schools and
+            # silently dropped students who'd since left entirely — breaking the same
+            # "old team preserves what was earned there" guarantee every other school/team
+            # query in this file already respects via user_org_contributions.
             cur.execute("""
                 WITH school_grades AS (
-                    SELECT u.grade, SUM(u.total_marks) AS school_grade_score
-                    FROM user_stats u
-                    JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                    WHERE m.org_id = %s AND u.grade IS NOT NULL
+                    SELECT u.grade, SUM(c.marks)::int AS school_grade_score
+                    FROM user_org_contributions c
+                    JOIN user_stats u ON u.user_id = c.user_id
+                    WHERE c.org_id = %s AND u.grade IS NOT NULL
                     GROUP BY u.grade
                 ),
                 world_grade_ranks AS (
-                    SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
-                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as world_rank
+                    SELECT o.org_id, u.grade, SUM(c.marks) AS score,
+                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(c.marks) DESC) as world_rank
                     FROM organizations o
-                    JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
-                    JOIN user_stats u ON m.user_id = u.user_id
+                    JOIN user_org_contributions c ON c.org_id = o.org_id
+                    JOIN user_stats u ON u.user_id = c.user_id
                     WHERE o.deleted_at IS NULL AND u.grade IS NOT NULL
                     GROUP BY o.org_id, u.grade
                 ),
                 country_grade_ranks AS (
-                    SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
-                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as country_rank
+                    SELECT o.org_id, u.grade, SUM(c.marks) AS score,
+                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(c.marks) DESC) as country_rank
                     FROM organizations o
-                    JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
-                    JOIN user_stats u ON m.user_id = u.user_id
+                    JOIN user_org_contributions c ON c.org_id = o.org_id
+                    JOIN user_stats u ON u.user_id = c.user_id
                     WHERE o.deleted_at IS NULL AND o.country = %s AND u.grade IS NOT NULL
                     GROUP BY o.org_id, u.grade
                 ),
                 city_grade_ranks AS (
-                    SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
-                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as city_rank
+                    SELECT o.org_id, u.grade, SUM(c.marks) AS score,
+                           RANK() OVER (PARTITION BY u.grade ORDER BY SUM(c.marks) DESC) as city_rank
                     FROM organizations o
-                    JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
-                    JOIN user_stats u ON m.user_id = u.user_id
+                    JOIN user_org_contributions c ON c.org_id = o.org_id
+                    JOIN user_stats u ON u.user_id = c.user_id
                     WHERE o.deleted_at IS NULL AND o.city = %s AND u.grade IS NOT NULL
                     GROUP BY o.org_id, u.grade
                 )
