@@ -20,7 +20,7 @@ for log_name in ["telegram", "telegram.ext", "telegram.ext.Updater", "telegram.e
     logging.getLogger(log_name).setLevel(logging.CRITICAL)
 
 from telegram import Update, BotCommand
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import CONFIG, Style, LOCKOUT_MESSAGES, USER_STATES, USER_PAYLOADS, ADMIN_IDS, FEEDBACK_CATEGORIES, LAST_UTILITY_MID, FSM_INPUT_HINT
 from src.database import (

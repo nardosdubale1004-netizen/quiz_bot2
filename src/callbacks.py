@@ -2183,30 +2183,38 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "fb_cat":
-        await query.answer()
-        # THE FIX: db_check_user_permission was never imported anywhere in this file —
-        # this call threw NameError on every single feedback attempt, blocked or not.
         from src.database import db_check_user_permission
         if not await asyncio.to_thread(db_check_user_permission, user_id, "feedback"):
             await query.answer("🚫 You've been restricted from sending feedback. Contact an admin.", show_alert=True)
             return
-        category = d_id
-        USER_STATES[user_id] = "AWAITING_FEEDBACK_TEXT"
-        USER_PAYLOADS[user_id] = {"category": category, "edit_mid": query.message.message_id}
-        label = FEEDBACK_CATEGORIES.get(category, category)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
-            [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
-        ])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=(
-                f"{label}\n\n"
-                f"✍️ Describe it in your own words — as much detail helps.\n\n"
-                f"📝 <i>Type your message in the box below, then tap send.</i>"
-            ),
-            reply_markup=kb
-        )
+        try:
+            category = d_id
+            USER_STATES[user_id] = "AWAITING_FEEDBACK_TEXT"
+            USER_PAYLOADS[user_id] = {"category": category, "edit_mid": query.message.message_id}
+            label = FEEDBACK_CATEGORIES.get(category, category)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 BACK TO FEEDBACK MENU", callback_data="fb_menu|0")],
+                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
+            ])
+            await edit_rich_message_safe(
+                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+                html_content=(
+                    f"{label}\n\n"
+                    f"✍️ Describe it in your own words — as much detail helps.\n\n"
+                    f"📝 <i>Type your message in the box below, then tap send.</i>"
+                ),
+                reply_markup=kb
+            )
+            # THE FIX: answered ONCE, only after the work succeeds — same pattern already
+            # used in fb_item/fb_kanban/loc_admin_item earlier in this thread. The old
+            # version called query.answer() unconditionally up top with no try/except, so
+            # any failure in edit_rich_message_safe (a bad state, a stale message, etc.)
+            # had no way to surface — the tap would just look like nothing happened.
+            await query.answer()
+        except Exception as fb_cat_err:
+            traceback.print_exc()
+            print(f"[FB-CAT-ERROR] category={d_id} user={user_id}: {fb_cat_err}", flush=True)
+            await query.answer(f"Error: {type(fb_cat_err).__name__}: {str(fb_cat_err)[:150]}", show_alert=True)
         return
 
     elif action == "fb_cancel":
