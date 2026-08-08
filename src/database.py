@@ -2052,6 +2052,7 @@ def process_user_score(user_id, message_id, q_id, is_correct, selected_option, p
                 )
                 row = cur.fetchone()
                 conn.commit()
+                user_profile_cache.invalidate(f"profile:{user_id}")
                 dlog(f"[DEBUG-DB-SCORE] Attempt {attempt} succeeded for user={user_id}, "
                      f"message_id={message_id}. Row output: {dict(row) if row else 'None'}")
 
@@ -6462,3 +6463,29 @@ def db_get_team_average_marks(org_id: int) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
+
+def db_update_user_telegram_info(user_id, username, first_name):
+    """Upserts the user's latest real Telegram handle and first name."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_stats (user_id, username, first_name, total, correct, total_marks)
+                VALUES (%s, %s, %s, 0, 0, 0)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    first_name = EXCLUDED.first_name;
+            """, (str(user_id), username, first_name))
+            conn.commit()
+            user_profile_cache.invalidate(f"profile:{user_id}")   # <-- ADD THIS LINE
+            print(f"[DEBUG-DB-USER-SYNC] Synced profile for {user_id} -> Username: {username}, Name: {first_name}", flush=True)
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] Failed to sync user telegram attributes: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
