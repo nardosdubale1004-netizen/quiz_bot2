@@ -790,6 +790,16 @@ class QuizEngine:
                     );
                 """)
 
+                # THE FIX: db_get_team_geo_ownership, db_join_branch, db_get_branch_leaderboard,
+                # and db_get_smart_team_leaderboard all reference org_memberships.branch_id and
+                # user_stats.branch_id — neither column was ever created by any migration
+                # statement in this file. school_branches (the table these point INTO) exists,
+                # but the FK columns on the two referencing tables never did. Any team-details
+                # screen, branch join, or smart-leaderboard call was one query away from
+                # "column branch_id does not exist" the moment it actually ran.
+                _safe_migrate(cur, conn, "org_memberships.branch_id", "ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS branch_id INT REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+                _safe_migrate(cur, conn, "user_stats.branch_id", "ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS branch_id INT REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -5563,17 +5573,24 @@ def db_get_team_geo_ownership(org_id: int) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # THE FIX: u.personal_city/personal_country are the legacy columns every other
+            # query moved off of many passes ago — they're frozen at their DEFAULT
+            # 'Addis Ababa'/'Ethiopia' values forever since db_set_user_location (the single
+            # writer) never touches them. This function feeds the Team Details header's
+            # School/City/Country/World homogeneity check and db_get_smart_team_leaderboard —
+            # both were silently grouping teams by the wrong (default) location.
             cur.execute("""
                 SELECT
                     m.user_id,
                     m.org_id,
                     m.branch_id,
-                    COALESCE(b.city, o.city, u.personal_city) AS resolved_city,
-                    COALESCE(b.country, o.country, u.personal_country) AS resolved_country
+                    COALESCE(b.city, o.city, l.city) AS resolved_city,
+                    COALESCE(b.country, o.country, l.country) AS resolved_country
                 FROM org_memberships m
                 JOIN user_stats u ON u.user_id = m.user_id
                 JOIN organizations o ON o.org_id = m.org_id
                 LEFT JOIN school_branches b ON b.branch_id = m.branch_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE m.org_id = %s
                   AND m.state = 'active'
                   AND o.deleted_at IS NULL;
@@ -5682,19 +5699,25 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             # Subquery: for each org, get all unique resolved countries and cities
+            # THE FIX: same stale-column bug as db_get_team_geo_ownership — this whole
+            # function exists to check whether ALL of a team's members share one location,
+            # and it was checking that against a column that's identical (default) for
+            # every user regardless of their real location. Every dedicated team looked
+            # "homogenous" to this query even when its members were scattered everywhere.
             base_sql = """
                 WITH team_geo AS (
                     SELECT
                         m.org_id,
                         COUNT(DISTINCT m.user_id) AS member_count,
-                        COUNT(DISTINCT COALESCE(b.country, o.country, u.personal_country)) AS country_count,
-                        COUNT(DISTINCT COALESCE(b.city, o.city, u.personal_city)) AS city_count,
-                        MIN(COALESCE(b.country, o.country, u.personal_country)) AS solo_country,
-                        MIN(COALESCE(b.city, o.city, u.personal_city)) AS solo_city
+                        COUNT(DISTINCT COALESCE(b.country, o.country, l.country)) AS country_count,
+                        COUNT(DISTINCT COALESCE(b.city, o.city, l.city)) AS city_count,
+                        MIN(COALESCE(b.country, o.country, l.country)) AS solo_country,
+                        MIN(COALESCE(b.city, o.city, l.city)) AS solo_city
                     FROM org_memberships m
                     JOIN user_stats u ON u.user_id = m.user_id
                     JOIN organizations o ON o.org_id = m.org_id
                     LEFT JOIN school_branches b ON b.branch_id = m.branch_id
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE m.state = 'active'
                       AND o.deleted_at IS NULL
                     GROUP BY m.org_id
