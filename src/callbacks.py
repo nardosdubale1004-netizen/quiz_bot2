@@ -1662,18 +1662,29 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"loc_admin_browse|{kind}|{status}:{offset+6}"))
         if nav_row:
             item_rows.append(nav_row)
+        # THE FIX: this screen already had a back button — what it was missing (same
+        # complaint, same root cause as fb_browse) was any indication of which kind/status
+        # filter you're currently looking at.
+        def _kind_lbl(key, label):
+            return ("• " if kind == key else "") + label
+        def _stat_lbl(key, label):
+            return ("• " if status == key else "") + label
+
         item_rows.append([
-            InlineKeyboardButton("🏙 Cities", callback_data=f"loc_admin_browse|city|{status}:0"),
-            InlineKeyboardButton("🏫 Schools", callback_data=f"loc_admin_browse|school|{status}:0"),
-            InlineKeyboardButton("📋 All", callback_data=f"loc_admin_browse|all|{status}:0"),
+            InlineKeyboardButton(_kind_lbl("city", "🏙 Cities"), callback_data=f"loc_admin_browse|city|{status}:0"),
+            InlineKeyboardButton(_kind_lbl("school", "🏫 Schools"), callback_data=f"loc_admin_browse|school|{status}:0"),
+            InlineKeyboardButton(_kind_lbl("all", "📋 All"), callback_data=f"loc_admin_browse|all|{status}:0"),
         ])
         item_rows.append([
-            InlineKeyboardButton("📥 Pending", callback_data=f"loc_admin_browse|{kind}|pending:0"),
-            InlineKeyboardButton("✅ Approved", callback_data=f"loc_admin_browse|{kind}|approved:0"),
-            InlineKeyboardButton("🚫 Rejected", callback_data=f"loc_admin_browse|{kind}|rejected:0"),
+            InlineKeyboardButton(_stat_lbl("pending", "📥 Pending"), callback_data=f"loc_admin_browse|{kind}|pending:0"),
+            InlineKeyboardButton(_stat_lbl("approved", "✅ Approved"), callback_data=f"loc_admin_browse|{kind}|approved:0"),
+            InlineKeyboardButton(_stat_lbl("rejected", "🚫 Rejected"), callback_data=f"loc_admin_browse|{kind}|rejected:0"),
         ])
-        item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"loc_admin_browse|{kind}|closed:0")])
-        item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+        item_rows.append([InlineKeyboardButton(_stat_lbl("closed", "🔒 Closed Conversations"), callback_data=f"loc_admin_browse|{kind}|closed:0")])
+        item_rows.append([
+            InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
+            InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")
+        ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
 
@@ -2366,12 +2377,24 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         if nav_row:
             item_rows.append(nav_row)
 
+        # THE FIX: this screen only ever got a "back" button when the result list was
+        # EMPTY — the moment any feedback item existed (your exact screenshot), the
+        # function fell straight through this block and returned with no navigation at
+        # all. Also adds a "• " marker on whichever filter is currently active, so the
+        # category you're viewing is visually obvious instead of guessed.
+        def _status_lbl(key, label):
+            return ("• " if status == key else "") + label
+
         item_rows.append([
-            InlineKeyboardButton("🆕 Open", callback_data=f"fb_browse|{category}|open:0"),
-            InlineKeyboardButton("🔧 Active", callback_data=f"fb_browse|{category}|in_progress:0"),
-            InlineKeyboardButton("📋 All", callback_data=f"fb_browse|{category}|all:0"),
+            InlineKeyboardButton(_status_lbl("open", "🆕 Open"), callback_data=f"fb_browse|{category}|open:0"),
+            InlineKeyboardButton(_status_lbl("in_progress", "🔧 Active"), callback_data=f"fb_browse|{category}|in_progress:0"),
+            InlineKeyboardButton(_status_lbl("all", "📋 All"), callback_data=f"fb_browse|{category}|all:0"),
         ])
-        item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"fb_browse|{category}|closed:0")])
+        item_rows.append([InlineKeyboardButton(_status_lbl("closed", "🔒 Closed Conversations"), callback_data=f"fb_browse|{category}|closed:0")])
+        item_rows.append([
+            InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
+            InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")
+        ])
 
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
