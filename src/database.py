@@ -5829,11 +5829,17 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                     GROUP BY m.org_id
                 ),
                 ranked_teams AS (
+                    -- THE FIX: was SUM(u.total_marks) — a member's WHOLE lifetime score,
+                    -- including any other school/team they've since moved to. Every other
+                    -- team-scoring surface (roster, rank summary, grade breakdown) reads
+                    -- user_org_contributions (the frozen per-team ledger); this was the one
+                    -- function still on the live sum, so a team's RANK here could silently
+                    -- disagree with the SCORE shown on its own card.
                     SELECT
                         tg.org_id,
                         o.org_name,
                         o.org_tag,
-                        SUM(u.total_marks) AS total_score,
+                        COALESCE(SUM(c.marks), 0)::int AS total_score,
                         tg.member_count,
                         tg.solo_country,
                         tg.solo_city,
@@ -5843,9 +5849,7 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                         tg.school_count
                     FROM team_geo tg
                     JOIN organizations o ON o.org_id = tg.org_id
-                    JOIN org_memberships m ON m.org_id = tg.org_id
-                      AND m.state = 'active'
-                    JOIN user_stats u ON u.user_id = m.user_id
+                    LEFT JOIN user_org_contributions c ON c.org_id = tg.org_id
                     GROUP BY tg.org_id, o.org_name, o.org_tag,
                              tg.member_count, tg.solo_country, tg.solo_city, tg.solo_school_id,
                              tg.country_count, tg.city_count, tg.school_count
