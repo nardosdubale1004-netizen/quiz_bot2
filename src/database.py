@@ -5055,8 +5055,8 @@ def db_get_active_countries():
                 SELECT DISTINCT COALESCE(o.country, l.country) AS country
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN organizations o ON m.org_id = o.org_id AND (o.status IS NULL OR o.status = 'approved')
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE COALESCE(o.country, l.country) IS NOT NULL
                 ORDER BY country ASC
                 LIMIT 40;
@@ -5238,12 +5238,17 @@ def db_get_rank_matrix(scope="world", entity=None, grade=None, subject=None, dif
                 # org_type filter, so both columns on every leaderboard showed the same
                 # mixed list of schools and student-created teams.
                 type_clause = f"AND o.org_type = '{org_type_filter}'" if org_type_filter else ""
+                # THE FIX: this join was missing l.status='approved' — the students
+                # query right above it in this same function already has it. A student
+                # whose city/country is still PENDING review was silently counted into
+                # these city/country/school/team breakdown tables, contradicting "your
+                # score stays personal only until an admin approves it."
                 cur.execute(f"""
                     SELECT {label_col} AS name, {agg}({score_col})::int AS score
                     FROM user_stats u
                     {extra_join}
                     {join_clause}
-                    LEFT JOIN user_locations l ON l.user_id = u.user_id
+                    LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                     WHERE {label_col} IS NOT NULL AND (%s::int IS NULL OR u.grade = %s) {entity_clause} {type_clause}
                     GROUP BY name {having} ORDER BY score DESC LIMIT %s;
                 """, tuple(extra_params) + (grade_val, grade_val) + tuple(entity_params) + (limit,))
@@ -6019,7 +6024,10 @@ def db_get_user_rank_summary(user_id) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s;", (str(user_id),))
+            # THE FIX: was reading the location regardless of status, then ranking against it the
+            # same way — so a still-PENDING city/country produced a real-looking rank number on
+            # the student's own profile card. Only an approved location should ever feed a rank.
+            cur.execute("SELECT city, country FROM user_locations WHERE user_id = %s AND status = 'approved';", (str(user_id),))
             p = cur.fetchone() or {}
             city, country = p.get("city"), p.get("country")
 
@@ -6028,7 +6036,7 @@ def db_get_user_rank_summary(user_id) -> dict:
                     WITH ranked AS (SELECT u.user_id, RANK() OVER (ORDER BY u.total_marks DESC) AS rnk
                                      FROM user_stats u LEFT JOIN org_memberships m ON u.user_id=m.user_id AND m.state = 'active'
                                      LEFT JOIN organizations o ON m.org_id=o.org_id
-                                     LEFT JOIN user_locations l ON l.user_id = u.user_id {where_clause})
+                                     LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved' {where_clause})
                     SELECT rnk FROM ranked WHERE user_id = %s;
                 """, (*params, str(user_id)))
                 r = cur.fetchone()

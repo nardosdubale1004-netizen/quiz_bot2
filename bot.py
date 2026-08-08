@@ -832,13 +832,25 @@ async def _start_command_inner(update: Update, context):
         conn2 = _GE.get_db_connection()
         try:
             with conn2.cursor() as cur2:
-                cur2.execute("SELECT org_name, org_type, description FROM organizations WHERE join_token = %s AND deleted_at IS NULL;", (join_token,))
-                preview = cur2.fetchone()
+               cur2.execute("SELECT org_name, org_type, description, status FROM organizations WHERE join_token = %s AND deleted_at IS NULL;", (join_token,))
+            preview = cur2.fetchone()
         finally:
             _GE.release_connection(conn2)
 
         if not preview:
             await send_rich_message_safe(context.bot, chat_id=update.message.chat_id, html_content="⚠️ This invite link is invalid or the team no longer exists.")
+            return
+
+        # THE FIX: the preview card was shown for ANY org matching the token, even one still
+        # 'pending' admin review or already 'rejected' — confirm_team_invite already blocks the
+        # actual join correctly, but the user only found that out after tapping JOIN. Now it's
+        # surfaced up front, on the card they see first.
+        if preview.get('status') not in (None, 'approved'):
+            status_word = "still awaiting admin review" if preview.get('status') == 'pending' else "was not approved"
+            await send_rich_message_safe(
+                context.bot, chat_id=update.message.chat_id,
+                html_content=f"⏳ <b>{html.escape(preview['org_name'])}</b> {status_word} — you can't join it yet."
+            )
             return
 
         # THE FIX: invite links used to join instantly with zero confirmation. Now shows
