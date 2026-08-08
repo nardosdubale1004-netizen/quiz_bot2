@@ -661,6 +661,16 @@ class QuizEngine:
                 """)
                 cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS request_count INT DEFAULT 1;")
                 cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS last_requested_at TIMESTAMPTZ DEFAULT NOW();")
+                # THE FIX: is_closed used to only get created lazily, inside
+                # db_set_feedback_closed / db_set_location_suggestion_closed — i.e. only
+                # the FIRST time an admin ever closed something. Until then, any query
+                # that read is_closed (db_get_user_feedback_and_requests) threw "column
+                # does not exist", got silently swallowed, and returned an empty list —
+                # which is exactly why "My Feedback & Requests" showed "Nothing submitted
+                # yet" despite real feedback existing. Created here unconditionally now,
+                # so the column always exists from first boot.
+                cur.execute("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS user_hidden_questions (
                         user_id VARCHAR(20) NOT NULL,
@@ -5962,18 +5972,21 @@ def db_link_location_suggestions(sid_a: int, sid_b: int) -> bool:
 
 
 def db_get_user_feedback_and_requests(user_id, limit: int = 5, offset: int = 0):
-    """Unified 'My Feedback & Requests' feed — merges the user's own feedback submissions
-    AND their city/school location requests into one time-ordered list. THE FIX: this screen's
-    button has always said 'MY FEEDBACK & REQUESTS', but the underlying query only ever read
-    the `feedback` table — every location/school request (and any admin reply sitting on it)
-    was structurally invisible here, which is exactly what 'no Requests, no channel admin'
-    was describing."""
+    ...
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            # THE FIX: is_closed was never selected — the merged list had no way to show a
-            # 🔒 Closed marker on either feedback or requests, per your ask.
+            # THE FIX: self-heals even on a container that hasn't restarted since this fix was
+            # deployed — creates the columns here too (no-op if they already exist from the
+            # schema migration above), instead of only ever failing silently and returning [].
+            try:
+                cur.execute("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
+                conn.commit()
+            except Exception:
+                if conn: conn.rollback()
+
             cur.execute("""
                 (SELECT id, 'feedback' AS kind, message AS label, status, created_at, COALESCE(is_closed, FALSE) AS is_closed
                  FROM feedback WHERE user_id = %s)

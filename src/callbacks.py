@@ -1695,20 +1695,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             text = build_location_suggestion_item_text(ls, thread, viewer_tz)
 
             rows = []
+            # THE FIX: "MESSAGE STUDENT" used to be added TWICE — once here for
+            # pending items, and again unconditionally below (since a pending item is
+            # never closed). This is exactly the duplicate button in your screenshot.
+            # Now added exactly once, in the is_closed block below, for every status.
             if ls['status'] == 'pending':
                 rows.append([
                     InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"),
                     InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")
                 ])
-                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
                 rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
             elif ls['status'] == 'rejected':
                 rows.append([InlineKeyboardButton("✅ APPROVE INSTEAD", callback_data=f"loc_review|{ls_id}|1")])
             elif ls['status'] == 'approved':
                 rows.append([InlineKeyboardButton("🚫 REJECT INSTEAD", callback_data=f"loc_review|{ls_id}|0")])
 
-            # THE FIX: feedback got close/reopen last pass, requests never actually did
-            # despite being described as a mirror — now genuinely mirrored.
             if ls.get('is_closed'):
                 rows.append([InlineKeyboardButton("🔓 REOPEN CONVERSATION", callback_data=f"loc_toggle_close|{ls_id}|0")])
             else:
