@@ -6133,3 +6133,69 @@ def db_count_org_left_members(org_id: int) -> int:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_user_permission(user_id, perm_key: str, allowed: bool, set_by_admin=None) -> bool:
+    """perm_key: 'feedback' | 'requests' | 'team_create' | 'bot_access'. allowed=False blocks that
+    ONE feature only — this is what makes per-feature blocking possible instead of one global flag."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_permissions (
+                    user_id VARCHAR(20) NOT NULL, perm_key VARCHAR(20) NOT NULL,
+                    allowed BOOLEAN DEFAULT TRUE, set_by VARCHAR(20), updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (user_id, perm_key)
+                );
+            """)
+            cur.execute("""
+                INSERT INTO user_permissions (user_id, perm_key, allowed, set_by, updated_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (user_id, perm_key) DO UPDATE SET allowed = EXCLUDED.allowed, set_by = EXCLUDED.set_by, updated_at = NOW();
+            """, (str(user_id), perm_key, allowed, str(set_by_admin) if set_by_admin else None))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_set_user_permission: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_check_user_permission(user_id, perm_key: str) -> bool:
+    """Fails OPEN (True) on any error or missing row — a user is never silently blocked
+    by a DB hiccup, only by an explicit admin action."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT allowed FROM user_permissions WHERE user_id = %s AND perm_key = %s;", (str(user_id), perm_key))
+            row = cur.fetchone()
+            return True if not row else bool(row['allowed'])
+    except Exception as e:
+        print(f"[DB ERROR] db_check_user_permission: {e}", flush=True)
+        return True
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_get_user_permissions(user_id) -> dict:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT perm_key, allowed FROM user_permissions WHERE user_id = %s;", (str(user_id),))
+            rows = {r['perm_key']: r['allowed'] for r in cur.fetchall()}
+            for k in ("feedback", "requests", "team_create", "bot_access"):
+                rows.setdefault(k, True)
+            return rows
+    except Exception as e:
+        print(f"[DB ERROR] db_get_user_permissions: {e}", flush=True)
+        return {"feedback": True, "requests": True, "team_create": True, "bot_access": True}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)

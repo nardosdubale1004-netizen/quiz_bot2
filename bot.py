@@ -1392,6 +1392,10 @@ async def handle_fsm_message(update: Update, context):
     Also silently deletes any stray text/attachment the user sends outside of an active input
     flow — a user's DM should only ever contain quiz questions, answer explanation cards, and
     utility panels, never loose typed clutter or accidental attachments."""
+    from src.database import db_check_user_permission
+    if not await asyncio.to_thread(db_check_user_permission, user_id, "bot_access"):
+        await _delete_silent(context.bot, update.message.chat_id, update.message.message_id)
+        return
     user = update.effective_user
     user_id = user.id
     state = USER_STATES.get(user_id)
@@ -2477,5 +2481,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 

@@ -122,15 +122,19 @@ def _build_school_branch_leaderboard_text(schools: list) -> str:
     return "\n".join(lines)
 
 
-def _build_feedback_detail_keyboard(fb_id, return_state: str = None) -> InlineKeyboardMarkup:
+def _build_feedback_detail_keyboard(fb_id, return_state: str = None, is_closed: bool = False) -> InlineKeyboardMarkup:
     rs = return_state or "all:all:0"
     rows = [
         [InlineKeyboardButton("🔧 ACTIVE", callback_data=f"fb_status|{fb_id}|in_progress|{rs}"),
          InlineKeyboardButton("🗓️ PLANNED", callback_data=f"fb_status|{fb_id}|planned|{rs}")],
         [InlineKeyboardButton("✅ RESOLVED", callback_data=f"fb_status|{fb_id}|resolved|{rs}"),
          InlineKeyboardButton("🚫 WON'T FIX", callback_data=f"fb_status|{fb_id}|wontfix|{rs}")],
-        [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_reply|{fb_id}")],
     ]
+    if is_closed:
+        rows.append([InlineKeyboardButton("🔓 REOPEN CONVERSATION", callback_data=f"fb_toggle_close|{fb_id}|0")])
+    else:
+        rows.append([InlineKeyboardButton("💬 REPLY", callback_data=f"fb_reply|{fb_id}")])
+        rows.append([InlineKeyboardButton("🔒 CLOSE CONVERSATION", callback_data=f"fb_toggle_close|{fb_id}|1")])
     parts = rs.split(":")
     if len(parts) == 3:
         cat, stat, off = parts
@@ -582,7 +586,7 @@ async def _render_team_details(context, chat_id, message_id, user_id, org_id: in
 
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=f"{info_text}\n\n{table_text}", reply_markup=kb)
 
-    
+
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
     query = update.callback_query
     data = query.data.split("|")
@@ -1127,6 +1131,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "regloc_school_create":
         await query.answer()
+        # in regloc_school_create AND wherever a school/city suggestion gets submitted:
+        if not await asyncio.to_thread(db_check_user_permission, user_id, "requests"):
+            await query.answer("🚫 You've been restricted from submitting requests.", show_alert=True)
+            return
         session = USER_PAYLOADS.get(user_id, {})
         USER_STATES[user_id] = "AWAITING_ORG_NAME"
         USER_PAYLOADS[user_id] = {
@@ -1712,6 +1720,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "fsm_create_org":
         await query.answer()
+        if not await asyncio.to_thread(db_check_user_permission, user_id, "team_create"):
+            await query.answer("🚫 You've been restricted from creating teams.", show_alert=True)
+            return
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🌐 OPEN TEAM (anyone can join)", callback_data="create_team_open|0")],
             [InlineKeyboardButton("🔒 DEDICATED TEAM (restricted)", callback_data="create_team_dedicated_menu|0")],
@@ -2133,6 +2144,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "fb_cat":
         await query.answer()
+        if not await asyncio.to_thread(db_check_user_permission, user_id, "feedback"):
+            await query.answer("🚫 You've been restricted from sending feedback. Contact an admin.", show_alert=True)
+            return
         category = d_id
         USER_STATES[user_id] = "AWAITING_FEEDBACK_TEXT"
         USER_PAYLOADS[user_id] = {"category": category, "edit_mid": query.message.message_id}
@@ -2212,14 +2226,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "fb_reply":
-        from src.database import db_is_admin
+        from src.database import db_is_admin, db_get_feedback_by_id as _get_fb
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         fb_id = int(d_id)
-        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+        fb = await asyncio.to_thread(_get_fb, fb_id)
         if not fb:
             await query.answer("Not found.", show_alert=True)
+            return
+        if fb.get("is_closed"):
+            await query.answer("This conversation is closed — reopen it first.", show_alert=True)
             return
         await query.answer()
         return_state = data[2] if len(data) > 2 else None
@@ -2229,6 +2246,22 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ CANCEL", callback_data=f"fb_item|{fb_id}|{return_state or 'all:all:0'}")]])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=f"💬 <b>Type your reply:</b>\n\n{build_feedback_thread_text(fb, thread)}",
          reply_markup=kb)
+        return
+
+    elif action == "fb_toggle_close":
+        from src.database import db_is_admin, db_set_feedback_closed, db_get_feedback_by_id
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        fb_id, target = int(d_id), (data[2] == "1")
+        await asyncio.to_thread(db_set_feedback_closed, fb_id, target)
+        await query.answer("Closed — user can't reply until reopened." if target else "Reopened.")
+        fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+        thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        kb = _build_feedback_detail_keyboard(fb_id, None)
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb)
         return
 
     elif action == "fb_browse":
@@ -2998,7 +3031,50 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
+    elif action == "admin_manage_user":
+        from src.database import db_is_admin, db_get_user_permissions
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        target = d_id
+        await query.answer()
+        perms = await asyncio.to_thread(db_get_user_permissions, target)
+        def _row(key, label):
+            on = perms.get(key, True)
+            return [InlineKeyboardButton(f"{'✅' if on else '🚫'} {label}", callback_data=f"admin_toggle_perm|{target}|{key}|{0 if on else 1}")]
+        kb = InlineKeyboardMarkup([
+            _row("bot_access", "Bot access"),
+            _row("feedback", "Feedback"),
+            _row("requests", "Location/School requests"),
+            _row("team_create", "Create teams"),
+            [InlineKeyboardButton("🔙 DIRECTORY", callback_data="admin_users|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"🔧 <b>Permissions — user <code>{target}</code></b>\n\nTap to toggle. ✅ = allowed, 🚫 = blocked.", reply_markup=kb)
+        return
 
+    elif action == "admin_toggle_perm":
+        from src.database import db_is_admin, db_set_user_permission
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        target, perm_key, new_val = d_id, data[2], data[3] == "1"
+        await asyncio.to_thread(db_set_user_permission, target, perm_key, new_val, user_id)
+        await query.answer(f"{perm_key}: {'allowed' if new_val else 'blocked'}")
+        # redraw same panel
+        from src.database import db_get_user_permissions
+        perms = await asyncio.to_thread(db_get_user_permissions, target)
+        def _row(key, label):
+            on = perms.get(key, True)
+            return [InlineKeyboardButton(f"{'✅' if on else '🚫'} {label}", callback_data=f"admin_toggle_perm|{target}|{key}|{0 if on else 1}")]
+        kb = InlineKeyboardMarkup([
+            _row("bot_access", "Bot access"), _row("feedback", "Feedback"),
+            _row("requests", "Location/School requests"), _row("team_create", "Create teams"),
+            [InlineKeyboardButton("🔙 DIRECTORY", callback_data="admin_users|0")]
+        ])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
+            html_content=f"🔧 <b>Permissions — user <code>{target}</code></b>\n\nTap to toggle.", reply_markup=kb)
+        return
 
     elif action == "...":
         await query.answer()

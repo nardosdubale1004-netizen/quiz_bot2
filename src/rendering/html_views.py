@@ -1356,27 +1356,16 @@ def build_welcome_message_text() -> str:
     """The channel's pinned welcome/intro card — marketing tone, not technical.
     Posted and pinned on demand via the admin CLI (option [W])."""
     return (
-        "🎓 <b>Welcome — you just found something good.</b>\n"
-        "<hr/>\n\n"
-        "Hey! We're just getting started here, and honestly? We're glad you're one of the first "
-        "ones in the room.\n\n"
-        "This channel drops <b>bite-sized challenges</b> — math, science, language, logic, general "
-        "knowledge, a bit of everything — right into your feed, day and night. No sign-up forms, "
-        "no boring lectures. You just tap an answer and instantly see if you nailed it, with a full "
-        "explanation waiting for you.\n\n"
+        "👋 <b>Welcome — you just found something good.</b>\n\n"
+        "Bite-sized challenges land in the channel day and night — math, science, language, logic, "
+        "a bit of everything. Tap an answer, get scored instantly, see the full breakdown.\n\n"
         "<blockquote>"
-        "🔥 Answer daily, build a streak, watch your rank climb\n"
-        "⚔️ Jump into live tournaments where everyone competes at the same time\n"
-        "🏫 Team up with friends or your school and climb the boards together\n"
-        "🤝 Invite people you know — when they learn, you earn too\n"
-        "🔐 Your name stays private unless you choose to show it off"
+        "🔥 Build a streak, climb the ranks\n"
+        "⚔️ Jump into live tournaments\n"
+        "🏫 Team up and compete together\n"
+        "🕵️ Your identity stays private unless you choose otherwise"
         "</blockquote>\n\n"
-        "We built this because learning shouldn't feel like a chore, and a good challenge is way "
-        "more fun with other people around. So here's the honest ask:\n\n"
-        "👉 <b>Stick around. Answer one today. And if you like it — send it to someone.</b>\n"
-        "That's genuinely how a channel like this grows — one person telling another it's worth "
-        "their time.\n\n"
-        "<i>Glad you're here. Let's get started. 🚀</i>"
+        "One thing first — tap <b>📍 SET MY LOCATION</b> below so we can unlock your scoreboard. Takes 20 seconds."
     )
 
 def build_org_history_text(org: dict, log_rows: list, viewer_tz: str = "UTC") -> str:
@@ -2026,31 +2015,28 @@ def build_team_rank_table_text(matrix_rows: list, grade_filter, total_for_grade:
     return "\n".join(lines)
 
 
-def build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin: bool, is_creator: bool) -> InlineKeyboardMarkup:
+def build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin: bool, is_creator: bool, geo: dict = None, org: dict = None) -> InlineKeyboardMarkup:
     gf = grade_filter if grade_filter not in (None,) else "all"
-
     def _grade_btn(g, label):
         active = str(gf) == str(g)
         return InlineKeyboardButton(("• " if active else "") + label, callback_data=f"team_grade_filter|{org_id}|{g}|{sort_field}|{sort_dir}")
-
     def _sort_btn(field, label):
         nxt = "asc" if (sort_field == field and sort_dir == "desc") else "desc"
         arrow = ("↑" if nxt == "asc" else "↓") if sort_field == field else ""
         return InlineKeyboardButton(f"{label} {arrow}".strip(), callback_data=f"team_sort|{org_id}|{gf}|{field}|{nxt}")
 
-    rows = [
-        [_grade_btn("all", "Total"), _grade_btn("12", "12"), _grade_btn("10", "10")],
-        [_grade_btn("8", "8"), _grade_btn("6", "6")],
-        [_sort_btn("score", "🏆 Score"), _sort_btn("alphabet", "🔤 A-Z"), _sort_btn("date", "📅 Joined")],
-    ]
+    rows = []
+    # THE FIX: only surface grade filters when the team actually has mixed grades worth
+    # filtering — a genuinely open team never needed this row cluttering the screen.
+    if geo and not geo.get("grade_uniform"):
+        rows.append([_grade_btn("all", "Total"), _grade_btn("12", "12"), _grade_btn("10", "10")])
+        rows.append([_grade_btn("8", "8"), _grade_btn("6", "6")])
+    rows.append([_sort_btn("score", "🏆 Score"), _sort_btn("alphabet", "🔤 A-Z"), _sort_btn("date", "📅 Joined")])
     if is_admin:
         rows.append([InlineKeyboardButton("📋 MEMBERS & REQUESTS", callback_data=f"org_history|{org_id}")])
     rows.append([InlineKeyboardButton("🚪 LEAVE TEAM", callback_data=f"leave_org_warn|{org_id}")])
     if is_creator:
         rows.append([InlineKeyboardButton("💥 DISSOLVE TEAM", callback_data=f"dissolve_org_warn|{org_id}")])
     rows.append([InlineKeyboardButton("🔗 INVITE LINK", callback_data=f"team_invite|{org_id}")])
-    rows.append([
-        InlineKeyboardButton("🔙 TEAMS", callback_data="alliance_portal|0"),
-        InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")
-    ])
+    rows.append([InlineKeyboardButton("🔙 TEAMS", callback_data="alliance_portal|0"), InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")])
     return InlineKeyboardMarkup(rows)
