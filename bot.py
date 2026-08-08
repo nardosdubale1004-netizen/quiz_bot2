@@ -943,20 +943,28 @@ async def _start_command_inner(update: Update, context):
         [InlineKeyboardButton("📢 VISIT CHANNEL", url=f"https://t.me/{channel_username}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
-    await send_rich_message_safe(
-        context.bot,
-        chat_id=update.message.chat_id,
-        html_content=(
-            "👋 <b>Welcome to Quiz Master Pro!</b>\n\n"
-            "This is your first-time setup — tap <b>📍 SET MY LOCATION</b> below to unlock your "
-            "personal profile, scoreboard, and study team options.\n\n"
-            "🎒 <i>Grade is completely optional — pick one now, later, or never (perfect if you're "
-            "not a school student). It only affects the challenge-bonus multiplier.</i>\n\n"
-            "💡 <i>Tip: Tap the Public Nickname button to set your scoreboard handle! Otherwise, the bot will use your Telegram username or first name.</i>"
-        ),
-        reply_markup=reply_markup
-    )
+        asyncio.create_task(_delete_silent(context.bot, update.message.chat_id, update.message.message_id))
+        # THE FIX: this text was DESCRIBED in an earlier pass as the new welcome message but
+        # was never actually written into this file — the old generic text was still live.
+        await send_rich_message_safe(
+            context.bot,
+            chat_id=update.message.chat_id,
+            html_content=(
+                "👋 <b>Welcome — you just found something good.</b>\n\n"
+                "Bite-sized challenges land in the channel day and night — math, science, "
+                "language, logic, a bit of everything. Tap an answer, get scored instantly, "
+                "see the full breakdown.\n\n"
+                "<blockquote>"
+                "🔥 Build a streak, climb the ranks\n"
+                "⚔️ Jump into live tournaments\n"
+                "🏫 Team up and compete together\n"
+                "🕵️ Your identity stays private unless you choose otherwise"
+                "</blockquote>\n\n"
+                "One thing first — tap <b>📍 SET MY LOCATION</b> below so we can unlock your "
+                "scoreboard. Takes 20 seconds. 🎒 Grade is optional, anytime."
+            ),
+            reply_markup=reply_markup
+        )
 
 async def profile_command(update: Update, context):
     """Bypasses start and opens student dynamic Privacy & Consent dashboard."""
@@ -1387,17 +1395,21 @@ async def _fsm_advance(context, chat_id, edit_mid, html_content, reply_markup=No
     m = await send_rich_message_safe(context.bot, chat_id=chat_id, html_content=html_content, reply_markup=reply_markup)
     return m.message_id if m else None
 
-async def handle_fsm_message(update: Update, context):
+async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Global message filter intercepting user response messages for active state configurations.
     Also silently deletes any stray text/attachment the user sends outside of an active input
     flow — a user's DM should only ever contain quiz questions, answer explanation cards, and
     utility panels, never loose typed clutter or accidental attachments."""
+    # THE FIX: user_id was referenced by the permission check BEFORE it was ever assigned —
+    # this raised NameError on every single text message sent to the bot, in every FSM state,
+    # for every user. This is why the permission system, as it stood, would have broken the
+    # entire text-input pipeline (nicknames, feedback text, city entry, everything).
+    user = update.effective_user
+    user_id = user.id
     from src.database import db_check_user_permission
     if not await asyncio.to_thread(db_check_user_permission, user_id, "bot_access"):
         await _delete_silent(context.bot, update.message.chat_id, update.message.message_id)
         return
-    user = update.effective_user
-    user_id = user.id
     state = USER_STATES.get(user_id)
 
     if not state or state == "IDLE":

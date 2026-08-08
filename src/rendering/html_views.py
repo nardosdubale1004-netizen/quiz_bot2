@@ -1956,19 +1956,26 @@ def build_user_feedback_requests_list_text(items: list, total_count: int) -> str
     lines.append("<hr/>\n<i>Tap a card below to view full details.</i>")
     return "\n\n".join(lines)
 
-def build_team_details_text(org: dict, geo: dict, scope_ranks: dict, member_count: int, left_count: int, is_admin: bool) -> str:
+def build_team_details_text(org: dict, geo: dict, scope_ranks: dict, member_count: int, left_count: int, is_admin: bool, avg_info: dict = None) -> str:
     name = html.escape(org.get("org_name", "TEAM"))
     tag = org.get("org_tag", "")
     org_type = html.escape(str(org.get("org_type", "Team")))
-    privacy = "🔒 Private — instant join by code" if not org.get("is_public", True) else "🌐 Public — needs admin approval"
     city = html.escape(str(org.get("city") or "—"))
     country = html.escape(str(org.get("country") or "—"))
     scope = org.get("team_scope")
     scope_value = org.get("scope_value")
 
-    lines = [f"<h2>#{name.upper()}</h2>", f"<code>#{tag}</code> · {org_type} · {privacy}", f"📍 {city}, {country}"]
+    # THE FIX: this was DESCRIBED in an earlier pass but never actually landed in this
+    # function — the card still showed the raw "🌐 Public.../🔒 Private..." split line and
+    # the raw grade-filter row for every team. Replaced with one plain-language sentence
+    # covering open/dedicated/private/public together, exactly what was asked for.
+    access_bits = ["🌐 Open — anyone can join instantly" if org.get("is_public") else "🔒 Approval required to join"]
     if scope and scope != "open":
-        lines.append(f"🔒 Dedicated to: <b>{html.escape(str(scope_value or ''))}</b>")
+        access_bits.append(f"restricted to <b>{html.escape(str(scope_value or ''))}</b> ({scope})")
+    else:
+        access_bits.append("open to everyone, any city or school")
+
+    lines = [f"<h2>#{name.upper()}</h2>", f"<code>#{tag}</code> · {org_type}", " · ".join(access_bits), f"📍 {city}, {country}"]
     if org.get("description"):
         lines.append(f"<i>{html.escape(org['description'])}</i>")
 
@@ -1987,6 +1994,12 @@ def build_team_details_text(org: dict, geo: dict, scope_ranks: dict, member_coun
     lines.append("<hr/>")
     left_line = f" · 🚪 <b>{left_count}</b> left" if is_admin else ""
     lines.append(f"👥 <b>{member_count}</b> active member(s){left_line}")
+
+    # THE FIX: was flagged last pass as "not done, say the word" — this is the actual number
+    # (distinct from the position rank in the table below), admin-only since it's a management
+    # metric rather than something every member needs to see.
+    if is_admin and avg_info:
+        lines.append(f"📊 <b>{avg_info.get('avg_marks', 0)}</b> average marks per member")
 
     def _r(v): return f"#{v}" if v else "—"
     lines.append(

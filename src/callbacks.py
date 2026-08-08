@@ -549,7 +549,7 @@ async def _open_utility_view(context, user_id, chat_id, html_content, reply_mark
 async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str):
     from src.database import (
         db_get_team_membership_homogeneity, db_get_team_scope_ranks, db_get_org_member_matrix,
-        db_count_org_members, db_count_org_left_members, db_get_org_admin_ids,
+        db_count_org_members, db_count_org_left_members, db_get_org_admin_ids, db_get_team_average_marks,
     )
     from src.rendering.html_views import build_team_details_text, build_team_rank_table_text, build_team_details_keyboard
 
@@ -579,8 +579,9 @@ async def _render_team_details(context, chat_id, message_id, user_id, org_id: in
     left_count = await asyncio.to_thread(db_count_org_left_members, org_id) if is_admin_here else 0
     grade_count = await asyncio.to_thread(db_count_org_members, org_id, grade_filter)
     matrix = await asyncio.to_thread(db_get_org_member_matrix, org_id, grade_filter, sort_field, sort_dir, 15, 0)
+    avg_info = await asyncio.to_thread(db_get_team_average_marks, org_id) if is_admin_here else None
 
-    info_text = build_team_details_text(org, geo, scope_ranks, member_count, left_count, is_admin_here)
+    info_text = build_team_details_text(org, geo, scope_ranks, member_count, left_count, is_admin_here, avg_info)
     table_text = build_team_rank_table_text(matrix, grade_filter, grade_count)
     kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator)
 
@@ -1131,6 +1132,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "regloc_school_create":
         await query.answer()
+        from src.database import db_check_user_permission
         # in regloc_school_create AND wherever a school/city suggestion gets submitted:
         if not await asyncio.to_thread(db_check_user_permission, user_id, "requests"):
             await query.answer("🚫 You've been restricted from submitting requests.", show_alert=True)
@@ -1251,8 +1253,43 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await _regloc_finish(context, query.message.chat_id, query.message.message_id, user_id, school_msg=school_msg, school_sid=school_sid)
         return
 
+    elif action == "loc_toggle_close":
+        from src.database import db_is_admin, db_set_location_suggestion_closed, db_get_location_suggestion
+        if not await asyncio.to_thread(db_is_admin, user_id):
+            await query.answer("Admins only.", show_alert=True)
+            return
+        ls_id, target = int(d_id), (data[2] == "1")
+        await asyncio.to_thread(db_set_location_suggestion_closed, ls_id, target)
+        await query.answer("Closed — student can't reply until reopened." if target else "Reopened.")
+        ls = await asyncio.to_thread(db_get_location_suggestion, ls_id)
+        from src.database import db_get_location_suggestion_thread
+        thread = await asyncio.to_thread(db_get_location_suggestion_thread, ls_id)
+        viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+        from src.rendering.html_views import build_location_suggestion_item_text
+        text = build_location_suggestion_item_text(ls, thread, viewer_tz)
+        rows = []
+        if ls['status'] == 'pending':
+            rows.append([InlineKeyboardButton("✅ APPROVE", callback_data=f"loc_review|{ls_id}|1"), InlineKeyboardButton("🚫 REJECT", callback_data=f"loc_review|{ls_id}|0")])
+        elif ls['status'] == 'rejected':
+            rows.append([InlineKeyboardButton("✅ APPROVE INSTEAD", callback_data=f"loc_review|{ls_id}|1")])
+        elif ls['status'] == 'approved':
+            rows.append([InlineKeyboardButton("🚫 REJECT INSTEAD", callback_data=f"loc_review|{ls_id}|0")])
+        if ls.get('is_closed'):
+            rows.append([InlineKeyboardButton("🔓 REOPEN CONVERSATION", callback_data=f"loc_toggle_close|{ls_id}|0")])
+        else:
+            rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+            rows.append([InlineKeyboardButton("🔒 CLOSE CONVERSATION", callback_data=f"loc_toggle_close|{ls_id}|1")])
+        rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data="loc_admin_browse|all|pending:0")])
+        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(rows))
+        return
+
     elif action == "loc_user_reply":
         sid = int(d_id)
+        from src.database import db_get_location_suggestion
+        ls = await asyncio.to_thread(db_get_location_suggestion, sid)
+        if ls and ls.get('is_closed'):
+            await query.answer("This conversation is closed — an admin needs to reopen it.", show_alert=True)
+            return
         await query.answer()
         USER_STATES[user_id] = "AWAITING_USER_LOCATION_REPLY"
         USER_PAYLOADS[user_id] = {"suggestion_id": sid, "edit_mid": query.message.message_id}
@@ -1666,15 +1703,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
                 rows.append([InlineKeyboardButton("⏳ PENDING QUEUE", callback_data=f"loc_review|{ls_id}|-1")])
             elif ls['status'] == 'rejected':
-                # THE FIX: a rejected item had no way back — this is the missing button.
                 rows.append([InlineKeyboardButton("✅ APPROVE INSTEAD", callback_data=f"loc_review|{ls_id}|1")])
-                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
             elif ls['status'] == 'approved':
-                # THE FIX: symmetric — an approved item can now be walked back too.
                 rows.append([InlineKeyboardButton("🚫 REJECT INSTEAD", callback_data=f"loc_review|{ls_id}|0")])
-                rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+
+            # THE FIX: feedback got close/reopen last pass, requests never actually did
+            # despite being described as a mirror — now genuinely mirrored.
+            if ls.get('is_closed'):
+                rows.append([InlineKeyboardButton("🔓 REOPEN CONVERSATION", callback_data=f"loc_toggle_close|{ls_id}|0")])
             else:
                 rows.append([InlineKeyboardButton("💬 MESSAGE STUDENT", callback_data=f"loc_review_msg|{ls_id}")])
+                rows.append([InlineKeyboardButton("🔒 CLOSE CONVERSATION", callback_data=f"loc_toggle_close|{ls_id}|1")])
             if ls['kind'] == 'school' and ls.get('org_id'):
                 rows.append([InlineKeyboardButton("🏫 VIEW SCHOOL DETAILS", callback_data=f"view_org|{ls['org_id']}")])
             rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"loc_admin_browse|{return_state.split(':')[0]}|{':'.join(return_state.split(':')[1:])}")])
@@ -1720,6 +1759,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "fsm_create_org":
         await query.answer()
+        from src.database import db_check_user_permission
         if not await asyncio.to_thread(db_check_user_permission, user_id, "team_create"):
             await query.answer("🚫 You've been restricted from creating teams.", show_alert=True)
             return
@@ -2144,6 +2184,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "fb_cat":
         await query.answer()
+        # THE FIX: db_check_user_permission was never imported anywhere in this file —
+        # this call threw NameError on every single feedback attempt, blocked or not.
+        from src.database import db_check_user_permission
         if not await asyncio.to_thread(db_check_user_permission, user_id, "feedback"):
             await query.answer("🚫 You've been restricted from sending feedback. Contact an admin.", show_alert=True)
             return

@@ -6199,3 +6199,84 @@ def db_get_user_permissions(user_id) -> dict:
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
+
+def db_set_feedback_closed(feedback_id: int, closed: bool) -> bool:
+    """Closes the thread to new replies (from EITHER side) but never deletes/hides history —
+    admin can still open the item and read everything, and can reopen anytime."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
+            cur.execute("UPDATE feedback SET is_closed = %s WHERE id = %s;", (closed, int(feedback_id)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_set_feedback_closed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_location_suggestion_closed(sid: int, closed: bool) -> bool:
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
+            cur.execute("UPDATE location_suggestions SET is_closed = %s WHERE id = %s;", (closed, int(sid)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_set_location_suggestion_closed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+def db_get_team_average_marks(org_id: int) -> dict:
+    """Team-admin-facing figure the earlier pass flagged and never actually added: the real
+    NUMBER (average ledger contribution per active member), distinct from the POSITION rank
+    (#3, #7...) already shown in the School/City/Country/World table."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COALESCE(AVG(c.marks), 0)::int AS avg_marks, COUNT(*) AS member_count
+                FROM org_memberships m
+                LEFT JOIN user_org_contributions c ON c.user_id = m.user_id AND c.org_id = m.org_id
+                WHERE m.org_id = %s AND m.state = 'active';
+            """, (int(org_id),))
+            row = cur.fetchone()
+            return {"avg_marks": int(row['avg_marks']) if row else 0, "member_count": int(row['member_count']) if row else 0}
+    except Exception as e:
+        print(f"[DB ERROR] db_get_team_average_marks: {e}", flush=True)
+        return {"avg_marks": 0, "member_count": 0}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+
+def db_set_location_suggestion_closed(sid: int, closed: bool) -> bool:
+    """Mirror of db_set_feedback_closed for the requests side — the previous pass gave feedback
+    close/reopen but never actually gave location/school requests the same treatment despite
+    saying it would."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
+            cur.execute("UPDATE location_suggestions SET is_closed = %s WHERE id = %s;", (closed, int(sid)))
+            conn.commit()
+            return True
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"[DB ERROR] db_set_location_suggestion_closed: {e}", flush=True)
+        return False
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
