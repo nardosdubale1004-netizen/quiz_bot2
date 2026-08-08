@@ -135,16 +135,10 @@ def _build_feedback_detail_keyboard(fb_id, return_state: str = None, is_closed: 
     else:
         rows.append([InlineKeyboardButton("💬 REPLY", callback_data=f"fb_reply|{fb_id}")])
         rows.append([InlineKeyboardButton("🔒 CLOSE CONVERSATION", callback_data=f"fb_toggle_close|{fb_id}|1")])
-    # THE FIX: only a "QUEUE" button existed, and only when return_state had 3 parts — there was
-    # no way back to the admin dashboard or to your own profile from inside a feedback item at all.
     parts = rs.split(":")
     if len(parts) == 3:
         cat, stat, off = parts
         rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"fb_browse|{cat}|{stat}:{off}")])
-    rows.append([
-        InlineKeyboardButton("🏠 DASHBOARD", callback_data="admin_dashboard|0"),
-        InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")
-    ])
     return InlineKeyboardMarkup(rows)
 
 def _build_country_index_kb() -> InlineKeyboardMarkup:
@@ -552,7 +546,7 @@ async def _open_utility_view(context, user_id, chat_id, html_content, reply_mark
     return await open_utility_view(context.bot, None, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
 
 
-async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str, is_impersonating: bool = False):
+async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str):
     from src.database import (
         db_get_team_membership_homogeneity, db_get_team_scope_ranks, db_get_org_member_matrix,
         db_count_org_members, db_count_org_left_members, db_get_org_admin_ids, db_get_team_average_marks,
@@ -591,12 +585,7 @@ async def _render_team_details(context, chat_id, message_id, user_id, org_id: in
     table_text = build_team_rank_table_text(matrix, grade_filter, grade_count)
     kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator)
 
-    full_text = f"{info_text}\n\n{table_text}"
-    if is_impersonating:
-        full_text = f"🎭 <b>ACTING AS <code>{user_id}</code></b> — tap 🛑 to stop.\n<hr/>\n{full_text}"
-        kb_rows = kb.inline_keyboard + [[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]]
-        kb = InlineKeyboardMarkup(kb_rows)
-    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=full_text, reply_markup=kb)
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=f"{info_text}\n\n{table_text}", reply_markup=kb)
 
 
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
@@ -616,19 +605,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         "admin_view_profile", "admin_manage_user", "admin_toggle_perm",
         "admin_user_actions", "admin_users", "admin_dashboard"
     )
-    real_caller_id = user_id
-    is_impersonating = False
     if action not in _IMPERSONATION_EXEMPT_ACTIONS:
         from src.config import IMPERSONATION_SESSIONS
         impersonated = IMPERSONATION_SESSIONS.get(str(user_id))
         if impersonated:
             user_id = int(impersonated)
-            # THE FIX: is_impersonating used to only ever be shown on the imp_start confirmation
-            # screen — every screen after that (profile, settings, team, feedback...) looked
-            # byte-identical to the admin's own account, with no way to tell the two apart mid-
-            # session. This flag now travels with every action so profile-family screens can
-            # stamp themselves.
-            is_impersonating = True
+
     print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {user_id}")
 
     # Standard circular home button for intermediate flows
@@ -743,13 +725,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
         text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
-        # THE FIX: makes it unmistakable that the admin is looking at SOMEONE ELSE'S live profile,
-        # not their own — same banner treatment on every profile-family screen while a session is
-        # active, not just the initial imp_start confirmation.
-        if is_impersonating:
-            text = f"🎭 <b>ACTING AS <code>{user_id}</code></b> — tap 🛑 to stop.\n<hr/>\n{text}"
-            kb_rows = kb.inline_keyboard + [[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]]
-            kb = InlineKeyboardMarkup(kb_rows)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -1198,13 +1173,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=back_kb
         )
         return
-    
+
     elif action == "regloc_school_page":
         await query.answer()
         offset = int(d_id)
         await _regloc_show_school_step(context, query.message.chat_id, query.message.message_id, user_id, offset)
         return
-    
+
     elif action == "regloc_city_pending_ack":
         # No DB writes here on purpose — the city stays STAGED in USER_PAYLOADS (already
         # set by AWAITING_REGLOC_CITY_TEXT) and is only ever actually created/sent to
@@ -1342,7 +1317,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "view_org":
         await query.answer()
         org_id = int(d_id)
-        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc", is_impersonating)
+        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc")
         return
 
     elif action == "team_grade_filter":
@@ -1715,10 +1690,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("🚫 Rejected", callback_data=f"loc_admin_browse|{kind}|rejected:0"),
         ])
         item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"loc_admin_browse|{kind}|closed:0")])
-        item_rows.append([
-            InlineKeyboardButton("🏠 DASHBOARD", callback_data="admin_dashboard|0"),
-            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")
-        ])
         item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
@@ -2109,7 +2080,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content="🗑 Removed from your favorites.", reply_markup=nav_kb)
         return
-    
+
     elif action == "menu_invite":
         await query.answer()
         from src.database import db_get_or_create_referral_token
@@ -2132,7 +2103,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=kb
         )
         return
-  
+
     elif action == "full_docs":
         await query.answer()
         await edit_rich_message_safe(
@@ -2394,11 +2365,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         text = build_feedback_browse_list_text(items, category, status, offset, total)
 
         if not items:
-            # THE FIX: this dead-end had a DASHBOARD button but no way to your own profile.
-            buttons = [
-                [InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")],
-                [InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]
-            ]
+            buttons = [[InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")]]
             await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
             return
 
@@ -2422,15 +2389,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("📋 All", callback_data=f"fb_browse|{category}|all:0"),
         ])
         item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"fb_browse|{category}|closed:0")])
-        # THE FIX: this is the exact gap reported — the queue could be filtered and drilled into,
-        # but had no way back to the dashboard or the admin's own profile at all.
-        item_rows.append([
-            InlineKeyboardButton("🏠 DASHBOARD", callback_data="admin_dashboard|0"),
-            InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")
-        ])
-
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
-        return
 
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
@@ -2479,42 +2437,28 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "admin_users":
-        # THE FIX (new entry point): this used to be flat pagination with no way to narrow the
-        # list — every prior "view profile / impersonate" flow started from an unfiltered wall of
-        # users. Now grade-categorized, exactly as the entry screen before opening any individual.
-        from src.database import db_is_admin, db_get_recent_users, db_count_users, db_get_active_grades
+        from src.database import db_is_admin
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()
-        parts = d_id.split(":")
-        grade = parts[0] if parts else "all"
-        offset = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        offset = int(d_id)
+        users = await asyncio.to_thread(db_get_recent_users, 15, offset)
+        text = build_user_directory_text(users)
+        # THE FIX (new feature): the directory listed users as plain text with no way to open a
 
-        users = await asyncio.to_thread(db_get_recent_users, 15, offset, grade)
-        total = await asyncio.to_thread(db_count_users, grade)
-        grade_options = await asyncio.to_thread(db_get_active_grades)
-
-        grade_label = "All Grades" if grade in (None, "all") else f"Grade {grade}"
-        text = build_user_directory_text(users) + f"\n<i>{grade_label} · {offset+1}-{offset+len(users)} of {total}</i>"
-
+        # given one — "🔧 MANAGE" was described in an earlier pass but never actually landed here.
+        # One button per row, opening a small per-user action menu (view / manage) instead of
+        # cramming 2 buttons × 15 rows into one giant keyboard.
         buttons = []
         for u in users:
             label = format_public_name(u)[:24]
-            buttons.append([InlineKeyboardButton(f"👤 {label} · Gr.{u.get('grade') or '—'}", callback_data=f"admin_user_actions|{u['user_id']}")])
-
-        grade_row = [InlineKeyboardButton(("• " if grade in (None, "all") else "") + "Total", callback_data="admin_users|all:0")]
-        for g in grade_options:
-            grade_row.append(InlineKeyboardButton(("• " if str(grade) == str(g) else "") + str(g), callback_data=f"admin_users|{g}:0"))
-        # Keep the grade-filter row from overflowing on wide grade sets — wrap every 4.
-        grade_rows = [grade_row[i:i+4] for i in range(0, len(grade_row), 4)]
-        buttons.extend(grade_rows)
-
+            buttons.append([InlineKeyboardButton(f"👤 {label}", callback_data=f"admin_user_actions|{u['user_id']}")])
         nav_row = []
         if offset > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{grade}:{max(0, offset-15)}"))
-        if offset + 15 < total:
-            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{grade}:{offset+15}"))
+            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{max(0, offset-15)}"))
+        if len(users) == 15:
+            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{offset+15}"))
         if nav_row:
             buttons.append(nav_row)
         buttons.append([InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")])
@@ -2714,15 +2658,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-        text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
-        # THE FIX: build_profile_main_keyboard is already imported at the top of this
-        # file. Re-importing it locally HERE shadowed it for the ENTIRE
-        # _handle_callback_inner function — every elif branch shares one scope. This
-        # is why fsm_cancel's default "back to profile" path (used by nearly every
-        # "❌ CANCEL" button across every multi-step flow: nickname entry, city entry,
-        # team creation, etc.) crashed with UnboundLocalError the instant it ran —
-        # even though privacy_menu itself never crashed, since it imports and uses the
-        # name in the same breath. Same recurring bug class from earlier in this thread.
+        text = build_profile_card_text(profile, None, subject_marks)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
         if m:
@@ -3244,13 +3180,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "admin_user_actions":
-        # THE FIX: db_get_user_profile is already imported at the top of this file. Re-importing
-        # it locally HERE shadowed it for the ENTIRE _handle_callback_inner function — every elif
-        # branch shares one scope — which is exactly why privacy_menu / profile_popup /
-        # alliance_portal / set_grade / confirm_grade (all reference the bare name with no local
-        # import of their own) crashed with UnboundLocalError. 6th occurrence of this exact bug
-        # class in this codebase; always a redundant local re-import of an already-global name.
-        from src.database import db_is_admin
+        from src.database import db_is_admin, db_get_user_profile
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
@@ -3261,10 +3191,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("👁️ VIEW PROFILE (READ-ONLY)", callback_data=f"admin_view_profile|{target}")],
             [InlineKeyboardButton("🔧 PERMISSIONS", callback_data=f"admin_manage_user|{target}")],
-            # THE FIX: admin_users now expects "grade:offset" — a bare "0" no longer round-trips
-            # correctly (it gets parsed as grade="0" instead of offset=0). Points back to the
-            # unfiltered directory, which is always a safe landing spot.
-            [InlineKeyboardButton("🔙 BACK TO DIRECTORY", callback_data="admin_users|all:0")]
+            [InlineKeyboardButton("🔙 BACK TO DIRECTORY", callback_data="admin_users|0")]
         ])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
@@ -3274,14 +3201,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "admin_view_profile":
-        # THE FIX: db_get_user_profile is already imported at the top of this file. Re-importing
-        # it locally here made Python treat it as local for the ENTIRE _handle_callback_inner
-        # function — every elif branch shares one scope — so privacy_menu/profile_popup, which
-        # reference the bare name without their own local import, crashed with UnboundLocalError
-        # before this line ever executed on their path. This is the same bug class fixed 4 times
-        # already in this thread, from a different branch each time.
         from src.database import (
-            db_is_admin, db_get_user_subject_marks,
+            db_is_admin, db_get_user_profile, db_get_user_subject_marks,
             db_get_user_top_topic, db_get_user_rank_summary, db_check_impersonation_granted
         )
         if not await asyncio.to_thread(db_is_admin, user_id):
@@ -3301,21 +3222,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         top_topic = await asyncio.to_thread(db_get_user_top_topic, target)
         rank_summary = await asyncio.to_thread(db_get_user_rank_summary, target)
         card_text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
-
-        # THE FIX (expanded read-only view): was profile-card-only. Now also pulls team
-        # membership, feedback history, and location/school request history — everything an
-        # admin might need to see about a user, in one screen, with zero edit controls.
-        from src.database import db_get_user_dossier_for_admin
-        from src.rendering.html_views import build_admin_dossier_text
-        dossier = await asyncio.to_thread(db_get_user_dossier_for_admin, target)
-        dossier_text = build_admin_dossier_text(dossier)
-
-        text = (
-            f"👁️ <b>ADMIN VIEW — READ ONLY</b>\n"
-            f"Viewing <code>{target}</code>'s account exactly as they see it. "
-            f"<i>Nothing here can be changed — updates only happen through 🎭 Act As This User.</i>\n"
-            f"<hr/>\n{card_text}\n{dossier_text}"
-        )
+        # THE FIX (new feature): a plain-text banner + the EXACT same card a student sees, but with
+        # zero editable buttons — no settings, no grade change, no team actions. Nothing an admin
+        # taps here can ever modify the account; the only interactive things offered are navigation
+        # and the (opt-in, user-consented) impersonation controls below.
+        text = f"👁️ <b>ADMIN VIEW — READ ONLY</b>\nViewing <code>{target}</code>'s profile exactly as they see it.\n<hr/>\n{card_text}"
         already_granted = await asyncio.to_thread(db_check_impersonation_granted, target, user_id)
         kb_rows = []
         if already_granted:
@@ -3477,9 +3388,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
                 user_selection = int(data[2])
                 is_correct = (user_selection == question_data['correct_option'])
-                
+
                 print(f" [CALLBACK-TOURNAMENT-TRACE] Submitting User: {user_id} | Option: {user_selection} | Is Correct: {is_correct}", flush=True)
-                
+
                 try:
                     await asyncio.to_thread(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, True, False)
                 except Exception as db_err:
@@ -3491,7 +3402,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                     raise db_err
 
                 await query.answer("Response recorded!")
-                
+
                 # Dynamic response receipt with show_derivation=True activated by default
                 explanation_html = UIFactory.build_answered_view(question_data, d_id, user_selection, show_derivation=True, show_perf=False, perf_card=None)
                 await query.edit_message_text(explanation_html, reply_markup=return_kb, parse_mode="HTML")
@@ -3519,7 +3430,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Generating Answer Sheet...")
 
             is_correct = (user_selection == question_data['correct_option'])
-            
+
             try:
                 perf_card = await db_call_guarded(process_user_score, user_id, mid_key, question_data['id'], is_correct, user_selection, None, False, False)
             except TimeoutError:
@@ -3641,7 +3552,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         traceback.print_exc()
         print(f" {Style.RED}└─ [EXCEPTION] Fatal error in callback thread: {e}{Style.RESET}")
-        
+
         try:
             from src.debug_log import dlog_exception
             dlog_exception(f"callbacks.py -> handle_callback global catch (Action: {action} | Ref ID: {d_id})", e)
@@ -3649,4 +3560,3 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
         await query.answer("System Error: Could not render response.", show_alert=True)
-

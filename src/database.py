@@ -1635,7 +1635,7 @@ def db_mark_question_shown(q_id: str):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 def db_get_question_history(q_id: str):
     """Single-question repeat-history lookup for admins: how many times it's gone out,
     and its first/last send dates. Returns None if the question has never been sent."""
@@ -2475,7 +2475,7 @@ def db_create_dedicated_organization(org_name: str, org_tag: str, creator_id: st
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-            
+
 
 def db_join_organization_by_token(user_id, join_token: str) -> dict:
     conn = None
@@ -3063,8 +3063,8 @@ def db_promote_member(user_id, org_id: int, promote: bool) -> bool:
         with conn.cursor() as cur:
             role = "admin" if promote else "member"
             cur.execute("""
-                UPDATE org_memberships 
-                SET org_role = %s 
+                UPDATE org_memberships
+                SET org_role = %s
                 WHERE user_id = %s AND org_id = %s;
             """, (role, str(user_id), int(org_id)))
             conn.commit()
@@ -3585,7 +3585,7 @@ def db_get_grade_detail(grade: int):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_update_user_location(user_id, city: str, country: str):
     """Sets a known/approved city+country. Thin wrapper — db_set_user_location is now the
     single writer for every location mutation everywhere in the app."""
@@ -4046,15 +4046,18 @@ def db_get_admin_dashboard_stats():
             GLOBAL_ENGINE.release_connection(conn)
 
 
-def db_get_recent_users(limit: int = 15, offset: int = 0, grade=None):
-    """Admin directory listing, one row per user. grade=None/'all' means every grade — this is
-    the actual entry point the admin lands on before opening any individual user's read-only
-    profile or requesting to impersonate them."""
+def db_get_recent_users(limit: int = 15, offset: int = 0):
+    """Admin directory listing, one row per user — GUARANTEED, unlike the previous version.
+    THE FIX: the old query LEFT JOINed org_memberships directly, and a student on MULTIPLE
+    active teams/school produces multiple membership rows for the same user_id — the JOIN
+    multiplied their row once per membership, which is exactly why the same student kept
+    reappearing repeatedly on this page. Now uses scalar subqueries for city/country instead
+    of a join, so user_stats contributes exactly one row per user no matter how many teams
+    they're on."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            grade_val = None if grade in (None, "all") else int(grade)
             cur.execute("""
                 SELECT u.user_id, u.username, u.first_name, u.nickname, u.grade, u.total_marks,
                        u.public_consent_granted,
@@ -4071,10 +4074,9 @@ def db_get_recent_users(limit: int = 15, offset: int = 0, grade=None):
                        u.last_active_at
                 FROM user_stats u
                 LEFT JOIN user_locations l ON l.user_id = u.user_id
-                WHERE (%s::int IS NULL OR u.grade = %s)
                 ORDER BY u.user_id ASC
                 LIMIT %s OFFSET %s;
-            """, (grade_val, grade_val, limit, offset))
+            """, (limit, offset))
             return cur.fetchall()
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch recent users: {e}", flush=True)
@@ -4083,22 +4085,6 @@ def db_get_recent_users(limit: int = 15, offset: int = 0, grade=None):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
-def db_count_users(grade=None) -> int:
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            grade_val = None if grade in (None, "all") else int(grade)
-            cur.execute("SELECT COUNT(*) AS cnt FROM user_stats WHERE (%s::int IS NULL OR grade = %s);", (grade_val, grade_val))
-            row = cur.fetchone()
-            return int(row['cnt']) if row else 0
-    except Exception as e:
-        print(f"[DB ERROR] db_count_users: {e}", flush=True)
-        return 0
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_or_create_referral_token(user_id) -> str:
     """Returns the user's opaque referral token, generating one if missing."""
@@ -4390,7 +4376,7 @@ def _generate_unique_org_tag(org_name: str) -> str:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-            
+
 def db_get_location_suggestions_list(status: str = None, kind: str = None, limit: int = 8, offset: int = 0):
     """Admin inbox listing, newest request first. status/kind = None means 'all'."""
     conn = None
@@ -5259,7 +5245,7 @@ def db_get_entity_list(scope, parent_entity=None, limit=40):
             GLOBAL_ENGINE.release_connection(conn)
 
 
-                      
+
 def db_edit_tournament_answer(user_id, message_id, new_option: int, new_is_correct: bool):
     conn = None
     try:
@@ -6413,42 +6399,6 @@ def db_revoke_all_impersonation_grants(user_id) -> bool:
         if conn: conn.rollback()
         print(f"[DB ERROR] db_revoke_all_impersonation_grants: {e}", flush=True)
         return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-def db_get_user_dossier_for_admin(user_id) -> dict:
-    """Everything an admin needs to see about a user WITHOUT editing anything — profile is
-    fetched separately by the caller (already cached); this covers team membership, feedback
-    history, and location/school request history in one pass."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT o.org_id, o.org_name, o.org_tag, o.org_type, m.org_role, m.state
-                FROM org_memberships m JOIN organizations o ON o.org_id = m.org_id
-                WHERE m.user_id = %s AND m.state IN ('active', 'pending')
-                ORDER BY m.joined_at DESC;
-            """, (str(user_id),))
-            teams = cur.fetchall()
-
-            cur.execute("""
-                SELECT id, category, message, status, created_at, is_closed
-                FROM feedback WHERE user_id = %s ORDER BY created_at DESC LIMIT 10;
-            """, (str(user_id),))
-            feedback = cur.fetchall()
-
-            cur.execute("""
-                SELECT id, kind, name, country, status, created_at, is_closed
-                FROM location_suggestions WHERE submitted_by = %s ORDER BY created_at DESC LIMIT 10;
-            """, (str(user_id),))
-            requests = cur.fetchall()
-
-        return {"teams": teams, "feedback": feedback, "requests": requests}
-    except Exception as e:
-        print(f"[DB ERROR] db_get_user_dossier_for_admin: {e}", flush=True)
-        return {"teams": [], "feedback": [], "requests": []}
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
