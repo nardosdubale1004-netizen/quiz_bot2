@@ -640,6 +640,9 @@ def build_profile_settings_keyboard(public_consent_granted: bool) -> InlineKeybo
         [InlineKeyboardButton("✍️ NICKNAME", callback_data="set_nick_fsm|0"),
          InlineKeyboardButton("🎒 GRADE", callback_data="reselect_grade_panel|0")],
         [InlineKeyboardButton("📍 LOCATIONS & SCHOOL", callback_data="loc_status_menu|0")],
+        # THE FIX (new feature): the panic button for impersonation — pulls back every grant
+        # this user has ever given, instantly, regardless of how many admins have it.
+        [InlineKeyboardButton("🎭 REVOKE SUPPORT ACCESS", callback_data="revoke_impersonation|0")],
         [InlineKeyboardButton("🔙 PROFILE", callback_data="privacy_menu|0")]
     ])
     

@@ -68,3 +68,4 @@ ACTIVE_ENGINE = None
 # --- In-Memory FSM State Registries ---
 USER_STATES = {}       # Maps user_id -> Active State String
 USER_PAYLOADS = {}     # Maps user_id -> Temporary Session Dictionary dict
+IMPERSONATION_SESSIONS = {}  # Maps admin_id (str) -> target_user_id (str), only while actively "acting as"
