@@ -2273,7 +2273,8 @@ def db_create_organization(org_name: str, org_tag: str, creator_id: str, org_typ
                 ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = EXCLUDED.org_role, state = 'active';
             """, (str(creator_id), org_id))
 
-            cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(creator_id)))
+            if country:
+                cur.execute("UPDATE user_stats SET timezone = %s WHERE user_id = %s;", (get_timezone_for_country(country), str(creator_id)))
 
             conn.commit()
             user_profile_cache.invalidate(f"profile:{creator_id}")
@@ -2444,16 +2445,25 @@ def db_check_team_scope_eligibility(user_id, org_id: int) -> dict:
             if not org or org['team_scope'] == 'open':
                 return {"eligible": True, "reason": None, "scope": org['team_scope'] if org else 'open', "scope_value": None}
 
+            # THE FIX: uses independent scalar subqueries (not a JOIN) so a user with
+            # multiple active team memberships never multiplies into several candidate
+            # rows before LIMIT 1 arbitrarily picks one.
             cur.execute("""
-                SELECT COALESCE(o.country, l.country) AS country,
-                       COALESCE(o.city, l.city) AS city
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
-                WHERE u.user_id = %s
-                LIMIT 1;
-            """, (str(user_id),))
+                SELECT
+                    COALESCE(
+                        (SELECT o.country FROM org_memberships m JOIN organizations o ON o.org_id = m.org_id
+                         WHERE m.user_id = %s AND m.state = 'active' ORDER BY m.joined_at DESC LIMIT 1),
+                        (SELECT country FROM user_locations WHERE user_id = %s)
+                    ) AS country,
+                    COALESCE(
+                        (SELECT o.city FROM org_memberships m JOIN organizations o ON o.org_id = m.org_id
+                         WHERE m.user_id = %s AND m.state = 'active' ORDER BY m.joined_at DESC LIMIT 1),
+                        (SELECT city FROM user_locations WHERE user_id = %s)
+                    ) AS city,
+                    (SELECT o.org_name FROM org_memberships m JOIN organizations o ON o.org_id = m.org_id
+                     WHERE m.user_id = %s AND m.state = 'active' AND o.org_type = 'School'
+                     ORDER BY m.joined_at DESC LIMIT 1) AS school_name;
+            """, (str(user_id), str(user_id), str(user_id), str(user_id), str(user_id)))
             joiner = cur.fetchone() or {}
 
             scope = org['team_scope']
@@ -2462,10 +2472,10 @@ def db_check_team_scope_eligibility(user_id, org_id: int) -> dict:
             elif scope == 'city':
                 ok = joiner.get('city') == org['scope_value']
             elif scope == 'school':
-                # School-dedicated just means: this IS the school team — joining it directly
-                # is always allowed (that's the normal join path); scope restriction here
-                # only matters for the "create your own dedicated team" flow, not joining.
-                ok = True
+                # THE FIX: was hardcoded True — any user could join a team dedicated to a
+                # school they don't attend. Now only students whose CURRENT school name
+                # matches the team's scope_value are eligible, matching country/city logic.
+                ok = joiner.get('school_name') == org['scope_value']
             else:
                 ok = True
 
