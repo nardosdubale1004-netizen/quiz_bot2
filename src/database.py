@@ -4649,15 +4649,15 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool, 
                     """, (sug['submitted_by'], sug['org_id']))
                 else:
                     cur.execute("UPDATE organizations SET status = 'rejected', deleted_at = NOW() WHERE org_id = %s;", (sug['org_id'],))
-                    # THE FIX: org_role must only ever hold creator/admin/member — lifecycle status
-                    # (pending/active/rejected/left) belongs on state, never org_role. Setting
-                    # org_role='left' here corrupted the row for any future org_role-based filter
-                    # and lost the creator's real role, which the approve branch above then had to
-                    # blindly re-guess (hardcoding 'creator') instead of reading it back correctly.
                     cur.execute("""
                         UPDATE org_memberships SET state = 'rejected', deleted_at = NOW()
                         WHERE user_id = %s AND org_id = %s;
                     """, (sug['submitted_by'], sug['org_id']))
+                # THE FIX: the city branch above already does this — the school branch never did,
+                # so an approved/rejected school kept showing the OLD state on /profile for up to
+                # 8s (the cache TTL). Same class of bug already fixed for joins/leaves/city changes,
+                # just never carried over to this one remaining write path.
+                user_profile_cache.invalidate(f"profile:{sug['submitted_by']}")
                 affected_users = [sug['submitted_by']]
 
             conn.commit()
