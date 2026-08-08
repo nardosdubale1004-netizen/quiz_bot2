@@ -2845,9 +2845,17 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "my_answers_menu":
         await query.answer()
-        from src.database import db_get_user_subjects_summary
+        # THE FIX: was calling db_get_user_subjects_summary with no is_admin flag at
+        # all — silently defaulting to False. myanswers_command (the /myanswers command)
+        # already correctly checks db_is_admin and passes it through, so an admin got
+        # DIFFERENT subject counts depending on whether they typed /myanswers or tapped
+        # 📚 MY ANSWERS on their profile card — and since my_ans_subj (the next screen
+        # down) already passes viewer_is_admin correctly, an admin reaching this via the
+        # button would see a summary that disagreed with the list it linked to.
+        from src.database import db_get_user_subjects_summary, db_is_admin
         from src.rendering.html_views import build_my_answers_subject_menu_text, build_my_answers_subject_keyboard
-        summary = await asyncio.to_thread(db_get_user_subjects_summary, user_id)
+        viewer_is_admin = await asyncio.to_thread(db_is_admin, user_id)
+        summary = await asyncio.to_thread(db_get_user_subjects_summary, user_id, viewer_is_admin)
         text = build_my_answers_subject_menu_text(summary)
         kb = build_my_answers_subject_keyboard(summary)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
