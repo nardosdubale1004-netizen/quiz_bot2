@@ -1592,6 +1592,14 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
 
             if prefilled_city and prefilled_country and is_dedicated_creation:
+                # THE FIX: this branch used to jump straight to the description prompt,
+                # skipping the 🌐 Open / 🔒 Approval Required picker entirely — the open-team
+                # branch right below already shows it correctly. Since team_visibility never
+                # fired here, AWAITING_ORG_DESCRIPTION's is_public_choice = USER_PAYLOADS.get(
+                # "is_public", True) always fell back to True, meaning every DEDICATED
+                # (country/city/school-restricted) team was silently created instantly-
+                # joinable no matter what its creator would have picked, because they were
+                # never asked at all.
                 USER_STATES[user_id] = "AWAITING_ORG_DESCRIPTION"
                 vis_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🌐 OPEN (anyone can join instantly)", callback_data="team_visibility|1")],
@@ -1600,7 +1608,7 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await _fsm_advance(
                     context, update.message.chat_id, edit_mid,
                     "🎛️ <b>Who can join this team?</b>\n\n"
-                    "🌐 <b>Open</b> — anyone can join instantly, no approval needed.\n"
+                    "🌐 <b>Open</b> — anyone from the dedicated scope can join instantly, no approval needed.\n"
                     "🔒 <b>Approval Required</b> — you (or your admins) approve each join request.",
                     vis_kb
                 )
