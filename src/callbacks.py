@@ -2246,8 +2246,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         fb = await asyncio.to_thread(db_get_feedback_by_id, int(fb_id))
         if fb:
             thread = await asyncio.to_thread(db_get_feedback_thread, int(fb_id))
-            kb = _build_feedback_detail_keyboard(fb_id, return_state)
-            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread), reply_markup=kb)
+            viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            kb = _build_feedback_detail_keyboard(fb_id, return_state, is_closed=fb.get('is_closed', False))
+            await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb)
 
             if new_status in ("planned", "resolved"):
                 try:
@@ -2300,7 +2301,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "fb_toggle_close":
-        from src.database import db_is_admin, db_set_feedback_closed, db_get_feedback_by_id
+        # THE FIX: db_get_feedback_by_id is already imported at the top of callbacks.py.
+        # Locally re-importing it HERE made Python treat it as local for the ENTIRE
+        # _handle_callback_inner function (every elif branch shares one scope) — so
+        # fb_reply/fb_item/fb_status/fb_view, which reference the bare name without
+        # their own local import, crashed with UnboundLocalError the instant they ran.
+        # This is the exact same bug class as db_get_user_timezone earlier in this thread.
+        from src.database import db_is_admin, db_set_feedback_closed
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
@@ -2310,7 +2317,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
         thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
         viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
-        kb = _build_feedback_detail_keyboard(fb_id, None)
+        # THE FIX: is_closed was never passed here — the keyboard always defaulted to
+        # "not closed" regardless of what just happened, so REOPEN never actually showed.
+        kb = _build_feedback_detail_keyboard(fb_id, None, is_closed=target)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=build_feedback_thread_text(fb, thread, viewer_tz), reply_markup=kb)
         return
@@ -2509,7 +2518,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         try:
             thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
             viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
-            kb = _build_feedback_detail_keyboard(fb_id, return_state)
+            # THE FIX: without this, opening a closed item from the queue always
+            # rendered "CLOSE" instead of "REOPEN" — is_closed was never read from fb.
+            kb = _build_feedback_detail_keyboard(fb_id, return_state, is_closed=fb.get('is_closed', False))
             text = build_feedback_thread_text(fb, thread, viewer_tz)
             import time as _t
             nonce = f"\n<i>​{int(_t.time()*1000) % 100000}</i>"

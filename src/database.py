@@ -3767,6 +3767,9 @@ def db_get_feedback_list(status: str = None, category: str = None, limit: int = 
                 ORDER BY f.created_at DESC
                 LIMIT %s OFFSET %s;
             """, tuple(params))
+            # THE FIX: nothing to change here — f.* already carries is_closed now that
+            # db_set_feedback_closed's ALTER TABLE has run. build_feedback_browse_list_text
+            # (below) is what needed updating to actually display it.
             return cur.fetchall()
     except Exception as e:
         print(f"[DB ERROR] Failed to list feedback: {e}", flush=True)
@@ -5969,11 +5972,13 @@ def db_get_user_feedback_and_requests(user_id, limit: int = 5, offset: int = 0):
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
+            # THE FIX: is_closed was never selected — the merged list had no way to show a
+            # 🔒 Closed marker on either feedback or requests, per your ask.
             cur.execute("""
-                (SELECT id, 'feedback' AS kind, message AS label, status, created_at
+                (SELECT id, 'feedback' AS kind, message AS label, status, created_at, COALESCE(is_closed, FALSE) AS is_closed
                  FROM feedback WHERE user_id = %s)
                 UNION ALL
-                (SELECT id, kind, name AS label, status, created_at
+                (SELECT id, kind, name AS label, status, created_at, COALESCE(is_closed, FALSE) AS is_closed
                  FROM location_suggestions WHERE submitted_by = %s)
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s;

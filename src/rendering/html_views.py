@@ -1265,8 +1265,10 @@ def build_feedback_browse_list_text(items: list, category: str, status: str, off
         name = format_public_name(fb)
         cat_short = FEEDBACK_CATEGORIES.get(fb['category'], fb['category']).split(" ", 1)[0]
         status_icon = _STATUS_PIPELINE_ICONS.get(fb['status'], "🚫")
+        # THE FIX: closed conversations had no visual marker anywhere in the admin queue.
+        closed_tag = " 🔒" if fb.get('is_closed') else ""
         snippet = html.escape(fb['message'][:70] + ("…" if len(fb['message']) > 70 else ""))
-        lines.append(f"{status_icon} <b>#{fb['id']}</b> {cat_short} — {snippet}\n   <i>by {name}</i>")
+        lines.append(f"{status_icon} <b>#{fb['id']}</b>{closed_tag} {cat_short} — {snippet}\n   <i>by {name}</i>")
 
     return "\n\n".join(lines)
 
@@ -1344,9 +1346,12 @@ def build_feedback_thread_text(fb: dict, thread: list, viewer_tz: str = "UTC") -
     else:
         conversation = "\n\n".join(bubble(m["role"], m["text"], m["created_at"]) for m in all_msgs)
 
+    # THE FIX: makes it unmistakable when a conversation is closed while you're reading it,
+    # not just something you had to infer from which buttons are showing.
+    closed_banner = "\n🔒 <b>This conversation is closed.</b> Only an admin can reopen it." if fb.get('is_closed') else ""
     return (
         f"<b>#{fb['id']} • {cat_label}</b>\n"
-        f"{_status_progress_line(fb['status'])}\n"
+        f"{_status_progress_line(fb['status'])}{closed_banner}\n"
         f"<hr/>\n\n"
         f"{conversation}"
     )
@@ -1950,9 +1955,10 @@ def build_user_feedback_requests_list_text(items: list, total_count: int) -> str
     for item in items:
         icon = kind_icons.get(item['kind'], "💬")
         status_icon = status_icons.get(item['status'], "•")
+        closed_tag = " 🔒" if item.get('is_closed') else ""
         label = str(item['label'])
         snippet = html.escape(label[:60] + ("…" if len(label) > 60 else ""))
-        lines.append(f"{icon} <b>#{item['id']}</b>  {status_icon}\n<i>{snippet}</i>")
+        lines.append(f"{icon} <b>#{item['id']}</b>  {status_icon}{closed_tag}\n<i>{snippet}</i>")
     lines.append("<hr/>\n<i>Tap a card below to view full details.</i>")
     return "\n\n".join(lines)
 
