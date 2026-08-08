@@ -2451,12 +2451,20 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         offset = int(d_id)
         users = await asyncio.to_thread(db_get_recent_users, 15, offset)
         text = build_user_directory_text(users)
+        # THE FIX: admin_manage_user / admin_toggle_perm were fully built in an earlier
+        # pass but no button anywhere ever linked to them — the whole permission panel
+        # was unreachable. One 🔧 row per user, right in the directory listing.
+        buttons = []
+        for u in users:
+            short_name = format_public_name(u)[:18]
+            buttons.append([InlineKeyboardButton(f"🔧 {short_name}", callback_data=f"admin_manage_user|{u['user_id']}")])
         nav_row = []
         if offset > 0:
             nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{max(0, offset-15)}"))
         if len(users) == 15:
             nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{offset+15}"))
-        buttons = [nav_row] if nav_row else []
+        if nav_row:
+            buttons.append(nav_row)
         buttons.append([InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return

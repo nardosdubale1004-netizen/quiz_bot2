@@ -778,6 +778,18 @@ class QuizEngine:
                 _safe_migrate(cur, conn, "idx_user_org_contrib_org", "CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
                 _safe_migrate(cur, conn, "idx_user_geo_contrib_type_value", "CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
 
+                # THE FIX: was only ever created lazily inside db_set_user_permission —
+                # until an admin used the permission panel once, EVERY message triggered
+                # a failed query + caught exception + log line via db_check_user_permission
+                # (called on every FSM message). Created here unconditionally now.
+                _safe_migrate(cur, conn, "CREATE user_permissions", """
+                    CREATE TABLE IF NOT EXISTS user_permissions (
+                        user_id VARCHAR(20) NOT NULL, perm_key VARCHAR(20) NOT NULL,
+                        allowed BOOLEAN DEFAULT TRUE, set_by VARCHAR(20), updated_at TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (user_id, perm_key)
+                    );
+                """)
+
                 conn.commit()
 
             QuizEngine._tournament_schema_ensured = True
@@ -4435,11 +4447,23 @@ def db_count_location_suggestions(status: str = None, kind: str = None) -> int:
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_location_suggestion(suggestion_id: int):
+    """THE FIX: this never joined user_stats — the list view (db_get_location_suggestions_list)
+    did, but this single-item fetch (used by the detail screen you land on after tapping a
+    request) didn't. format_public_name() then had no nickname/username/first_name to work
+    with, and since location_suggestions has no `user_id` column (it has `submitted_by`), it
+    silently fell back to the generic "Scholar" label — every request looked anonymous on the
+    one screen where you actually need to know who it's from."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM location_suggestions WHERE id = %s;", (int(suggestion_id),))
+            cur.execute("""
+                SELECT ls.*, us.nickname, us.username, us.first_name, us.public_consent_granted,
+                       ls.submitted_by AS user_id
+                FROM location_suggestions ls
+                LEFT JOIN user_stats us ON ls.submitted_by = us.user_id
+                WHERE ls.id = %s;
+            """, (int(suggestion_id),))
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:
@@ -4531,8 +4555,13 @@ def db_resolve_location_suggestion(suggestion_id: int, admin_id, approve: bool, 
                     """, (sug['submitted_by'], sug['org_id']))
                 else:
                     cur.execute("UPDATE organizations SET status = 'rejected', deleted_at = NOW() WHERE org_id = %s;", (sug['org_id'],))
+                    # THE FIX: org_role must only ever hold creator/admin/member — lifecycle status
+                    # (pending/active/rejected/left) belongs on state, never org_role. Setting
+                    # org_role='left' here corrupted the row for any future org_role-based filter
+                    # and lost the creator's real role, which the approve branch above then had to
+                    # blindly re-guess (hardcoding 'creator') instead of reading it back correctly.
                     cur.execute("""
-                        UPDATE org_memberships SET org_role = 'left', deleted_at = NOW()
+                        UPDATE org_memberships SET state = 'rejected', deleted_at = NOW()
                         WHERE user_id = %s AND org_id = %s;
                     """, (sug['submitted_by'], sug['org_id']))
                 affected_users = [sug['submitted_by']]
@@ -6248,6 +6277,9 @@ def db_set_feedback_closed(feedback_id: int, closed: bool) -> bool:
 
 
 def db_set_location_suggestion_closed(sid: int, closed: bool) -> bool:
+    """Mirror of db_set_feedback_closed for the requests side — the previous pass gave feedback
+    close/reopen but never actually gave location/school requests the same treatment despite
+    saying it would."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -6287,23 +6319,3 @@ def db_get_team_average_marks(org_id: int) -> dict:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
-
-def db_set_location_suggestion_closed(sid: int, closed: bool) -> bool:
-    """Mirror of db_set_feedback_closed for the requests side — the previous pass gave feedback
-    close/reopen but never actually gave location/school requests the same treatment despite
-    saying it would."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("ALTER TABLE location_suggestions ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE;")
-            cur.execute("UPDATE location_suggestions SET is_closed = %s WHERE id = %s;", (closed, int(sid)))
-            conn.commit()
-            return True
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] db_set_location_suggestion_closed: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
