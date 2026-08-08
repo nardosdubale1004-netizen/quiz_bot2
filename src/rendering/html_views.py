@@ -2062,3 +2062,35 @@ def build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_a
     rows.append([InlineKeyboardButton("🔗 INVITE LINK", callback_data=f"team_invite|{org_id}")])
     rows.append([InlineKeyboardButton("🔙 TEAMS", callback_data="alliance_portal|0"), InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")])
     return InlineKeyboardMarkup(rows)
+
+
+def build_admin_dossier_text(dossier: dict) -> str:
+    """Read-only summary block appended below the profile card in admin_view_profile.
+    Shows team(s), recent feedback, and recent location/school requests — no buttons that
+    could change any of it live here on purpose."""
+    lines = ["<hr/>", "<h3>🏰 Teams</h3>"]
+    if not dossier["teams"]:
+        lines.append("<i>Not on any team.</i>")
+    else:
+        for t in dossier["teams"]:
+            state_tag = " ⏳ pending" if t.get("state") == "pending" else ""
+            lines.append(f" • {html.escape(t['org_name'])} <code>#{t['org_tag']}</code> — {t['org_role'].title()}{state_tag}")
+
+    lines.append("<h3>💬 Feedback (last 10)</h3>")
+    if not dossier["feedback"]:
+        lines.append("<i>None submitted.</i>")
+    else:
+        for f in dossier["feedback"]:
+            closed_tag = " 🔒" if f.get("is_closed") else ""
+            snippet = html.escape(f["message"][:50] + ("…" if len(f["message"]) > 50 else ""))
+            lines.append(f" • <code>#{f['id']}</code> {f['status']}{closed_tag} — {snippet}")
+
+    lines.append("<h3>📍 Location/School Requests (last 10)</h3>")
+    if not dossier["requests"]:
+        lines.append("<i>None submitted.</i>")
+    else:
+        for r in dossier["requests"]:
+            closed_tag = " 🔒" if r.get("is_closed") else ""
+            lines.append(f" • <code>#{r['id']}</code> {r['kind']} {r['status']}{closed_tag} — {html.escape(r['name'])}")
+
+    return "\n".join(lines)

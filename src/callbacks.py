@@ -546,7 +546,7 @@ async def _open_utility_view(context, user_id, chat_id, html_content, reply_mark
     return await open_utility_view(context.bot, None, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
 
 
-async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str):
+async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str, is_impersonating: bool = False):
     from src.database import (
         db_get_team_membership_homogeneity, db_get_team_scope_ranks, db_get_org_member_matrix,
         db_count_org_members, db_count_org_left_members, db_get_org_admin_ids, db_get_team_average_marks,
@@ -585,7 +585,12 @@ async def _render_team_details(context, chat_id, message_id, user_id, org_id: in
     table_text = build_team_rank_table_text(matrix, grade_filter, grade_count)
     kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator)
 
-    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=f"{info_text}\n\n{table_text}", reply_markup=kb)
+    full_text = f"{info_text}\n\n{table_text}"
+    if is_impersonating:
+        full_text = f"🎭 <b>ACTING AS <code>{user_id}</code></b> — tap 🛑 to stop.\n<hr/>\n{full_text}"
+        kb_rows = kb.inline_keyboard + [[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]]
+        kb = InlineKeyboardMarkup(kb_rows)
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=full_text, reply_markup=kb)
 
 
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
@@ -605,12 +610,19 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         "admin_view_profile", "admin_manage_user", "admin_toggle_perm",
         "admin_user_actions", "admin_users", "admin_dashboard"
     )
+    real_caller_id = user_id
+    is_impersonating = False
     if action not in _IMPERSONATION_EXEMPT_ACTIONS:
         from src.config import IMPERSONATION_SESSIONS
         impersonated = IMPERSONATION_SESSIONS.get(str(user_id))
         if impersonated:
             user_id = int(impersonated)
-
+            # THE FIX: is_impersonating used to only ever be shown on the imp_start confirmation
+            # screen — every screen after that (profile, settings, team, feedback...) looked
+            # byte-identical to the admin's own account, with no way to tell the two apart mid-
+            # session. This flag now travels with every action so profile-family screens can
+            # stamp themselves.
+            is_impersonating = True
     print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {user_id}")
 
     # Standard circular home button for intermediate flows
@@ -725,6 +737,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
         text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
+        # THE FIX: makes it unmistakable that the admin is looking at SOMEONE ELSE'S live profile,
+        # not their own — same banner treatment on every profile-family screen while a session is
+        # active, not just the initial imp_start confirmation.
+        if is_impersonating:
+            text = f"🎭 <b>ACTING AS <code>{user_id}</code></b> — tap 🛑 to stop.\n<hr/>\n{text}"
+            kb_rows = kb.inline_keyboard + [[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]]
+            kb = InlineKeyboardMarkup(kb_rows)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -1317,7 +1336,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "view_org":
         await query.answer()
         org_id = int(d_id)
-        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc")
+        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc", is_impersonating)
         return
 
     elif action == "team_grade_filter":
@@ -3201,8 +3220,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "admin_view_profile":
+        # THE FIX: db_get_user_profile is already imported at the top of this file. Re-importing
+        # it locally here made Python treat it as local for the ENTIRE _handle_callback_inner
+        # function — every elif branch shares one scope — so privacy_menu/profile_popup, which
+        # reference the bare name without their own local import, crashed with UnboundLocalError
+        # before this line ever executed on their path. This is the same bug class fixed 4 times
+        # already in this thread, from a different branch each time.
         from src.database import (
-            db_is_admin, db_get_user_profile, db_get_user_subject_marks,
+            db_is_admin, db_get_user_subject_marks,
             db_get_user_top_topic, db_get_user_rank_summary, db_check_impersonation_granted
         )
         if not await asyncio.to_thread(db_is_admin, user_id):
@@ -3222,11 +3247,21 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         top_topic = await asyncio.to_thread(db_get_user_top_topic, target)
         rank_summary = await asyncio.to_thread(db_get_user_rank_summary, target)
         card_text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
-        # THE FIX (new feature): a plain-text banner + the EXACT same card a student sees, but with
-        # zero editable buttons — no settings, no grade change, no team actions. Nothing an admin
-        # taps here can ever modify the account; the only interactive things offered are navigation
-        # and the (opt-in, user-consented) impersonation controls below.
-        text = f"👁️ <b>ADMIN VIEW — READ ONLY</b>\nViewing <code>{target}</code>'s profile exactly as they see it.\n<hr/>\n{card_text}"
+
+        # THE FIX (expanded read-only view): was profile-card-only. Now also pulls team
+        # membership, feedback history, and location/school request history — everything an
+        # admin might need to see about a user, in one screen, with zero edit controls.
+        from src.database import db_get_user_dossier_for_admin
+        from src.rendering.html_views import build_admin_dossier_text
+        dossier = await asyncio.to_thread(db_get_user_dossier_for_admin, target)
+        dossier_text = build_admin_dossier_text(dossier)
+
+        text = (
+            f"👁️ <b>ADMIN VIEW — READ ONLY</b>\n"
+            f"Viewing <code>{target}</code>'s account exactly as they see it. "
+            f"<i>Nothing here can be changed — updates only happen through 🎭 Act As This User.</i>\n"
+            f"<hr/>\n{card_text}\n{dossier_text}"
+        )
         already_granted = await asyncio.to_thread(db_check_impersonation_granted, target, user_id)
         kb_rows = []
         if already_granted:
