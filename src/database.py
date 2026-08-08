@@ -1864,6 +1864,32 @@ def db_get_user_profile(user_id):
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
+def db_get_user_snapshot(user_id) -> dict:
+    """Compact stats block for admin-facing approval cards. Reads location from the single
+    source of truth (user_locations), not the frozen user_stats.personal_city/personal_country
+    columns — those are dead weight since db_set_user_location became the only writer."""
+    conn = None
+    try:
+        conn = GLOBAL_ENGINE.get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT us.grade, us.total_marks, us.total, us.correct, us.current_streak,
+                       l.city AS personal_city, l.country AS personal_country
+                FROM user_stats us
+                LEFT JOIN user_locations l ON l.user_id = us.user_id
+                WHERE us.user_id = %s;
+            """, (str(user_id),))
+            row = cur.fetchone()
+            return dict(row) if row else {}
+    except Exception as e:
+        print(f"[DB ERROR] Failed to fetch user snapshot: {e}", flush=True)
+        return {}
+    finally:
+        if conn:
+            GLOBAL_ENGINE.release_connection(conn)
+
+            
 def db_get_user_subject_marks(user_id):
     conn = None
     try:
