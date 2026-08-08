@@ -583,7 +583,12 @@ async def _render_team_details(context, chat_id, message_id, user_id, org_id: in
 
     info_text = build_team_details_text(org, geo, scope_ranks, member_count, left_count, is_admin_here, avg_info)
     table_text = build_team_rank_table_text(matrix, grade_filter, grade_count)
-    kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator)
+    # THE FIX: build_team_details_keyboard's geo/org params were never passed here — they
+    # silently defaulted to None, so `if geo and not geo.get("grade_uniform")` was always
+    # False and the 6/8/10/12 filter row could never appear, even for a genuinely
+    # mixed-grade team that needs it. This is the actual reason grade filtering stopped
+    # working entirely rather than just being hidden for uniform teams as intended.
+    kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator, geo=geo, org=org)
 
     await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=f"{info_text}\n\n{table_text}", reply_markup=kb)
 
@@ -1178,7 +1183,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
-        kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+        kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -1883,6 +1888,8 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
         if not join_data:
             msg = "⚠️ This team invite link is invalid or the team no longer exists."
+        elif join_data.get("scope_blocked"):
+            msg = f"🔒 <b>{html.escape(join_data['org_name'])}</b> is a dedicated team.\n\n{join_data['reason']}"
         elif join_data.get("already_member"):
             msg = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b> — nothing to do here."
         elif join_data.get("already_pending"):
@@ -3183,21 +3190,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             html_content=f"🔧 <b>Permissions — user <code>{target}</code></b>\n\nTap to toggle.", reply_markup=kb)
         return
 
-    elif action == "...":
-        await query.answer()
-        ...
-        if some_condition:
-            await query.answer("...", show_alert=True)
-            return
-
-
 
 
     if action not in ("ans", "toggle", "toggle_photo", "confirm_change", "cancel_change", "fb_view", "my_ans_hide"):
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
         text = build_profile_card_text(profile, None, subject_marks)
-        kb = build_profile_main_keyboard(has_team=bool(profile.get("org_id")))
+        kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -3412,3 +3411,5 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
         await query.answer("System Error: Could not render response.", show_alert=True)
+
+        

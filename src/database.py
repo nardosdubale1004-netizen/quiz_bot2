@@ -132,18 +132,28 @@ BEGIN
                 ON CONFLICT (user_id, difficulty) DO UPDATE SET marks = user_difficulty_marks.marks + v_marks;
             END IF;
 
-            -- Team contribution: split evenly across every team this user is CURRENTLY
-            -- an active member of. A team a user has since LEFT never receives another
-            -- cent here — its row is frozen at whatever it accumulated while they were in.
+            -- School: gets the FULL contribution, never divided — a student can only
+            -- have ONE active school at a time, so there's nothing to split.
+            -- Team: split evenly ONLY across active TEAM memberships — a school on the
+            -- same account must never dilute a team's share, and vice versa.
             IF p_is_correct AND v_marks > 0 THEN
                 INSERT INTO user_org_contributions (user_id, org_id, marks)
-                SELECT p_user_id, m.org_id, v_marks::numeric / GREATEST(1, cnt.active_count)
+                SELECT p_user_id, m.org_id, v_marks
                 FROM org_memberships m
+                JOIN organizations o ON o.org_id = m.org_id
+                WHERE m.user_id = p_user_id AND m.state = 'active' AND o.org_type = 'School'
+                ON CONFLICT (user_id, org_id) DO UPDATE SET marks = user_org_contributions.marks + EXCLUDED.marks;
+
+                INSERT INTO user_org_contributions (user_id, org_id, marks)
+                SELECT p_user_id, m.org_id, v_marks::numeric / GREATEST(1, cnt.active_team_count)
+                FROM org_memberships m
+                JOIN organizations o ON o.org_id = m.org_id
                 CROSS JOIN (
-                    SELECT COUNT(*) AS active_count FROM org_memberships
-                    WHERE user_id = p_user_id AND state = 'active'
+                    SELECT COUNT(*) AS active_team_count FROM org_memberships m2
+                    JOIN organizations o2 ON o2.org_id = m2.org_id
+                    WHERE m2.user_id = p_user_id AND m2.state = 'active' AND o2.org_type = 'Team'
                 ) cnt
-                WHERE m.user_id = p_user_id AND m.state = 'active'
+                WHERE m.user_id = p_user_id AND m.state = 'active' AND o.org_type = 'Team'
                 ON CONFLICT (user_id, org_id) DO UPDATE SET marks = user_org_contributions.marks + EXCLUDED.marks;
 
                 IF v_city IS NOT NULL THEN
@@ -2504,11 +2514,19 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, org_type FROM organizations WHERE join_token = %s;", (join_token,))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, org_type, team_scope, scope_value FROM organizations WHERE join_token = %s;", (join_token,))
             row = cur.fetchone()
             if not row:
                 return None
             is_school = (row.get('org_type') == 'School')
+
+            # Was completely missing — invite links bypassed the "dedicated team" restriction
+            # entirely, unlike db_join_organization / db_join_organization_by_id which both
+            # already enforce this.
+            if row.get('team_scope') and row['team_scope'] != 'open':
+                elig = db_check_team_scope_eligibility(user_id, row['org_id'])
+                if not elig["eligible"]:
+                    return {"scope_blocked": True, "reason": elig["reason"], "org_name": row['org_name']}
 
             cur.execute("SELECT org_role, state FROM org_memberships WHERE user_id = %s AND org_id = %s;", (str(user_id), row['org_id']))
             existing = cur.fetchone()
