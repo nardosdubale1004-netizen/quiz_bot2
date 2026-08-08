@@ -1891,6 +1891,15 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_text = text_input[:500].strip()
             if not reply_text:
                 return
+            # Save-time backstop mirroring the feedback fix — catches the case where the
+            # state was already active before an admin closed the thread mid-conversation.
+            ls_check = await asyncio.to_thread(db_get_location_suggestion, sid)
+            if ls_check and ls_check.get('is_closed'):
+                USER_STATES[user_id] = "IDLE"
+                USER_PAYLOADS.pop(user_id, None)
+                closed_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]])
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "🔒 This conversation was closed before your message could send — nothing was saved.", closed_kb)
+                return
             await asyncio.to_thread(db_add_location_suggestion_message, sid, "user", user_id, reply_text)
 
             # Same continuity fix as the admin side — loop back into the thread with a
@@ -1980,6 +1989,18 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return_offset = session.get("return_offset", "0")
             reply_text = text_input[:1000].strip()
             if not reply_text:
+                return
+
+            # THE FIX: even with the entry-point gate above, a user who already had this
+            # state active in-memory BEFORE the admin closed the thread could still type
+            # and have it save — this is the actual save-time backstop. Checked fresh from
+            # the DB, not from whatever was true when the state was first entered.
+            fb_check = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
+            if fb_check and fb_check.get('is_closed'):
+                USER_STATES[user_id] = "IDLE"
+                USER_PAYLOADS.pop(user_id, None)
+                closed_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")]])
+                await _fsm_advance(context, update.message.chat_id, edit_mid, "🔒 This conversation was closed before your message could send — nothing was saved.", closed_kb)
                 return
 
             await asyncio.to_thread(db_add_feedback_message, fb_id, "user", user_id, reply_text)

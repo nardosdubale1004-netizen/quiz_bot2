@@ -3761,7 +3761,12 @@ def db_get_feedback_list(status: str = None, category: str = None, limit: int = 
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             clauses, params = [], []
-            if status:
+            if status == "closed":
+                # THE FIX: "closed" isn't a value of the status column — it's the
+                # separate is_closed flag. Without this branch there was no way to
+                # filter the admin queue down to just closed conversations.
+                clauses.append("f.is_closed = TRUE")
+            elif status:
                 clauses.append("f.status = %s")
                 params.append(status)
             if category:
@@ -4379,7 +4384,9 @@ def db_get_location_suggestions_list(status: str = None, kind: str = None, limit
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             clauses, params = [], []
-            if status and status != "all":
+            if status == "closed":
+                clauses.append("ls.is_closed = TRUE")
+            elif status and status != "all":
                 clauses.append("ls.status = %s")
                 params.append(status)
             if kind and kind != "all":
@@ -4619,7 +4626,9 @@ def db_count_feedback(status: str = None, category: str = None) -> int:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             clauses, params = [], []
-            if status:
+            if status == "closed":
+                clauses.append("is_closed = TRUE")
+            elif status:
                 clauses.append("status = %s")
                 params.append(status)
             if category:

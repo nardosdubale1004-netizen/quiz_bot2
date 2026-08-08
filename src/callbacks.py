@@ -1672,6 +1672,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("✅ Approved", callback_data=f"loc_admin_browse|{kind}|approved:0"),
             InlineKeyboardButton("🚫 Rejected", callback_data=f"loc_admin_browse|{kind}|rejected:0"),
         ])
+        item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"loc_admin_browse|{kind}|closed:0")])
         item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
@@ -2370,7 +2371,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("🔧 Active", callback_data=f"fb_browse|{category}|in_progress:0"),
             InlineKeyboardButton("📋 All", callback_data=f"fb_browse|{category}|all:0"),
         ])
-        item_rows.append([InlineKeyboardButton("🔙 DASHBOARD", callback_data="admin_dashboard|0")])
+        item_rows.append([InlineKeyboardButton("🔒 Closed Conversations", callback_data=f"fb_browse|{category}|closed:0")])
 
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(item_rows))
         return
@@ -2549,8 +2550,14 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
                 return
             thread = await asyncio.to_thread(db_get_feedback_thread, fb_id)
             viewer_tz = await asyncio.to_thread(db_get_user_timezone, user_id)
+            # THE FIX: REPLY was always rendered regardless of is_closed — this is why
+            # a student could still message into a conversation the admin had closed.
+            reply_row = [] if fb.get('is_closed') else [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")]
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 REPLY", callback_data=f"fb_user_reply|{fb_id}|{return_offset}")],
+                reply_row,
+                [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
+                [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
+            ]) if reply_row else InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 BACK TO LIST", callback_data=f"my_feedback|{return_offset}")],
                 [InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0")]
             ])
@@ -2571,6 +2578,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         fb = await asyncio.to_thread(db_get_feedback_by_id, fb_id)
         if not fb or str(fb.get("user_id")) != str(user_id):
             await query.answer("Not found.", show_alert=True)
+            return
+        # THE FIX: this was the actual open door. loc_user_reply already checked
+        # is_closed for location requests; this equivalent for feedback never did,
+        # so a student could always re-enter reply mode no matter what the admin set.
+        if fb.get('is_closed'):
+            await query.answer("This conversation is closed — an admin needs to reopen it.", show_alert=True)
             return
         await query.answer()
         USER_STATES[user_id] = "AWAITING_USER_FEEDBACK_REPLY"
