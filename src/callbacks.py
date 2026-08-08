@@ -1204,6 +1204,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             print(f"[DEBUG-REGLOC-CONFIRM] school join result for user={user_id}: {join_data}", flush=True)
             if not join_data:
                 school_msg = "⚠️ Could not join school."
+            elif join_data.get("pending_approval"):
+                status_word = "still awaiting admin review" if join_data.get("status") == "pending" else "was not approved"
+                school_msg = f"⏳ {html.escape(join_data['org_name'])} {status_word} — you can't join it yet."
             elif join_data.get("scope_blocked"):
                 school_msg = f"🔒 {html.escape(join_data['org_name'])} is restricted — {join_data.get('reason','')}"
             elif join_data.get("role_assigned") == "pending":
@@ -1887,6 +1890,9 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         join_data = await asyncio.to_thread(db_join_organization_by_token, user_id, join_token)
         if not join_data:
             msg = "⚠️ This team invite link is invalid or the team no longer exists."
+        elif join_data.get("pending_approval"):
+            status_word = "still awaiting admin review" if join_data.get("status") == "pending" else "was not approved"
+            msg = f"⏳ <b>{html.escape(join_data['org_name'])}</b> {status_word} — you can't join it yet."
         elif join_data.get("scope_blocked"):
             msg = f"🔒 <b>{html.escape(join_data['org_name'])}</b> is a dedicated team.\n\n{join_data['reason']}"
         elif join_data.get("already_member"):
@@ -2139,7 +2145,16 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             await query.edit_message_text("⚠️ That team no longer exists.", reply_markup=return_kb)
             return
 
-        if join_data.get("already_member"):
+        # THE FIX: db_join_organization_by_id can return {"pending_approval": True, ...}
+        # or {"scope_blocked": True, ...} — neither has a "role_assigned" key. The old
+        # code jumped straight to join_data["role_assigned"] once already_member/
+        # already_pending were ruled out, raising KeyError for both cases.
+        if join_data.get("pending_approval"):
+            status_word = "still awaiting admin review" if join_data.get("status") == "pending" else "was not approved"
+            text = f"⏳ <b>{html.escape(join_data['org_name'])}</b> {status_word} — you can't join it yet."
+        elif join_data.get("scope_blocked"):
+            text = f"🔒 <b>{html.escape(join_data['org_name'])}</b> is restricted.\n\n{join_data['reason']}"
+        elif join_data.get("already_member"):
             text = f"ℹ️ You're already on <b>{join_data['org_name']}</b> as <b>{join_data['role_assigned'].title()}</b>."
         elif join_data.get("already_pending"):
             text = f"📥 Your join request for <b>{join_data['org_name']}</b> is still pending admin approval."

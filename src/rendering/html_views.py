@@ -989,83 +989,6 @@ def build_help_topic_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("👤 BACK TO PROFILE", callback_data="privacy_menu|0")]
     ])
 
-# def build_leaderboard_text(scope: str, rows: list, profile: dict = None, label_override: str = None) -> str:
-    #     scope_labels = {
-    #         "grade": f"🎒 Grade {label_override or (profile.get('grade') if profile else '—')}",
-    #         "country": f"🌍 {label_override}" if label_override else "🌍 Countries (Top)",
-    #         "city": f"🌆 {label_override}" if label_override else "🌆 Cities (Top)",
-    #         "school": "🏫 School Teams",
-    #         "country_overall": "🌍 TOP COUNTRIES (Global)",
-    #         "city_overall": "🌆 TOP CITIES (Global)",
-    #     }
-    #     lines = [f"<h2>🏆 {scope_labels.get(scope, 'Leaderboard')}</h2>"]
-
-    #     if profile and scope == "grade" and not label_override:
-    #         mastery = get_grade_mastery_title(profile.get("total_marks", 0))
-    #         acc = int((profile['correct']/profile['total'])*100) if profile.get('total') else 0
-    #         lines.append(
-    #             f"<b>You:</b> {format_public_name(profile)} · {mastery} · "
-    #             f"{profile.get('total_marks', 0)} marks · 🔥{profile.get('current_streak', 0)}d · 🎯{acc}%"
-    #         )
-    #         lines.append("<hr/>")
-
-    #     if not rows:
-    #         lines.append("<i>No scores yet — be the first!</i>")
-    #         return "\n".join(lines)
-
-    #     medals = ["🥇", "🥈", "🥉"]
-    #     label_col = "Country" if scope == "country_overall" else "City" if scope == "city_overall" else "Scholar"
-    #     table_rows = [f"<tr><td><b>#</b></td><td><b>{label_col}</b></td><td><b>Marks</b></td></tr>"]
-    #     for i, r in enumerate(rows[:10]):
-    #         rank = medals[i] if i < 3 else str(i + 1)
-    #         if scope == "school":
-    #             nm, score = f"#{r['alliance_tag']}", r['total_score']
-    #         elif scope == "country_overall":
-    #             nm, score = str(r.get('country') or '—'), r.get('total_score', 0)
-    #         elif scope == "city_overall":
-    #             nm, score = str(r.get('city') or '—'), r.get('total_score', 0)
-    #         elif label_override and scope in ("city", "country"):
-    #             nm, score = format_public_name(r), r.get('total_marks', 0)
-    #         else:
-    #             nm, score = format_public_name(r), r.get('total_score', r.get('total_marks', 0))
-    #         table_rows.append(f"<tr><td>{rank}</td><td>{html.escape(nm)}</td><td>{score}</td></tr>")
-    #     lines.append("<table>" + "".join(table_rows) + "</table>")
-    #     return "\n".join(lines)
-
-# def build_leaderboard_keyboard(scope: str, active_grade: int = None) -> InlineKeyboardMarkup:
-    #     def _b(key, label):
-    #         return InlineKeyboardButton(f"{'• ' if scope == key else ''}{label}", callback_data=f"lb_filter|{key}")
-    #     rows = [
-    #         [_b("grade", "🎒 GRADE"), _b("school", "🏫 SCHOOL")],
-    #         [_b("school_branch", "🏢 BRANCHES"), _b("city", "🌆 CITY")],   # NEW: branch view
-    #         [_b("country", "🌍 COUNTRY"), _b("city_overall", "🌆 TOP CITIES")],
-    #         [_b("country_overall", "🌍 TOP COUNTRIES")],
-    #         [InlineKeyboardButton("🌍 EXPLORE RANKINGS", callback_data="wr|world|all")],
-    #         [InlineKeyboardButton("🗺️ EXPLORE COUNTRIES", callback_data="geo_country_list|0"),
-    #          InlineKeyboardButton("🎒 GRADE RANKS", callback_data="geo_grade_list|0")],
-    #     ]
-    #     if scope == "grade":
-    #         grade_row = [
-    #             InlineKeyboardButton(f"{'• ' if active_grade == g else ''}{g}", callback_data=f"lb_grade|{g}")
-    #             for g in (6, 8, 10, 12)
-    #         ]
-    #         rows.append(grade_row)
-    #     rows.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
-    #                  InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
-    #     return InlineKeyboardMarkup(rows)
-
-# def build_geo_picker_keyboard(items: list, scope: str) -> InlineKeyboardMarkup:
-    #     """Buttons to pick a specific city/country to see its leaderboard, 2 per row."""
-    #     rows, row = [], []
-    #     for name in items[:20]:
-    #         row.append(InlineKeyboardButton(name, callback_data=f"lb_{scope}_pick|{name}"))
-    #         if len(row) == 2:
-    #             rows.append(row); row = []
-    #     if row:
-    #         rows.append(row)
-    #     rows.append([InlineKeyboardButton("🔙 LEADERBOARD", callback_data="menu_leaderboard|0")])
-    #     return InlineKeyboardMarkup(rows)
-
 def build_help_topic_text(key: str) -> str:
     topic = HELP_TOPICS.get(key)
     return topic[1] if topic else "⚠️ Topic not found."
@@ -1586,22 +1509,7 @@ def build_geo_country_list_keyboard(rows: list, offset: int, total: int) -> Inli
     return InlineKeyboardMarkup(kb)
 
 
-# def build_geo_country_detail_text(country: str, detail: dict) -> str:
-    #     s = detail["summary"]
-    #     rank_line = f"🥇 World Rank: <b>#{s['world_rank']}</b>" if s.get('world_rank') else "<i>Not yet ranked</i>"
-    #     lines = [
-    #         f"<h2>🌍 {html.escape(country)}</h2>",
-    #         f"{rank_line} · <b>{s.get('total_score', 0)}</b> total marks",
-    #         "<hr/>", "<h3>🌆 Top Cities</h3>"
-    #     ]
-    #     if not detail["cities"]:
-    #         lines.append("<i>No city data registered for this country yet.</i>")
-    #     else:
-    #         table = ["<tr><td><b>#</b></td><td><b>City</b></td><td><b>Marks</b></td></tr>"]
-    #         for i, c in enumerate(detail["cities"]):
-    #             table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(str(c['city']))}</td><td>{c['total_score']}</td></tr>")
-    #         lines.append("<table>" + "".join(table) + "</table>")
-    #     return "\n".join(lines)
+
 
 
 def build_geo_country_detail_keyboard(country: str, detail: dict) -> InlineKeyboardMarkup:
@@ -1611,28 +1519,7 @@ def build_geo_country_detail_keyboard(country: str, detail: dict) -> InlineKeybo
     return InlineKeyboardMarkup(kb)
 
 
-# def build_geo_city_detail_text(city: str, country: str, detail: dict) -> str:
-    #     s = detail["summary"]
-    #     rank_bits = []
-    #     if s.get("world_rank"):
-    #         rank_bits.append(f"🌍 World #{s['world_rank']}")
-    #     if s.get("country_rank"):
-    #         rank_bits.append(f"🌆 Country #{s['country_rank']}")
-    #     rank_line = " · ".join(rank_bits) if rank_bits else "<i>Not yet ranked</i>"
-    #     lines = [
-    #         f"<h2>🌆 {html.escape(city)}</h2>",
-    #         f"<i>{html.escape(country or '')}</i>",
-    #         f"{rank_line} · <b>{s.get('total_score', 0)}</b> total marks",
-    #         "<hr/>", "<h3>🏫 Schools</h3>"
-    #     ]
-    #     if not detail["schools"]:
-    #         lines.append("<i>No school teams registered in this city yet.</i>")
-    #     else:
-    #         table = ["<tr><td><b>#</b></td><td><b>School</b></td><td><b>Marks</b></td></tr>"]
-    #         for i, sc in enumerate(detail["schools"]):
-    #             table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(sc['org_name'])}</td><td>{sc['total_score']}</td></tr>")
-    #         lines.append("<table>" + "".join(table) + "</table>")
-    #     return "\n".join(lines)
+
 
 
 def build_geo_city_detail_keyboard(city: str, country: str, detail: dict) -> InlineKeyboardMarkup:
@@ -1642,12 +1529,7 @@ def build_geo_city_detail_keyboard(city: str, country: str, detail: dict) -> Inl
     return InlineKeyboardMarkup(kb)
 
 
-# def build_geo_school_list_text(rows: list, city: str, country: str, offset: int, total: int) -> str:
-#     scope = html.escape(city) if city and city != "all" else (html.escape(country) if country and country != "all" else "World")
-#     lines = [f"<h2>🏫 SCHOOLS — {scope}</h2>", f"<i>{offset+1}-{offset+len(rows)} of {total} · A-Z</i>", "<hr/>"]
-#     if not rows:
-#         lines.append("<i>No schools found.</i>")
-#     return "\n".join(lines)
+
 
 
 def build_geo_school_list_keyboard(rows: list, city: str, country: str, offset: int, total: int) -> InlineKeyboardMarkup:
@@ -1663,51 +1545,12 @@ def build_geo_school_list_keyboard(rows: list, city: str, country: str, offset: 
     kb.append([InlineKeyboardButton("🔙 BACK", callback_data=back_cb)])
     return InlineKeyboardMarkup(kb)
 
-# def build_geo_grade_list_text(rows: list) -> str:
-    #     lines = ["<h2>🎒 WORLD RANKINGS — Grades</h2>", "<hr/>"]
-    #     if not rows:
-    #         lines.append("<i>No grade data yet.</i>")
-    #         return "\n".join(lines)
-    #     table = ["<tr><td><b>#</b></td><td><b>Grade</b></td><td><b>Marks</b></td><td><b>Students</b></td></tr>"]
-    #     for i, r in enumerate(rows):
-    #         table.append(f"<tr><td>{_medal_or_num(i)}</td><td>Grade {r['grade']}</td><td>{r['total_score']}</td><td>{r['student_count']}</td></tr>")
-    #     lines.append("<table>" + "".join(table) + "</table>")
-    #     return "\n".join(lines)
 
 
 def build_geo_grade_list_keyboard(rows: list) -> InlineKeyboardMarkup:
     kb = [[InlineKeyboardButton(f"🎒 Grade {r['grade']}", callback_data=f"geo_grade_detail|{r['grade']}")] for r in rows]
     kb.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"), InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
     return InlineKeyboardMarkup(kb)
-
-
-# def build_geo_grade_detail_text(grade: int, detail: dict) -> str:
-    #     s = detail["summary"]
-    #     rank_line = f"🥇 World Rank: <b>#{s['world_rank']}</b>" if s.get('world_rank') else "<i>Not yet ranked</i>"
-    #     lines = [
-    #         f"<h2>🎒 Grade {grade}</h2>",
-    #         f"{rank_line} · <b>{s.get('total_score', 0)}</b> total marks (this grade, worldwide)",
-    #         "<hr/>", "<h3>🌍 Top Countries AT this grade</h3>"
-    #     ]
-    #     if not detail["top_countries"]:
-    #         lines.append("<i>No country data yet.</i>")
-    #     else:
-    #         table = ["<tr><td><b>#</b></td><td><b>Country</b></td><td><b>Marks</b></td></tr>"]
-    #         for i, c in enumerate(detail["top_countries"]):
-    #             table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(str(c['country']))}</td><td>{c['total_score']}</td></tr>")
-    #         lines.append("<table>" + "".join(table) + "</table>")
-
-    #     lines.append("<h3>🌆 Top Cities AT this grade</h3>")
-    #     if not detail["top_cities"]:
-    #         lines.append("<i>No city data yet.</i>")
-    #     else:
-    #         table = ["<tr><td><b>#</b></td><td><b>City</b></td><td><b>Marks</b></td></tr>"]
-    #         for i, c in enumerate(detail["top_cities"]):
-    #             table.append(f"<tr><td>{_medal_or_num(i)}</td><td>{html.escape(str(c['city']))}</td><td>{c['total_score']}</td></tr>")
-    #         lines.append("<table>" + "".join(table) + "</table>")
-
-    #     lines.append("<i>Rankings here compare only students in this grade — not each place's overall score.</i>")
-    #     return "\n".join(lines)
 
 
 def build_geo_grade_detail_keyboard() -> InlineKeyboardMarkup:
@@ -1725,76 +1568,6 @@ def build_organization_grade_breakdown_text(grade_rows: list) -> str:
     lines.append("</table>")
     return "\n".join(lines)
 
-# def build_world_rank_text(scope: str, grade: str, matrix: dict, summary: dict = None) -> str:
-    #     scope_labels = {"world": "🌍 WORLD", "country": "🌎 COUNTRY", "city": "🌆 CITY", "school": "🏫 SCHOOL"}
-    #     lines = [f"<h2>{scope_labels.get(scope, 'World')} RANKINGS</h2>"]
-
-    #     s = summary or {}
-    #     lines.append(
-    #         f"👥 {s.get('student_count', 0)} students · 🏫 {s.get('school_count', 0)} schools · "
-    #         f"🏢 {s.get('team_count', 0)} teams · 🌆 {s.get('city_count', 0)} cities · "
-    #         f"🌍 {s.get('country_count', 0)} countries"
-    #     )
-    #     lines.append(f"<b>{s.get('total_marks', 0)}</b> total marks · <b>{int(s.get('avg_marks', 0))}</b> average")
-    #     lines.append(f"<i>{'All grades' if grade in (None, 'all') else f'Grade {grade}'}</i>")
-    #     lines.append("<hr/>")
-
-    #     cols = {
-    #         "world": [("students", "Students"), ("teams", "Teams"), ("schools", "Schools"), ("cities", "Cities"), ("countries", "Countries")],
-    #         "country": [("students", "Students"), ("teams", "Teams"), ("schools", "Schools"), ("cities", "Cities")],
-    #         "city": [("students", "Students"), ("teams", "Teams"), ("schools", "Schools")],
-    #         "school": [("students", "Students"), ("teams", "Teams")],
-    #     }.get(scope, [("students", "Students")])
-
-    #     medals = ["🥇", "🥈", "🥉"]
-    #     header_row = "<tr><td><b>#</b></td>" + "".join(f"<td><b>{label}</b></td>" for _, label in cols) + "</tr>"
-
-    #     # Always render 10 rows — skeleton dashes for any column/rank with no data yet.
-    #     body_rows = []
-    #     for i in range(10):
-    #         rank = medals[i] if i < 3 else str(i + 1)
-    #         cells = []
-    #         for key, _ in cols:
-    #             col_data = matrix.get(key, [])
-    #             if i < len(col_data):
-    #                 cells.append(f"<td>{html.escape(str(col_data[i]['name']))} ({col_data[i]['score']})</td>")
-    #             else:
-    #                 cells.append("<td>—</td>")
-    #         body_rows.append(f"<tr><td>{rank}</td>{''.join(cells)}</tr>")
-
-    #     lines.append("<table>" + header_row + "".join(body_rows) + "</table>")
-    #     return "\n".join(lines)
-
-# def build_world_rank_keyboard(scope: str, grade: str) -> InlineKeyboardMarkup:
-    #     def _cb(s=None, g=None):
-    #         return f"wr|{s or scope}|{g if g is not None else grade}"
-
-    #     def _scope_btn(s, label):
-    #         return InlineKeyboardButton(("• " if scope == s else "") + label, callback_data=_cb(s=s))
-
-    #     rows = [
-    #         [_scope_btn("world", "🌍 World"), _scope_btn("country", "🌎 Country")],
-    #         [_scope_btn("city", "🌆 City"), _scope_btn("school", "🏫 School")],
-    #     ]
-
-    #     grade_vals = [("all", "All"), ("12", "12"), ("10", "10"), ("8", "8"), ("6", "6")]
-    #     rows.append([InlineKeyboardButton(("• " if grade == v else "") + label, callback_data=_cb(g=v)) for v, label in grade_vals])
-
-    #     rows.append([InlineKeyboardButton("👤 PROFILE", callback_data="privacy_menu|0"),
-    #                  InlineKeyboardButton("🔙 CLOSE", callback_data="close_portal|0")])
-    #     return InlineKeyboardMarkup(rows)
-
-
-# def _filter_chip_line(scope, entity, grade, subject, difficulty, mode) -> str:
-#     labels = {"world": "🌍 World", "country": f"🌎 {entity or 'Country'}", "city": f"🏙 {entity or 'City'}", "school": "🏫 School"}
-#     parts = [labels.get(scope, scope), "📈 Average" if mode == "average" else "🏆 Total"]
-#     if grade not in (None, "all"):
-#         parts.append(f"🎓 G{grade}")
-#     if subject not in (None, "all"):
-#         parts.append(f"📚 {html.escape(subject.title())}")
-#     if difficulty not in (None, "all"):
-#         parts.append(f"⚡ {difficulty.title()}")
-#     return " • ".join(parts)
 
 
 def _filter_chip_line(scope, entity, grade, subject, difficulty, mode) -> str:

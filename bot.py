@@ -1740,7 +1740,13 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # The old code jumped straight to join_data["role_assigned"] once
             # already_member/already_pending were ruled out, raising exactly
             # KeyError: 'role_assigned' in this state.
-            if join_data.get("scope_blocked"):
+            # THE FIX: db_join_organization can also return {"pending_approval": True, ...}
+            # for a school still awaiting admin review — that dict has no "role_assigned"
+            # key either, same KeyError class as the scope_blocked fix right below it.
+            if join_data.get("pending_approval"):
+                status_word = "still awaiting admin review" if join_data.get("status") == "pending" else "was not approved"
+                response_text = f"⏳ <b>{html.escape(join_data['org_name'])}</b> {status_word} — you can't join it yet."
+            elif join_data.get("scope_blocked"):
                 response_text = f"🔒 <b>{html.escape(join_data['org_name'])}</b> is a dedicated team.\n\n{join_data['reason']}"
             elif join_data.get("already_member"):
                 response_text = f"ℹ️ You're already registered under <b>{join_data['org_name']}</b> (<code>#{clean_tag}</code>) as <b>{join_data['role_assigned'].title()}</b>."
