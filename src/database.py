@@ -2329,10 +2329,14 @@ def db_join_organization(user_id, org_tag: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value, org_type FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
+            # THE FIX: was missing status entirely — a school still 'pending' admin review, or one
+            # already explicitly 'rejected', was just as joinable as an approved one via /school TAG.
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value, org_type, status FROM organizations WHERE org_tag = UPPER(%s) AND deleted_at IS NULL;", (org_tag.strip(),))
             row = cur.fetchone()
             if not row:
                 return None
+            if row.get('status') not in (None, 'approved'):
+                return {"pending_approval": True, "org_name": row['org_name'], "status": row['status']}
             org_id, org_name, is_public, creator_id, country = row['org_id'], row['org_name'], row['is_public'], row['creator_id'], row['country']
             is_school = (row.get('org_type') == 'School')
 
@@ -2411,10 +2415,12 @@ def db_join_organization_by_id(user_id, org_id: int) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value, org_type FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, team_scope, scope_value, org_type, status FROM organizations WHERE org_id = %s AND deleted_at IS NULL;", (int(org_id),))
             row = cur.fetchone()
             if not row:
                 return None
+            if row.get('status') not in (None, 'approved'):
+                return {"pending_approval": True, "org_name": row['org_name'], "status": row['status']}
 
             if row.get('team_scope') and row['team_scope'] != 'open':
                 elig = db_check_team_scope_eligibility(user_id, int(org_id))
@@ -2565,10 +2571,15 @@ def db_join_organization_by_token(user_id, join_token: str) -> dict:
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, org_type, team_scope, scope_value FROM organizations WHERE join_token = %s;", (join_token,))
+            # THE FIX: was missing BOTH deleted_at IS NULL (a rejected/soft-deleted school stayed
+            # joinable forever via an old invite link) AND status='approved' (a still-pending school
+            # was just as joinable as an approved one before any admin ever reviewed it).
+            cur.execute("SELECT org_id, org_name, is_public, creator_id, country, org_type, team_scope, scope_value, status FROM organizations WHERE join_token = %s AND deleted_at IS NULL;", (join_token,))
             row = cur.fetchone()
             if not row:
                 return None
+            if row.get('status') not in (None, 'approved'):
+                return {"pending_approval": True, "org_name": row['org_name'], "status": row['status']}
             is_school = (row.get('org_type') == 'School')
 
             # Was completely missing — invite links bypassed the "dedicated team" restriction
@@ -3651,29 +3662,31 @@ def db_get_grade_detail(grade: int):
             """, (int(grade),))
             summary = cur.fetchone()
 
+            # THE FIX: was summing live u.total_marks (a student's whole CURRENT lifetime score)
+            # instead of the frozen geo ledger — the same class of bug already fixed for the
+            # world-level country/city rankings (db_get_countries_ranked/db_get_country_detail/
+            # db_get_city_detail), just never carried over to this grade-scoped sibling. A student
+            # who'd since moved country/city still had their full current score counted here
+            # against their OLD location.
             cur.execute("""
-                SELECT COALESCE(o.country, l.country) AS country,
-                       SUM(u.total_marks) AS total_score, COUNT(*) AS student_count
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
-                WHERE u.grade = %s AND COALESCE(o.country, l.country) IS NOT NULL
-                GROUP BY country
+                SELECT gc.geo_value AS country, SUM(gc.marks)::int AS total_score,
+                       COUNT(DISTINCT gc.user_id) AS student_count
+                FROM user_geo_contributions gc
+                JOIN user_stats u ON u.user_id = gc.user_id
+                WHERE gc.geo_type = 'country' AND u.grade = %s
+                GROUP BY gc.geo_value
                 ORDER BY total_score DESC
                 LIMIT 5;
             """, (int(grade),))
             top_countries = cur.fetchall()
 
             cur.execute("""
-                SELECT COALESCE(o.city, l.city) AS city,
-                       SUM(u.total_marks) AS total_score, COUNT(*) AS student_count
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
-                WHERE u.grade = %s AND COALESCE(o.city, l.city) IS NOT NULL
-                GROUP BY city
+                SELECT gc.geo_value AS city, SUM(gc.marks)::int AS total_score,
+                       COUNT(DISTINCT gc.user_id) AS student_count
+                FROM user_geo_contributions gc
+                JOIN user_stats u ON u.user_id = gc.user_id
+                WHERE gc.geo_type = 'city' AND u.grade = %s
+                GROUP BY gc.geo_value
                 ORDER BY total_score DESC
                 LIMIT 5;
             """, (int(grade),))

@@ -1012,6 +1012,15 @@ async def school_command(update: Update, context):
     tag = context.args[0].strip()
     join_data = await asyncio.to_thread(db_join_organization, user_id, tag)
 
+    if join_data and join_data.get("pending_approval"):
+        status_word = "still awaiting admin review" if join_data.get("status") == "pending" else "was not approved"
+        await _open_utility_view(
+            context, user_id, update.message.chat_id,
+            f"⏳ <b>{html.escape(join_data['org_name'])}</b> {status_word} — you can't join it yet.",
+            nav_kb
+        )
+        return
+
     if join_data and join_data.get("scope_blocked"):
         await _open_utility_view(
             context, user_id, update.message.chat_id,
