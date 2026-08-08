@@ -1049,21 +1049,21 @@ async def unpin_all_channel_messages(app, engine: QuizEngine):
         if track.get('followup_mid'):
             await _unpin_safe(app.bot, engine.config['channel'], track['followup_mid'])
 
-async def unpin_all_channel_messages(app, engine: QuizEngine):
-    """Admin safety-valve: unpins the welcome card AND any active tournament
-    announcement/champions-podium pin — content is left intact, only unpinned."""
-    for key in ("welcome_mid", "champions_podium_mid"):
-        mid = await asyncio.to_thread(db_get_bot_state, key, None)
-        if mid:
-            await _unpin_safe(app.bot, engine.config['channel'], mid)
+# async def unpin_all_channel_messages(app, engine: QuizEngine):
+#     """Admin safety-valve: unpins the welcome card AND any active tournament
+#     announcement/champions-podium pin — content is left intact, only unpinned."""
+#     for key in ("welcome_mid", "champions_podium_mid"):
+#         mid = await asyncio.to_thread(db_get_bot_state, key, None)
+#         if mid:
+#             await _unpin_safe(app.bot, engine.config['channel'], mid)
 
-    queue = await asyncio.to_thread(db_get_tournament_queue)
-    if queue and queue.get('announcement_mid'):
-        await _unpin_safe(app.bot, engine.config['channel'], queue['announcement_mid'])
+#     queue = await asyncio.to_thread(db_get_tournament_queue)
+#     if queue and queue.get('announcement_mid'):
+#         await _unpin_safe(app.bot, engine.config['channel'], queue['announcement_mid'])
 
-    for track in await asyncio.to_thread(db_get_active_tournament_rounds):
-        if track.get('followup_mid'):
-            await _unpin_safe(app.bot, engine.config['channel'], track['followup_mid'])
+#     for track in await asyncio.to_thread(db_get_active_tournament_rounds):
+#         if track.get('followup_mid'):
+#             await _unpin_safe(app.bot, engine.config['channel'], track['followup_mid'])
 
 async def verify_track_message(app, engine: QuizEngine, message_id) -> bool:
     """Confirms a channel message still physically exists on Telegram (wasn't deleted

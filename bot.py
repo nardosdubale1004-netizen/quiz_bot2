@@ -1325,21 +1325,6 @@ async def admin_dashboard_command(update: Update, context):
     ])
     await _open_utility_view(context, user_id, update.message.chat_id, text, kb)
 
-def db_get_all_admin_ids():
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT user_id FROM user_stats WHERE is_admin = TRUE;")
-            return [r["user_id"] for r in cur.fetchall()]
-    except Exception as e:
-        print(f"[DB ERROR] Failed to fetch admin ids: {e}", flush=True)
-        return []
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-# --- CONVERSATIONAL FSM INPUT STATE PROCESSOR ---
 
 async def _delete_silent(bot, chat_id, mid):
     try:
