@@ -2669,9 +2669,13 @@ def db_leave_organization(user_id, org_id: int):
                     promoted_id = nxt['user_id']
                     cur.execute("UPDATE org_memberships SET org_role = 'creator' WHERE user_id = %s AND org_id = %s;", (promoted_id, int(org_id)))
                     cur.execute("UPDATE organizations SET creator_id = %s WHERE org_id = %s;", (promoted_id, int(org_id)))
+                    # THE FIX: leaver's cache was already invalidated above — the promoted
+                    # member's never was, so their new "creator" role could show stale
+                    # (still "member") on /profile for up to 8s (the cache TTL).
+                    user_profile_cache.invalidate(f"profile:{promoted_id}")
 
-            conn.commit()
-            return {"was_creator": was_creator, "promoted_id": promoted_id}
+        conn.commit()
+        return {"was_creator": was_creator, "promoted_id": promoted_id}
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB-ORG-ERROR] Leave failed: {e}", flush=True)

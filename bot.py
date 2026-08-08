@@ -1278,6 +1278,14 @@ async def feedback_admin_command(update: Update, context):
     )
 
 async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
+    # THE FIX: was using open_utility_view — the function whose job is "only one profile
+    # screen visible at a time, delete whatever's open, replace it." That's correct for
+    # /profile, /feedback, the Kanban board, etc. — but a background notification about
+    # someone else's feedback should never silently close an admin's OWN open screen (and
+    # then get itself deleted the next time they open anything, since it became "the"
+    # tracked utility view). Every other admin notification in the app (join requests,
+    # location suggestions, resolved/planned notices) already sends a plain standalone
+    # message instead — this was the one outlier.
     from src.database import db_get_all_admin_ids
     admin_ids = await asyncio.to_thread(db_get_all_admin_ids)
     if not admin_ids:
@@ -1293,8 +1301,7 @@ async def _notify_admins_new_feedback(context, fb_id: int, fb: dict):
     ])
     for admin_id in admin_ids:
         try:
-            from src.rendering.rich_helpers import open_utility_view
-            await open_utility_view(context.bot, LAST_UTILITY_MID, _UTILITY_LOCKS, admin_id, admin_id, f"🆕 <b>NEW FEEDBACK</b>\n\n{text}", kb)
+            await send_rich_message_safe(context.bot, chat_id=int(admin_id), html_content=f"🆕 <b>NEW FEEDBACK</b>\n\n{text}", reply_markup=kb)
         except Exception:
             pass
 
