@@ -3073,8 +3073,6 @@ def db_get_pending_org_requests(org_id: int):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_approve_member_request(user_id, org_id: int, approve: bool) -> bool:
-    """Approves or rejects a pending request. Rejections are KEPT as 'rejected'
-    rows (not deleted) so the team's request history stays visible."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -3086,6 +3084,9 @@ def db_approve_member_request(user_id, org_id: int, approve: bool) -> bool:
                 WHERE user_id = %s AND org_id = %s;
             """, (new_state, str(user_id), int(org_id)))
             conn.commit()
+            # THE FIX: never invalidated — approved member's school/team fields wouldn't
+            # refresh on their profile for up to 8s (the cache TTL).
+            user_profile_cache.invalidate(f"profile:{user_id}")
             return True
     except Exception as e:
         if conn: conn.rollback()
@@ -3120,7 +3121,6 @@ def db_promote_member(user_id, org_id: int, promote: bool) -> bool:
 # --- DYNAMIC GEOGRAPHIC LEAGUE ANALYTICS ---
 
 def db_get_city_leaderboard():
-    """Retrieves top performing cities based on collective student scores."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -3130,7 +3130,7 @@ def db_get_city_leaderboard():
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 GROUP BY city
                 ORDER BY total_score DESC
                 LIMIT 5;
@@ -3143,8 +3143,8 @@ def db_get_city_leaderboard():
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
 
+
 def db_get_country_leaderboard():
-    """Retrieves top performing countries based on collective student scores."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -3154,7 +3154,7 @@ def db_get_country_leaderboard():
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 GROUP BY country
                 ORDER BY total_score DESC
                 LIMIT 5;
@@ -3194,8 +3194,8 @@ def db_get_countries_ranked(limit: int = 15, offset: int = 0):
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_world_summary_counts(grade: int = None):
-    """Tier-1 header block: total students/teams/schools/cities/countries + total/avg marks,
-    optionally scoped to one grade."""
+    """THE FIX: was reading u.personal_city/personal_country — frozen legacy columns no write
+    path touches anymore. Now reads user_locations."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
@@ -3205,11 +3205,12 @@ def db_get_world_summary_counts(grade: int = None):
                     COUNT(DISTINCT u.user_id) AS student_count,
                     COALESCE(SUM(u.total_marks), 0) AS total_marks,
                     COALESCE(AVG(u.total_marks), 0) AS avg_marks,
-                    COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS country_count,
-                    COUNT(DISTINCT COALESCE(o.city, u.personal_city)) AS city_count
+                    COUNT(DISTINCT COALESCE(o.country, l.country)) AS country_count,
+                    COUNT(DISTINCT COALESCE(o.city, l.city)) AS city_count
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE (%s::int IS NULL OR u.grade = %s);
             """, (grade, grade))
             summary = dict(cur.fetchone())
@@ -3232,7 +3233,6 @@ def db_get_world_summary_counts(grade: int = None):
     finally:
         if conn:
             GLOBAL_ENGINE.release_connection(conn)
-
 
 def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int = 10):
     """
@@ -3321,16 +3321,18 @@ def db_get_world_rank_matrix(grade: int = None, mode: str = "total", limit: int 
 
 
 def db_count_countries_ranked() -> int:
+    """Matches db_get_countries_ranked's source (the geo ledger) — the two must agree or
+    pagination breaks. Was reading dead u.personal_country + an org_role filter that's been
+    permanently TRUE since the role/state split (org_role never holds 'pending'/'rejected'/
+    'left' anymore, those moved to state)."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COUNT(DISTINCT COALESCE(o.country, u.personal_country)) AS cnt
-                FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
-                LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE COALESCE(o.country, u.personal_country) IS NOT NULL;
+                SELECT COUNT(DISTINCT geo_value) AS cnt
+                FROM user_geo_contributions
+                WHERE geo_type = 'country';
             """)
             row = cur.fetchone()
             return int(row['cnt']) if row else 0
@@ -3588,12 +3590,13 @@ def db_get_grade_detail(grade: int):
             summary = cur.fetchone()
 
             cur.execute("""
-                SELECT COALESCE(o.country, u.personal_country) AS country,
+                SELECT COALESCE(o.country, l.country) AS country,
                        SUM(u.total_marks) AS total_score, COUNT(*) AS student_count
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE u.grade = %s AND COALESCE(o.country, u.personal_country) IS NOT NULL
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
+                WHERE u.grade = %s AND COALESCE(o.country, l.country) IS NOT NULL
                 GROUP BY country
                 ORDER BY total_score DESC
                 LIMIT 5;
@@ -3601,12 +3604,13 @@ def db_get_grade_detail(grade: int):
             top_countries = cur.fetchall()
 
             cur.execute("""
-                SELECT COALESCE(o.city, u.personal_city) AS city,
+                SELECT COALESCE(o.city, l.city) AS city,
                        SUM(u.total_marks) AS total_score, COUNT(*) AS student_count
                 FROM user_stats u
-                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                WHERE u.grade = %s AND COALESCE(o.city, u.personal_city) IS NOT NULL
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
+                WHERE u.grade = %s AND COALESCE(o.city, l.city) IS NOT NULL
                 GROUP BY city
                 ORDER BY total_score DESC
                 LIMIT 5;
@@ -5033,7 +5037,7 @@ def db_get_top_users_by_city(city: str, limit: int = 10):
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE COALESCE(o.city, l.city) = %s
                 ORDER BY u.total_marks DESC
                 LIMIT %s;
@@ -5057,7 +5061,7 @@ def db_get_top_users_by_country(country: str, limit: int = 10):
                 FROM user_stats u
                 LEFT JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                 LEFT JOIN organizations o ON m.org_id = o.org_id
-                LEFT JOIN user_locations l ON l.user_id = u.user_id
+                LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
                 WHERE COALESCE(o.country, l.country) = %s
                 ORDER BY u.total_marks DESC
                 LIMIT %s;
@@ -5363,14 +5367,19 @@ def db_is_tournament_round_still_open(message_id) -> bool:
             GLOBAL_ENGINE.release_connection(conn)
 
 def db_get_user_snapshot(user_id) -> dict:
-    """Compact stats block for admin-facing approval cards — no need to open the full profile."""
+    """Compact stats block for admin-facing approval cards. THE FIX: was reading
+    personal_city/personal_country straight off user_stats — frozen at unmigrated
+    defaults since db_set_user_location became the single writer. Now reads user_locations."""
     conn = None
     try:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT grade, total_marks, total, correct, current_streak, personal_city, personal_country
-                FROM user_stats WHERE user_id = %s;
+                SELECT us.grade, us.total_marks, us.total, us.correct, us.current_streak,
+                       l.city AS personal_city, l.country AS personal_country
+                FROM user_stats us
+                LEFT JOIN user_locations l ON l.user_id = us.user_id
+                WHERE us.user_id = %s;
             """, (str(user_id),))
             row = cur.fetchone()
             return dict(row) if row else {}
@@ -5459,7 +5468,7 @@ def db_get_org_grade_breakdown(org_id: int):
                 WITH school_grades AS (
                     SELECT u.grade, SUM(u.total_marks) AS school_grade_score
                     FROM user_stats u
-                    JOIN org_memberships m ON u.user_id = m.user_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN org_memberships m ON u.user_id = m.user_id AND m.state = 'active'
                     WHERE m.org_id = %s AND u.grade IS NOT NULL
                     GROUP BY u.grade
                 ),
@@ -5467,7 +5476,7 @@ def db_get_org_grade_breakdown(org_id: int):
                     SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
                            RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as world_rank
                     FROM organizations o
-                    JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
                     JOIN user_stats u ON m.user_id = u.user_id
                     WHERE o.deleted_at IS NULL AND u.grade IS NOT NULL
                     GROUP BY o.org_id, u.grade
@@ -5476,7 +5485,7 @@ def db_get_org_grade_breakdown(org_id: int):
                     SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
                            RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as country_rank
                     FROM organizations o
-                    JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
                     JOIN user_stats u ON m.user_id = u.user_id
                     WHERE o.deleted_at IS NULL AND o.country = %s AND u.grade IS NOT NULL
                     GROUP BY o.org_id, u.grade
@@ -5485,7 +5494,7 @@ def db_get_org_grade_breakdown(org_id: int):
                     SELECT o.org_id, u.grade, SUM(u.total_marks) AS score,
                            RANK() OVER (PARTITION BY u.grade ORDER BY SUM(u.total_marks) DESC) as city_rank
                     FROM organizations o
-                    JOIN org_memberships m ON o.org_id = m.org_id AND m.org_role NOT IN ('pending','rejected','left')
+                    JOIN org_memberships m ON o.org_id = m.org_id AND m.state = 'active'
                     JOIN user_stats u ON m.user_id = u.user_id
                     WHERE o.deleted_at IS NULL AND o.city = %s AND u.grade IS NOT NULL
                     GROUP BY o.org_id, u.grade

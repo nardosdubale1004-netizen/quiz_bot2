@@ -721,14 +721,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
         if not profile or not profile.get("personal_city") or not profile.get("personal_country"):
             nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("📍 SET UP MY PROFILE", callback_data="regloc_start|0")]])
-            await _open_utility_view(
-                context, user_id, query.message.chat_id,
-                "📍 You haven't finished setup yet. Type /start to set your city and country first.",
-                nav_kb
-            )
+            await _open_utility_view(context, user_id, query.message.chat_id, "📍 You haven't finished setup yet. Type /start to set your city and country first.", nav_kb)
             return
+        from src.database import db_get_user_top_topic, db_get_user_rank_summary
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-        text = build_profile_card_text(profile, None, subject_marks)
+        top_topic = await asyncio.to_thread(db_get_user_top_topic, user_id)
+        rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
+        text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         await _open_utility_view(context, user_id, query.message.chat_id, text, kb)
         return
@@ -2668,8 +2667,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        from src.database import db_get_user_top_topic, db_get_user_rank_summary
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-        text = build_profile_card_text(profile, None, subject_marks)
+        top_topic = await asyncio.to_thread(db_get_user_top_topic, user_id)
+        rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
+        text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         m = await send_rich_message_safe(context.bot, chat_id=query.message.chat_id, html_content=text, reply_markup=kb)
         if m:
@@ -3194,8 +3196,11 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
 
     if action not in ("ans", "toggle", "toggle_photo", "confirm_change", "cancel_change", "fb_view", "my_ans_hide"):
         profile = await asyncio.to_thread(db_get_user_profile, user_id)
+        from src.database import db_get_user_top_topic, db_get_user_rank_summary
         subject_marks = await asyncio.to_thread(db_get_user_subject_marks, user_id)
-        text = build_profile_card_text(profile, None, subject_marks)
+        top_topic = await asyncio.to_thread(db_get_user_top_topic, user_id)
+        rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
+        text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
@@ -3411,5 +3416,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
         await query.answer("System Error: Could not render response.", show_alert=True)
+
+
 
         
