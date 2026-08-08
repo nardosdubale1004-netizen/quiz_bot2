@@ -135,10 +135,16 @@ def _build_feedback_detail_keyboard(fb_id, return_state: str = None, is_closed: 
     else:
         rows.append([InlineKeyboardButton("💬 REPLY", callback_data=f"fb_reply|{fb_id}")])
         rows.append([InlineKeyboardButton("🔒 CLOSE CONVERSATION", callback_data=f"fb_toggle_close|{fb_id}|1")])
+    # THE FIX: only a "QUEUE" button existed, and only when return_state had 3 parts — there was
+    # no way back to the admin dashboard or to your own profile from inside a feedback item at all.
     parts = rs.split(":")
     if len(parts) == 3:
         cat, stat, off = parts
         rows.append([InlineKeyboardButton("🔙 QUEUE", callback_data=f"fb_browse|{cat}|{stat}:{off}")])
+    rows.append([
+        InlineKeyboardButton("🏠 DASHBOARD", callback_data="admin_dashboard|0"),
+        InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")
+    ])
     return InlineKeyboardMarkup(rows)
 
 def _build_country_index_kb() -> InlineKeyboardMarkup:
@@ -2456,28 +2462,42 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "admin_users":
-        from src.database import db_is_admin
+        # THE FIX (new entry point): this used to be flat pagination with no way to narrow the
+        # list — every prior "view profile / impersonate" flow started from an unfiltered wall of
+        # users. Now grade-categorized, exactly as the entry screen before opening any individual.
+        from src.database import db_is_admin, db_get_recent_users, db_count_users, db_get_active_grades
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
         await query.answer()
-        offset = int(d_id)
-        users = await asyncio.to_thread(db_get_recent_users, 15, offset)
-        text = build_user_directory_text(users)
-        # THE FIX (new feature): the directory listed users as plain text with no way to open a
-     
-        # given one — "🔧 MANAGE" was described in an earlier pass but never actually landed here.
-        # One button per row, opening a small per-user action menu (view / manage) instead of
-        # cramming 2 buttons × 15 rows into one giant keyboard.
+        parts = d_id.split(":")
+        grade = parts[0] if parts else "all"
+        offset = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+
+        users = await asyncio.to_thread(db_get_recent_users, 15, offset, grade)
+        total = await asyncio.to_thread(db_count_users, grade)
+        grade_options = await asyncio.to_thread(db_get_active_grades)
+
+        grade_label = "All Grades" if grade in (None, "all") else f"Grade {grade}"
+        text = build_user_directory_text(users) + f"\n<i>{grade_label} · {offset+1}-{offset+len(users)} of {total}</i>"
+
         buttons = []
         for u in users:
             label = format_public_name(u)[:24]
-            buttons.append([InlineKeyboardButton(f"👤 {label}", callback_data=f"admin_user_actions|{u['user_id']}")])
+            buttons.append([InlineKeyboardButton(f"👤 {label} · Gr.{u.get('grade') or '—'}", callback_data=f"admin_user_actions|{u['user_id']}")])
+
+        grade_row = [InlineKeyboardButton(("• " if grade in (None, "all") else "") + "Total", callback_data="admin_users|all:0")]
+        for g in grade_options:
+            grade_row.append(InlineKeyboardButton(("• " if str(grade) == str(g) else "") + str(g), callback_data=f"admin_users|{g}:0"))
+        # Keep the grade-filter row from overflowing on wide grade sets — wrap every 4.
+        grade_rows = [grade_row[i:i+4] for i in range(0, len(grade_row), 4)]
+        buttons.extend(grade_rows)
+
         nav_row = []
         if offset > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{max(0, offset-15)}"))
-        if len(users) == 15:
-            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{offset+15}"))
+            nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{grade}:{max(0, offset-15)}"))
+        if offset + 15 < total:
+            nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{grade}:{offset+15}"))
         if nav_row:
             buttons.append(nav_row)
         buttons.append([InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")])
@@ -3199,7 +3219,13 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif action == "admin_user_actions":
-        from src.database import db_is_admin, db_get_user_profile
+        # THE FIX: db_get_user_profile is already imported at the top of this file. Re-importing
+        # it locally HERE shadowed it for the ENTIRE _handle_callback_inner function — every elif
+        # branch shares one scope — which is exactly why privacy_menu / profile_popup /
+        # alliance_portal / set_grade / confirm_grade (all reference the bare name with no local
+        # import of their own) crashed with UnboundLocalError. 6th occurrence of this exact bug
+        # class in this codebase; always a redundant local re-import of an already-global name.
+        from src.database import db_is_admin
         if not await asyncio.to_thread(db_is_admin, user_id):
             await query.answer("Admins only.", show_alert=True)
             return
@@ -3210,7 +3236,10 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("👁️ VIEW PROFILE (READ-ONLY)", callback_data=f"admin_view_profile|{target}")],
             [InlineKeyboardButton("🔧 PERMISSIONS", callback_data=f"admin_manage_user|{target}")],
-            [InlineKeyboardButton("🔙 BACK TO DIRECTORY", callback_data="admin_users|0")]
+            # THE FIX: admin_users now expects "grade:offset" — a bare "0" no longer round-trips
+            # correctly (it gets parsed as grade="0" instead of offset=0). Points back to the
+            # unfiltered directory, which is always a safe landing spot.
+            [InlineKeyboardButton("🔙 BACK TO DIRECTORY", callback_data="admin_users|all:0")]
         ])
         await edit_rich_message_safe(
             context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
