@@ -5782,6 +5782,13 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
             # and it was checking that against a column that's identical (default) for
             # every user regardless of their real location. Every dedicated team looked
             # "homogenous" to this query even when its members were scattered everywhere.
+            # THE FIX: "school" scope for a TEAM's rank never had a real implementation —
+            # it compared the team's OWN org_id to the school's org_id (never equal, always
+            # zero rows) and, even fixed, team_geo never computed which school every member
+            # currently shares — only country/city homogeneity existed. Added solo_school_id
+            # the same way solo_country/solo_city already work: MIN() across an inner join to
+            # each member's own active SCHOOL membership, so it's only non-null/meaningful
+            # when every team member currently belongs to the exact same school.
             base_sql = """
                 WITH team_geo AS (
                     SELECT
@@ -5789,13 +5796,17 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                         COUNT(DISTINCT m.user_id) AS member_count,
                         COUNT(DISTINCT COALESCE(b.country, o.country, l.country)) AS country_count,
                         COUNT(DISTINCT COALESCE(b.city, o.city, l.city)) AS city_count,
+                        COUNT(DISTINCT sm.org_id) AS school_count,
                         MIN(COALESCE(b.country, o.country, l.country)) AS solo_country,
-                        MIN(COALESCE(b.city, o.city, l.city)) AS solo_city
+                        MIN(COALESCE(b.city, o.city, l.city)) AS solo_city,
+                        MIN(sm.org_id) AS solo_school_id
                     FROM org_memberships m
                     JOIN user_stats u ON u.user_id = m.user_id
                     JOIN organizations o ON o.org_id = m.org_id
                     LEFT JOIN school_branches b ON b.branch_id = m.branch_id
                     LEFT JOIN user_locations l ON l.user_id = u.user_id AND l.status = 'approved'
+                    LEFT JOIN org_memberships sm ON sm.user_id = m.user_id AND sm.state = 'active'
+                        AND sm.org_id IN (SELECT org_id FROM organizations WHERE org_type = 'School')
                     WHERE m.state = 'active'
                       AND o.deleted_at IS NULL
                     GROUP BY m.org_id
@@ -5809,16 +5820,18 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                         tg.member_count,
                         tg.solo_country,
                         tg.solo_city,
+                        tg.solo_school_id,
                         tg.country_count,
-                        tg.city_count
+                        tg.city_count,
+                        tg.school_count
                     FROM team_geo tg
                     JOIN organizations o ON o.org_id = tg.org_id
                     JOIN org_memberships m ON m.org_id = tg.org_id
                       AND m.state = 'active'
                     JOIN user_stats u ON u.user_id = m.user_id
                     GROUP BY tg.org_id, o.org_name, o.org_tag,
-                             tg.member_count, tg.solo_country, tg.solo_city,
-                             tg.country_count, tg.city_count
+                             tg.member_count, tg.solo_country, tg.solo_city, tg.solo_school_id,
+                             tg.country_count, tg.city_count, tg.school_count
                 )
             """
 
@@ -5836,10 +5849,9 @@ def db_get_smart_team_leaderboard(scope: str = "world", scope_value: str = None,
                 """, (scope_value, limit))
             elif scope == "school" and scope_value:
                 cur.execute(base_sql + """
-                    SELECT rt.* FROM ranked_teams rt
-                    JOIN team_geo tg ON tg.org_id = rt.org_id
-                    WHERE rt.org_id = %s
-                    ORDER BY rt.total_score DESC LIMIT %s;
+                    SELECT * FROM ranked_teams
+                    WHERE school_count = 1 AND solo_school_id = %s
+                    ORDER BY total_score DESC LIMIT %s;
                 """, (int(scope_value), limit))
             else:
                 # World — all teams qualify
