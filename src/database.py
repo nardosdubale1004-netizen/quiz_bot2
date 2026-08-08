@@ -788,6 +788,16 @@ class QuizEngine:
                 _safe_migrate(cur, conn, "idx_user_org_contrib_org", "CREATE INDEX IF NOT EXISTS idx_user_org_contrib_org ON user_org_contributions(org_id);")
                 _safe_migrate(cur, conn, "idx_user_geo_contrib_type_value", "CREATE INDEX IF NOT EXISTS idx_user_geo_contrib_type_value ON user_geo_contributions(geo_type, geo_value);")
 
+                # THE FIX: db_get_team_geo_ownership, db_join_branch, db_get_branch_leaderboard,
+                # and db_get_smart_team_leaderboard all reference org_memberships.branch_id and
+                # user_stats.branch_id — neither column was ever created by any migration
+                # statement in this file. school_branches (the table these point INTO) exists,
+                # but the FK columns on the two referencing tables never did. Any team-details
+                # screen, branch join, or smart-leaderboard call was one query away from
+                # "column branch_id does not exist" the moment it actually ran.
+                _safe_migrate(cur, conn, "org_memberships.branch_id", "ALTER TABLE org_memberships ADD COLUMN IF NOT EXISTS branch_id INT REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+                _safe_migrate(cur, conn, "user_stats.branch_id", "ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS branch_id INT REFERENCES school_branches(branch_id) ON DELETE SET NULL;")
+
                 # THE FIX: was only ever created lazily inside db_set_user_permission —
                 # until an admin used the permission panel once, EVERY message triggered
                 # a failed query + caught exception + log line via db_check_user_permission
