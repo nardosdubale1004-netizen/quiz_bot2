@@ -1400,17 +1400,12 @@ async def handle_fsm_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     Also silently deletes any stray text/attachment the user sends outside of an active input
     flow — a user's DM should only ever contain quiz questions, answer explanation cards, and
     utility panels, never loose typed clutter or accidental attachments."""
+    # THE FIX: user_id was referenced by the permission check BEFORE it was ever assigned —
+    # this raised NameError on every single text message sent to the bot, in every FSM state,
+    # for every user. This is why the permission system, as it stood, would have broken the
+    # entire text-input pipeline (nicknames, feedback text, city entry, everything).
     user = update.effective_user
     user_id = user.id
-    # THE FIX (impersonation): text input (nicknames, feedback text, city entry, replies...)
-    # needs the same identity swap as callback buttons, or typing while "acting as" a user
-    # would silently write to the ADMIN's own account instead of the target's. Swapped BEFORE
-    # the permission check too, so a blocked target's restriction is honestly reflected back
-    # to the admin while impersonating them.
-    from src.config import IMPERSONATION_SESSIONS
-    impersonated = IMPERSONATION_SESSIONS.get(str(user_id))
-    if impersonated:
-        user_id = int(impersonated)
     from src.database import db_check_user_permission
     if not await asyncio.to_thread(db_check_user_permission, user_id, "bot_access"):
         await _delete_silent(context.bot, update.message.chat_id, update.message.message_id)

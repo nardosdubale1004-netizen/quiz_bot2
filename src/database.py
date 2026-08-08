@@ -4417,12 +4417,7 @@ def db_count_location_suggestions(status: str = None, kind: str = None) -> int:
         conn = GLOBAL_ENGINE.get_db_connection()
         with conn.cursor() as cur:
             clauses, params = [], []
-            # THE FIX: db_get_location_suggestions_list got this "closed" branch last pass,
-            # but this sibling COUNT function never did — so the 🔒 Closed queue showed the
-            # right list with a wrong (always-0) total, breaking "X of Y" and NEXT paging.
-            if status == "closed":
-                clauses.append("is_closed = TRUE")
-            elif status and status != "all":
+            if status and status != "all":
                 clauses.append("status = %s")
                 params.append(status)
             if kind and kind != "all":
@@ -6308,96 +6303,6 @@ def db_set_location_suggestion_closed(sid: int, closed: bool) -> bool:
     except Exception as e:
         if conn: conn.rollback()
         print(f"[DB ERROR] db_set_location_suggestion_closed: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-def db_request_impersonation(user_id, admin_id) -> bool:
-    """Admin requests permission to act as a user. Creates the table on first use and resets
-    any prior decision to pending — the user must explicitly tap ALLOW before any session
-    can start; an admin can never grant this to themselves."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS impersonation_grants (
-                    user_id VARCHAR(20) NOT NULL,
-                    admin_id VARCHAR(20) NOT NULL,
-                    status VARCHAR(15) DEFAULT 'pending',
-                    requested_at TIMESTAMPTZ DEFAULT NOW(),
-                    responded_at TIMESTAMPTZ,
-                    PRIMARY KEY (user_id, admin_id)
-                );
-            """)
-            cur.execute("""
-                INSERT INTO impersonation_grants (user_id, admin_id, status, requested_at, responded_at)
-                VALUES (%s, %s, 'pending', NOW(), NULL)
-                ON CONFLICT (user_id, admin_id) DO UPDATE SET status = 'pending', requested_at = NOW(), responded_at = NULL;
-            """, (str(user_id), str(admin_id)))
-            conn.commit()
-            return True
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] db_request_impersonation: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_respond_impersonation(user_id, admin_id, allow: bool) -> bool:
-    """The user's own decision — this is the ONLY function that can turn a request into a grant."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE impersonation_grants SET status = %s, responded_at = NOW()
-                WHERE user_id = %s AND admin_id = %s;
-            """, ("granted" if allow else "denied", str(user_id), str(admin_id)))
-            conn.commit()
-            return True
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] db_respond_impersonation: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_check_impersonation_granted(user_id, admin_id) -> bool:
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT status FROM impersonation_grants WHERE user_id = %s AND admin_id = %s;", (str(user_id), str(admin_id)))
-            row = cur.fetchone()
-            return bool(row and row['status'] == 'granted')
-    except Exception as e:
-        print(f"[DB ERROR] db_check_impersonation_granted: {e}", flush=True)
-        return False
-    finally:
-        if conn:
-            GLOBAL_ENGINE.release_connection(conn)
-
-
-def db_revoke_all_impersonation_grants(user_id) -> bool:
-    """The user's own panic button — pulls back every grant they've ever given, instantly.
-    Any admin whose session was mid-flight will get bounced out of impersonation on their
-    very next tap, since imp checks re-verify against this table, not a cached flag."""
-    conn = None
-    try:
-        conn = GLOBAL_ENGINE.get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("UPDATE impersonation_grants SET status = 'revoked', responded_at = NOW() WHERE user_id = %s AND status = 'granted';", (str(user_id),))
-            conn.commit()
-            return True
-    except Exception as e:
-        if conn: conn.rollback()
-        print(f"[DB ERROR] db_revoke_all_impersonation_grants: {e}", flush=True)
         return False
     finally:
         if conn:

@@ -546,7 +546,7 @@ async def _open_utility_view(context, user_id, chat_id, html_content, reply_mark
     return await open_utility_view(context.bot, None, _UTILITY_LOCKS, user_id, chat_id, html_content, reply_markup)
 
 
-async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str, is_impersonating: bool = False):
+async def _render_team_details(context, chat_id, message_id, user_id, org_id: int, grade_filter, sort_field: str, sort_dir: str):
     from src.database import (
         db_get_team_membership_homogeneity, db_get_team_scope_ranks, db_get_org_member_matrix,
         db_count_org_members, db_count_org_left_members, db_get_org_admin_ids, db_get_team_average_marks,
@@ -585,12 +585,7 @@ async def _render_team_details(context, chat_id, message_id, user_id, org_id: in
     table_text = build_team_rank_table_text(matrix, grade_filter, grade_count)
     kb = build_team_details_keyboard(org_id, grade_filter, sort_field, sort_dir, is_admin_here, is_creator)
 
-    full_text = f"{info_text}\n\n{table_text}"
-    if is_impersonating:
-        full_text = f"🎭 <b>ACTING AS <code>{user_id}</code></b> — tap 🛑 to stop.\n<hr/>\n{full_text}"
-        kb_rows = kb.inline_keyboard + [[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]]
-        kb = InlineKeyboardMarkup(kb_rows)
-    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=full_text, reply_markup=kb)
+    await edit_rich_message_safe(context.bot, chat_id=chat_id, message_id=message_id, html_content=f"{info_text}\n\n{table_text}", reply_markup=kb)
 
 
 async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, engine):
@@ -599,30 +594,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     action, d_id = data[0], data[1]
     user_id = query.from_user.id
 
-    # THE FIX (impersonation): once a session exists in IMPERSONATION_SESSIONS, every action
-    # EXCEPT the impersonation/directory controls listed here runs against the TARGET user's
-    # identity instead of the admin's — this is the entire "do as if the user does it"
-    # mechanism. The exempt actions always keep the real caller so the controls can never be
-    # swapped out from under the admin mid-session (and so admin_users/admin_dashboard stay
-    # navigable while impersonating, without needing to imp_stop first just to browse).
-    _IMPERSONATION_EXEMPT_ACTIONS = (
-        "imp_start", "imp_stop", "imp_request", "imp_respond",
-        "admin_view_profile", "admin_manage_user", "admin_toggle_perm",
-        "admin_user_actions", "admin_users", "admin_dashboard"
-    )
-    real_caller_id = user_id
-    is_impersonating = False
-    if action not in _IMPERSONATION_EXEMPT_ACTIONS:
-        from src.config import IMPERSONATION_SESSIONS
-        impersonated = IMPERSONATION_SESSIONS.get(str(user_id))
-        if impersonated:
-            user_id = int(impersonated)
-            # THE FIX: is_impersonating used to only ever be shown on the imp_start confirmation
-            # screen — every screen after that (profile, settings, team, feedback...) looked
-            # byte-identical to the admin's own account, with no way to tell the two apart mid-
-            # session. This flag now travels with every action so profile-family screens can
-            # stamp themselves.
-            is_impersonating = True
     print(f"\n{Style.CYAN}[CALLBACK DEBUG]{Style.RESET} Action: {action} | Ref ID: {d_id} | User ID: {user_id}")
 
     # Standard circular home button for intermediate flows
@@ -737,13 +708,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         rank_summary = await asyncio.to_thread(db_get_user_rank_summary, user_id)
         text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
         kb = build_profile_main_keyboard(has_team=bool(profile.get("team_id")))
-        # THE FIX: makes it unmistakable that the admin is looking at SOMEONE ELSE'S live profile,
-        # not their own — same banner treatment on every profile-family screen while a session is
-        # active, not just the initial imp_start confirmation.
-        if is_impersonating:
-            text = f"🎭 <b>ACTING AS <code>{user_id}</code></b> — tap 🛑 to stop.\n<hr/>\n{text}"
-            kb_rows = kb.inline_keyboard + [[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]]
-            kb = InlineKeyboardMarkup(kb_rows)
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=kb)
         return
 
@@ -1336,7 +1300,7 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "view_org":
         await query.answer()
         org_id = int(d_id)
-        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc", is_impersonating)
+        await _render_team_details(context, query.message.chat_id, query.message.message_id, user_id, org_id, "all", "score", "desc")
         return
 
     elif action == "team_grade_filter":
@@ -2464,22 +2428,12 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         offset = int(d_id)
         users = await asyncio.to_thread(db_get_recent_users, 15, offset)
         text = build_user_directory_text(users)
-        # THE FIX (new feature): the directory listed users as plain text with no way to open a
-
-        # given one — "🔧 MANAGE" was described in an earlier pass but never actually landed here.
-        # One button per row, opening a small per-user action menu (view / manage) instead of
-        # cramming 2 buttons × 15 rows into one giant keyboard.
-        buttons = []
-        for u in users:
-            label = format_public_name(u)[:24]
-            buttons.append([InlineKeyboardButton(f"👤 {label}", callback_data=f"admin_user_actions|{u['user_id']}")])
         nav_row = []
         if offset > 0:
             nav_row.append(InlineKeyboardButton("⬅️ PREV", callback_data=f"admin_users|{max(0, offset-15)}"))
         if len(users) == 15:
             nav_row.append(InlineKeyboardButton("NEXT ➡️", callback_data=f"admin_users|{offset+15}"))
-        if nav_row:
-            buttons.append(nav_row)
+        buttons = [nav_row] if nav_row else []
         buttons.append([InlineKeyboardButton("🔙 BACK TO DASHBOARD", callback_data="admin_dashboard|0")])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -3196,174 +3150,6 @@ async def _handle_callback_inner(update: Update, context: ContextTypes.DEFAULT_T
         ])
         await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
             html_content=f"🔧 <b>Permissions — user <code>{target}</code></b>\n\nTap to toggle.", reply_markup=kb)
-        return
-
-    elif action == "admin_user_actions":
-        from src.database import db_is_admin, db_get_user_profile
-        if not await asyncio.to_thread(db_is_admin, user_id):
-            await query.answer("Admins only.", show_alert=True)
-            return
-        target = d_id
-        await query.answer()
-        profile = await asyncio.to_thread(db_get_user_profile, target)
-        name = format_public_name(profile) if profile else f"User {target}"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("👁️ VIEW PROFILE (READ-ONLY)", callback_data=f"admin_view_profile|{target}")],
-            [InlineKeyboardButton("🔧 PERMISSIONS", callback_data=f"admin_manage_user|{target}")],
-            [InlineKeyboardButton("🔙 BACK TO DIRECTORY", callback_data="admin_users|0")]
-        ])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=f"<h3>👤 {html.escape(name)}</h3>\n<code>{target}</code>\n\nWhat would you like to do?",
-            reply_markup=kb
-        )
-        return
-
-    elif action == "admin_view_profile":
-        # THE FIX: db_get_user_profile is already imported at the top of this file. Re-importing
-        # it locally here made Python treat it as local for the ENTIRE _handle_callback_inner
-        # function — every elif branch shares one scope — so privacy_menu/profile_popup, which
-        # reference the bare name without their own local import, crashed with UnboundLocalError
-        # before this line ever executed on their path. This is the same bug class fixed 4 times
-        # already in this thread, from a different branch each time.
-        from src.database import (
-            db_is_admin, db_get_user_subject_marks,
-            db_get_user_top_topic, db_get_user_rank_summary, db_check_impersonation_granted
-        )
-        if not await asyncio.to_thread(db_is_admin, user_id):
-            await query.answer("Admins only.", show_alert=True)
-            return
-        target = d_id
-        await query.answer()
-        profile = await asyncio.to_thread(db_get_user_profile, target)
-        if not profile:
-            await edit_rich_message_safe(
-                context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-                html_content="⚠️ This user has no profile on file yet.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 DIRECTORY", callback_data="admin_users|0")]])
-            )
-            return
-        subject_marks = await asyncio.to_thread(db_get_user_subject_marks, target)
-        top_topic = await asyncio.to_thread(db_get_user_top_topic, target)
-        rank_summary = await asyncio.to_thread(db_get_user_rank_summary, target)
-        card_text = build_profile_card_text(profile, None, subject_marks, top_topic, rank_summary)
-
-        # THE FIX (expanded read-only view): was profile-card-only. Now also pulls team
-        # membership, feedback history, and location/school request history — everything an
-        # admin might need to see about a user, in one screen, with zero edit controls.
-        from src.database import db_get_user_dossier_for_admin
-        from src.rendering.html_views import build_admin_dossier_text
-        dossier = await asyncio.to_thread(db_get_user_dossier_for_admin, target)
-        dossier_text = build_admin_dossier_text(dossier)
-
-        text = (
-            f"👁️ <b>ADMIN VIEW — READ ONLY</b>\n"
-            f"Viewing <code>{target}</code>'s account exactly as they see it. "
-            f"<i>Nothing here can be changed — updates only happen through 🎭 Act As This User.</i>\n"
-            f"<hr/>\n{card_text}\n{dossier_text}"
-        )
-        already_granted = await asyncio.to_thread(db_check_impersonation_granted, target, user_id)
-        kb_rows = []
-        if already_granted:
-            kb_rows.append([InlineKeyboardButton("🎭 ACT AS THIS USER", callback_data=f"imp_start|{target}")])
-        else:
-            kb_rows.append([InlineKeyboardButton("🎭 REQUEST TO ACT AS USER", callback_data=f"imp_request|{target}")])
-        kb_rows.append([InlineKeyboardButton("🔙 BACK", callback_data=f"admin_user_actions|{target}")])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=text, reply_markup=InlineKeyboardMarkup(kb_rows))
-        return
-
-    elif action == "imp_request":
-        from src.database import db_is_admin, db_request_impersonation
-        if not await asyncio.to_thread(db_is_admin, user_id):
-            await query.answer("Admins only.", show_alert=True)
-            return
-        target = d_id
-        await query.answer("Request sent to the student.")
-        await asyncio.to_thread(db_request_impersonation, target, user_id)
-        admin_name = html.escape(query.from_user.first_name or query.from_user.username or "An admin")
-        consent_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ ALLOW", callback_data=f"imp_respond|{user_id}|1"),
-            InlineKeyboardButton("❌ DENY", callback_data=f"imp_respond|{user_id}|0")
-        ]])
-        try:
-            await context.bot.send_message(
-                chat_id=int(target),
-                text=(
-                    f"🎭 <b>Support access request</b>\n\n"
-                    f"<b>{admin_name}</b> (support team) would like to temporarily act as you in "
-                    f"the bot — this helps them see and reproduce exactly what you're seeing while "
-                    f"troubleshooting an issue.\n\n"
-                    f"Nothing happens unless you tap ALLOW, and you can revoke this at any time from "
-                    f"⚙️ Settings → 🎭 Revoke Support Access."
-                ),
-                parse_mode="HTML", reply_markup=consent_kb
-            )
-        except Exception:
-            pass
-        return
-
-    elif action == "imp_respond":
-        admin_id, allow = data[1], (data[2] == "1")
-        from src.database import db_respond_impersonation
-        await asyncio.to_thread(db_respond_impersonation, user_id, admin_id, allow)
-        await query.answer("Access granted." if allow else "Request denied.")
-        msg = (
-            "✅ <b>Access granted.</b> The support team can now act as you until you revoke it "
-            "from ⚙️ Settings → 🎭 Revoke Support Access."
-            if allow else
-            "❌ <b>Request denied.</b> Nothing on your account changes."
-        )
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id, html_content=msg, reply_markup=None)
-        if allow:
-            try:
-                await context.bot.send_message(chat_id=int(admin_id), text="✅ The student granted you support access. Reopen their profile and tap 🎭 ACT AS THIS USER.")
-            except Exception:
-                pass
-        return
-
-    elif action == "imp_start":
-        from src.database import db_is_admin, db_check_impersonation_granted
-        if not await asyncio.to_thread(db_is_admin, user_id):
-            await query.answer("Admins only.", show_alert=True)
-            return
-        target = d_id
-        # THE FIX: re-verified fresh against the DB every time, not cached — this is what makes
-        # a user's revoke actually take effect immediately, not just at the moment of the request.
-        if not await asyncio.to_thread(db_check_impersonation_granted, target, user_id):
-            await query.answer("This user hasn't granted you access (or has since revoked it).", show_alert=True)
-            return
-        from src.config import IMPERSONATION_SESSIONS
-        IMPERSONATION_SESSIONS[str(user_id)] = str(target)
-        await query.answer("🎭 Now acting as this user.")
-        stop_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 STOP ACTING AS USER", callback_data="imp_stop|0")]])
-        await edit_rich_message_safe(
-            context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content=(
-                f"🎭 <b>Acting as user <code>{target}</code></b>\n\n"
-                f"Every button you tap now runs as if this student tapped it — their profile, "
-                f"their team, their feedback. Tap 🛑 below the moment you're done."
-            ),
-            reply_markup=stop_kb
-        )
-        return
-
-    elif action == "imp_stop":
-        from src.config import IMPERSONATION_SESSIONS
-        was_target = IMPERSONATION_SESSIONS.pop(str(user_id), None)
-        await query.answer("Stopped acting as user." if was_target else "Not currently impersonating.")
-        profile_nav_kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 MY PROFILE", callback_data="privacy_menu|0")]])
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content="✅ <b>Back to your own admin account.</b>", reply_markup=profile_nav_kb)
-        return
-
-    elif action == "revoke_impersonation":
-        from src.database import db_revoke_all_impersonation_grants
-        await asyncio.to_thread(db_revoke_all_impersonation_grants, user_id)
-        await query.answer("Any support access you granted has been revoked.")
-        profile = await asyncio.to_thread(db_get_user_profile, user_id)
-        kb = build_profile_settings_keyboard(profile.get("public_consent_granted", False))
-        await edit_rich_message_safe(context.bot, chat_id=query.message.chat_id, message_id=query.message.message_id,
-            html_content="🎛️ <b>SETTINGS</b>\n<hr/>\nVisibility, nickname, grade, or location.", reply_markup=kb)
         return
 
     elif action == "...":
